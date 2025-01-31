@@ -1,0 +1,8 @@
+version: '3.8'
+
+services:
+  m3usort:
+    build: .  # Build the Docker image using the Dockerfile in the current directory
+    container_name: m3usort
+    volumes:
+      - .:/app  # Mount the current directory to /app in the container (optional)
