@@ -1,5 +1,5 @@
 services:
-  M3Usort:
+  m3usort:
     build:
       context: .
       dockerfile: Dockerfile
