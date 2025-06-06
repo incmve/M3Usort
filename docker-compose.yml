@@ -4,13 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile
     volumes:
-      - /opt/stacks/m3usort/config.py:/data/M3Usort/config.py
-      - /opt/stacks/m3usort/logs:/data/M3Usort/logs/
-      - /opt/stacks/m3usort/files:/data/M3Usort/files/
+      - /opt/stacks/m3usort:/data/M3Usort
       - /data/media/movies:/data/media/movies
       - /data/media/tv:/data/media/tv
     restart: always
     environment:
       - IN_DOCKER=true
     ports:
-      - 6060:5050
+      - 5050:5050
+networks: {}
