@@ -6,3 +6,4 @@ flask_apscheduler
 requests
 m3u-ipytv
 packaging
+git
