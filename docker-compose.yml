@@ -1,0 +1,16 @@
+services:
+  M3Usort:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - /opt/stacks/M3Usort/config.py:/data/M3Usort/config.py
+      - /opt/stacks/M3Usort/logs:/data/M3Usort/logs/
+      - /opt/stacks/M3Usort/files:/data/M3Usort/files/
+      - /data/media/movies:/data/media/movies
+      - /data/media/tv:/data/media/tv
+    restart: always
+    environment:
+      - IN_DOCKER=true
+    ports:
+      - 6060:5050
