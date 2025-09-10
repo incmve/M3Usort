@@ -18,5 +18,5 @@ RUN python3 -m venv /venv && \
 RUN git clone https://github.com/incmve/M3Usort.git /tmp/M3Usort
 
 
-CMD ["/bin/bash", "-c", "rm -rf /data/M3Usort/* && cp -r /src/M3Usort/* /data/M3Usort/ && exec /venv/bin/python /data/M3Usort/run.py"]
+CMD ["/bin/bash", "-c", "cp -r /tmp/M3Usort/* /data/M3Usort/ && exec /venv/bin/python /data/M3Usort/run.py"]
 
