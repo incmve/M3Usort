@@ -7,8 +7,11 @@ on:
     branches: [ "main" ]
 
 jobs:
+
   build:
+
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
     - name: Login to dockerhub
@@ -23,4 +26,4 @@ jobs:
       with:
        context:
        push: true
-       tags: incmve/iptv-proxy:latest
+       tags: incmve/m3usort:latest
