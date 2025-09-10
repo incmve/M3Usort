@@ -1,8 +1,7 @@
 services:
   m3usort:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: incmve/m3usort:latest
+    container_name: m3usort
     volumes:
       - /opt/stacks/m3usort:/data/M3Usort
       - /data/media/movies:/data/media/movies
