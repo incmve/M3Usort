@@ -86,7 +86,7 @@ def admin_required(f):
 
 # ─── Context processor ───────────────────────────────────────────────────────
 
-@app.context_processor
+@main_bp.app_context_processor
 def inject_globals():
     return dict(
         RUNNING_AS_SERVICE=RUNNING_AS_SERVICE,
