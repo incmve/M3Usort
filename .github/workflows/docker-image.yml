@@ -2,9 +2,9 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "beta" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "beta" ]
 
 jobs:
 
@@ -26,4 +26,4 @@ jobs:
       with:
        context:
        push: true
-       tags: incmve/m3usort:latest
+       tags: incmve/m3usort:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
