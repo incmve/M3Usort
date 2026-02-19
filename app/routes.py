@@ -1557,7 +1557,7 @@ def update_groups_cache():
 def check_for_app_updates():
     global UPDATE_AVAILABLE, UPDATE_VERSION
     try:
-        url = "https://raw.githubusercontent.com/koffienl/M3Usort/main/CHANGELOG.md"
+        url = "https://raw.githubusercontent.com/incmve/M3Usort/main/CHANGELOG.md"
         response = requests.get(url)
         if response.status_code != 200:
             print("Failed to fetch the changelog.")
