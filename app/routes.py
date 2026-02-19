@@ -7,6 +7,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from threading import Thread
 from urllib.parse import urlparse
+from functools import wraps
 from flask import (
     Blueprint, render_template, request, redirect, url_for, 
     flash, session, send_from_directory, jsonify, abort, current_app as app
@@ -26,9 +27,6 @@ import difflib
 import shutil
 
 from fuzzywuzzy import process, fuzz
-
-
-
 
 
 logging.getLogger('ipytv').setLevel(logging.WARNING)
@@ -74,13 +72,28 @@ PLAYLIST_FAILED_LOGIN_ATTEMPTS = 0
 PLAYLIST_LAST_ATTEMPT_TIME = None
 
 
+# ─── Admin-only decorator ────────────────────────────────────────────────────
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('is_admin'):
+            flash('Admin access required.', 'danger')
+            return redirect(url_for('main_bp.home'))
+        return f(*args, **kwargs)
+    return decorated_function
 
 
-
+# ─── Context processor ───────────────────────────────────────────────────────
 
 @app.context_processor
 def inject_globals():
-    return dict(RUNNING_AS_SERVICE=RUNNING_AS_SERVICE, UPDATE_AVAILABLE=UPDATE_AVAILABLE)
+    return dict(
+        RUNNING_AS_SERVICE=RUNNING_AS_SERVICE,
+        UPDATE_AVAILABLE=UPDATE_AVAILABLE,
+        is_admin=session.get('is_admin', False)
+    )
+
 
 @app.route('/restart', methods=['GET', 'POST'])
 def restart():
@@ -88,15 +101,12 @@ def restart():
     if request.method == 'POST':
         try:
             subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            #return "OK"
             return json
         except subprocess.CalledProcessError:
             try:
                 subprocess.run(['sudo'] + command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                #return "OK"
                 return json
             except subprocess.CalledProcessError as e:
-                # If both attempts fail, log and return an error
                 PrintLog(f"Error restarting service: {e}", "ERROR")
                 return "Error restarting the service", 500
     else:
@@ -108,11 +118,8 @@ def healthcheck():
 
 def get_internal_ip():
     try:
-        # Create a UDP socket
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # Attempt to connect to a known external address
             s.connect(("8.8.8.8", 80))
-            # Get the socket's own address
             ip = s.getsockname()[0]
             return ip
     except Exception as e:
@@ -141,7 +148,7 @@ def scheduled_renew_m3u():
 
 def file_hash(filepath):
     """Generate a hash for a file."""
-    hash_func = hashlib.sha256()  # Can use sha256 or md5
+    hash_func = hashlib.sha256()
     with open(filepath, 'rb') as f:
         for chunk in iter(lambda: f.read(4096), b""):
             hash_func.update(chunk)
@@ -157,8 +164,6 @@ def download_m3u(url, output_path):
     update_groups_cache()
 
 def is_download_needed(file_path, max_age_hours):
-    #file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
-
     if not os.path.exists(file_path):
         return True
     file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
@@ -175,24 +180,17 @@ def is_download_needed(file_path, max_age_hours):
         return False
 
 def update_series_directory(series_dir):
-    # Retrieve the list of series from the API
     series_list = GetSeriesList()
     
-    # Loop through all directories within series_dir
     for root, dirs, files in os.walk(series_dir):
         for dir_name in dirs:
-            # Find a matching series by name
             matching_series = next((series for series in series_list if series['name'] == dir_name), None)
-            
-            # If a match is found, download the series
             if matching_series:
-                #PrintLog(f"Updating series: {matching_series['name']}", "INFO")
                 DownloadSeries(matching_series['series_id'])
             else:
                 PrintLog(f"No matching series found for directory: {dir_name}", "WARNING")
 
 def update_movies_directory(movies_dir):
-    # Retrieve the list of series from the API
     movies_list = GetMoviesList()
     overwrite_movies = int(get_config_variable(CONFIG_PATH, 'overwrite_movies'))
 
@@ -201,25 +199,17 @@ def update_movies_directory(movies_dir):
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
-    # Loop through all directories within movies_dir
     for root, dirs, files in os.walk(movies_dir):
         for dir_name in dirs:
-            # Find a matching series by name
             matching_movie = next((movies for movies in movies_list if movies['name'] == dir_name), None)
             
-            # If a match is found, download the series
             if matching_movie:
                 strm_file_path = os.path.join(movies_dir, f"{matching_movie['name']}", f"{matching_movie['name']}.strm")
-                # Check if .strm file exists and the overwrite setting
                 if not os.path.exists(strm_file_path) or overwrite_movies == 1:
-                    #PrintLog(f"Updating movie: {matching_movie['name']}", "INFO")
                     PrintLog(f"Adding new file: {strm_file_path}", "NOTICE")
                     strm_content = f"{base_url}/movie/{username}/{password}/{matching_movie['stream_id']}.mkv"
-                    
-                    # Write to .strm file
                     with open(strm_file_path, 'w') as strm_file:
                         strm_file.write(strm_content)
-
             else:
                 PrintLog(f"No matching movie found for directory: '{dir_name}'", "WARNING")
 
@@ -267,7 +257,6 @@ def update_config_variable(config_path, variable_name, new_value):
             file.write(f'{variable_name} = "{new_value}"\n')
 
 def update_config_array(config_path, array_name, new_value):
-    #array_found = False
     with open(CONFIG_PATH, 'r') as file:
         lines = file.readlines()
 
@@ -296,19 +285,14 @@ def extract_credentials_from_url(m3u_url):
     return None, None
 
 
-
 @app.before_request
 def require_auth():
-    # Exclude authentication for specific file download route
     if request.path.startswith('/m3u'):
         return
-
     if request.path.startswith('/get.php'):
         return
-
     if request.path.startswith('/player_api.php'):
         return
-
     if request.path.startswith('/healthcheck'):
         return
 
@@ -320,8 +304,6 @@ def require_auth():
         if debug == "yes":
             flash("Running in debug mode", "static")
 
-
-    # Check if user is logged in
     if not session.get('logged_in') and request.endpoint not in ['login', 'static']:
         return redirect(url_for('login'))
     
@@ -338,12 +320,21 @@ def require_auth():
 def login():
     hashed_pw_from_config = get_config_variable(CONFIG_PATH, 'admin_password')
     if request.method == 'POST' and not ADMIN_LOCKED == 1:
+        # Guest login — no password required
+        if 'guest' in request.form:
+            session['logged_in'] = True
+            session['is_admin'] = False
+            session.permanent = True
+            PrintLog('Guest logged in', 'INFO')
+            return redirect(url_for('main_bp.home'))
+
         password = request.form['password']
         if check_password_hash(hashed_pw_from_config, password):
             reset_admin_login_attempts()
             PrintLog('User logged in', 'INFO')
             session['logged_in'] = True
-            session.permanent = True  # Make the session permanent so it uses the app's permanent session lifetime
+            session['is_admin'] = True
+            session.permanent = True
             return redirect(url_for('main_bp.home'))
         else:
             record_admin_failed_login()
@@ -416,11 +407,9 @@ def update_home_data():
         response = requests.get(api_url)
         user_info = response.json()['user_info']
 
-        # Convert Unix timestamp to readable date for expiration date
         exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
 
         uptime_duration = current_time - app.app_start_time
-        # Convert to total seconds and then to hours, minutes, seconds
         total_seconds = int(uptime_duration.total_seconds())
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -450,12 +439,11 @@ def update_home_data():
             "exp_date": exp_date_readable,
             "active_cons": user_info['active_cons'],
             "is_trial": user_info['is_trial'],
-            "status": user_info['status'],
             "max_connections": user_info['max_connections']
         }
         return jsonify(data)
     except Exception as e:
-        return jsonify(error=str(e))  # For debugging
+        return jsonify(error=str(e))
 
 
 @main_bp.route('/home')
@@ -501,11 +489,9 @@ def home():
         response = requests.get(api_url)
         user_info = response.json()['user_info']
 
-        # Convert Unix timestamp to readable date for expiration date
         exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
 
         uptime_duration = current_time - app.app_start_time
-        # Convert to total seconds and then to hours, minutes, seconds
         total_seconds = int(uptime_duration.total_seconds())
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -537,12 +523,13 @@ def home():
                                active_cons=user_info['active_cons'], 
                                max_connections=user_info['max_connections'])
     except Exception as e:
-        return str(e)  # For debugging
+        return str(e)
 
 
 @app.route('/logout')
 def logout():
     session.pop('logged_in', None)
+    session.pop('is_admin', None)
     return redirect(url_for('login'))
 
 @app.route('/GetMoviesList')
@@ -550,18 +537,15 @@ def GetMoviesList():
     movies = []
     m3u_url = get_config_variable(CONFIG_PATH, 'url')
     
-    # Parse the M3U URL to construct the API URL
     scheme, rest = m3u_url.split('://')
     domain_with_port, _ = rest.split('/get.php')
     username, password = extract_credentials_from_url(m3u_url)
     api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
 
-    # Make the API call
     response = requests.get(api_url)
-    response.raise_for_status()  # Will raise an exception for HTTP errors
+    response.raise_for_status()
     movies_data = response.json()
 
-    # Filter the needed data
     movies = [{'name': movie['name'], 'stream_id': movie['stream_id']} for movie in movies_data]
     return movies
 
@@ -573,12 +557,10 @@ def GetSeriesList():
     username, password = extract_credentials_from_url(m3u_url)
     api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series&category_id=ALL"
 
-    # Make the API call
     response = requests.get(api_url)
-    response.raise_for_status()  # Will raise an exception for HTTP errors
+    response.raise_for_status()
     series_data = response.json()
 
-    # Filter the needed data
     series = [{'name': serie['name'], 'series_id': serie['series_id'], 'series_cover': serie['cover']} for serie in series_data]
 
     return series
@@ -600,12 +582,10 @@ def DownloadSeries(series_id):
     series_name = series_info['info']['name']
 
     try:
-        # Attempt to process the standard episodes format
         for season in series_info['episodes']:
             for episode in series_info['episodes'][season]:
                 process_episode(episode, series_name, base_url, username, password, series_dir, overwrite_series)
     except TypeError:
-        # If TypeError encountered, attempt to process the alternate episodes format
         try:
             for season_episodes in series_info['episodes']:
                 for episode in season_episodes:
@@ -617,7 +597,7 @@ def process_episode(episode, series_name, base_url, username, password, series_d
     try:
         episode_id = episode['id']
         episode_num = str(episode['episode_num']).zfill(2)
-        season_num = str(episode.get('season', '1')).zfill(2)  # Default season to '1' if not present
+        season_num = str(episode.get('season', '1')).zfill(2)
         strm_file_name = f"{series_name} S{season_num}E{episode_num}.strm"
         strm_content = f"{base_url}/series/{username}/{password}/{episode_id}.mkv"
 
@@ -643,26 +623,14 @@ def add_series_to_server():
 @main_bp.route('/rebuild')
 def rebuildWeb():
     rebuild()
-    # Redirect back to the referrer page, or to a default page if no referrer is set
-
     json = json_flash("Rebuild finished", "success")
     return json
-
-    '''
-    referrer = request.referrer
-    if referrer:
-        return redirect(referrer)
-    else:
-        # Redirect to a default route if the referrer is not found
-        return redirect(url_for('main_bp.home'))
-    '''
 
 def rebuild():
     original_m3u_path = f'{BASE_DIR}/files/original.m3u'
     output = get_config_variable(CONFIG_PATH, 'output')
 
     output_name = get_config_variable(CONFIG_PATH, 'output')
-    #original_m3u_path = os.path.join(BASE_DIR, "original.m3u")
     output_path = os.path.join(BASE_DIR, 'files', output_name)
     original_playlist = playlist.loadf(original_m3u_path)
     target_channel_names = get_config_variable(CONFIG_PATH, 'target_channel_names')
@@ -670,7 +638,6 @@ def rebuild():
     new_group_title = get_config_variable(CONFIG_PATH, 'new_group_title')
     collected_channels = []
 
-    # Process specific target channels
     PrintLog("Processing specific target channels...", "INFO")
     for name in target_channel_names:
         if any(channel.name == name for channel in original_playlist):
@@ -679,22 +646,18 @@ def rebuild():
             collected_channels.append(channel)
             PrintLog(f'Added "{name}" to new group "{new_group_title}".', "INFO")
 
-    # Process channels by desired group titles
     PrintLog("Filtering channels by desired group titles...", "INFO")
     for group_title in desired_group_titles:
         PrintLog(f"Adding group {group_title}", "INFO")
         for channel in original_playlist:
             if channel.attributes.get('group-title') == group_title and channel not in collected_channels:
                 collected_channels.append(channel)
-                #PrintLog(f'Included "{channel.name}" from group "{group_title}".', "INFO")
 
     PrintLog(f"Total channels to be included in the new playlist: {len(collected_channels)}", "INFO")
 
-    # Create a new playlist with the collected channels
     new_playlist = M3UPlaylist()
     new_playlist.append_channels(collected_channels)
 
-    # Export the new playlist
     with open(output_path, 'w', encoding='utf-8') as file:
         content = new_playlist.to_m3u_plus_playlist()
         file.write(content)
@@ -702,27 +665,9 @@ def rebuild():
 
 @main_bp.route('/download')
 def download():
-    '''
-    series_dir = get_config_variable(CONFIG_PATH, 'series_dir')
-    update_series_directory(series_dir)
-    find_wanted_series(series_dir)
-
-    movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir')
-    update_movies_directory(movies_dir)
-    find_wanted_movies(movies_dir)
-    '''
     scheduled_vod_download()
     json = json_flash("Download finished", "success")
     return json
-
-
-    '''
-    referrer = request.referrer
-    if referrer:
-        return redirect(referrer)
-    else:
-        return redirect(url_for('main_bp.home'))
-    '''
 
 
 @app.route('/m3u/<path:filename>')
@@ -732,7 +677,6 @@ def download_file(filename):
 
     url_password = request.args.get('password')
    
-    # Check if the provided password matches the hashed password
     hashed_pw_from_config = get_config_variable(CONFIG_PATH, 'playlist_password')
     if not check_password_hash(hashed_pw_from_config, url_password):
         record_playlist_failed_login()
@@ -744,19 +688,19 @@ def download_file(filename):
     else:
         reset_playlist_login_attempts()    
 
-    # Serve the file if authentication succeeds
-    directory_to_serve = f'{BASE_DIR}/files'  # Update with your actual directory path
+    directory_to_serve = f'{BASE_DIR}/files'
     return send_from_directory(directory_to_serve, filename, as_attachment=True)
 
 
-
 @main_bp.route('/security', methods=['GET'])
+@admin_required
 def security():
     playlist_username = get_config_variable(CONFIG_PATH, 'playlist_username')
     return render_template('security.html', playlist_username=playlist_username)
 
 
 @main_bp.route('/change_admin_password', methods=['POST'])
+@admin_required
 def change_admin_password():
     global MUST_CHANGE_PW
     new_password = request.form.get('admin_password')
@@ -775,6 +719,7 @@ def change_admin_password():
 
 
 @main_bp.route('/change_playlist_credentials', methods=['POST'])
+@admin_required
 def change_playlist_credentials():
     global MUST_CHANGE_PW
     new_password = request.form.get('playlist_password')
@@ -810,18 +755,15 @@ def movies():
         wanted_movies = []
     m3u_url = get_config_variable(CONFIG_PATH, 'url')
     
-    # Parse the M3U URL to construct the API URL
     scheme, rest = m3u_url.split('://')
     domain_with_port, _ = rest.split('/get.php')
     username, password = extract_credentials_from_url(m3u_url)
     api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
 
-    # Make the API call
     response = requests.get(api_url)
-    response.raise_for_status()  # Will raise an exception for HTTP errors
+    response.raise_for_status()
     movies_data = response.json()
 
-    # Filter the needed data
     movies = [{'name': movie['name'], 'stream_id': movie['stream_id'], 'stream_icon': movie['stream_icon']} for movie in movies_data]
 
     return render_template('movies.html', movies=movies, wanted_movies=wanted_movies)
@@ -857,12 +799,10 @@ def remove_wanted_movie():
     movie_name = data['movieName']
     PrintLog(f"verwijder {movie_name}", "NOTICE")
 
-
     wanted_movies = get_config_variable(CONFIG_PATH, 'wanted_movies')
     wanted_movies.remove(movie_name)
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
 
-    #return redirect(url_for('main_bp.movies'))
     return '{ "result": "OK"} '
 
 
@@ -872,7 +812,6 @@ def remove_wanted_serie():
     serie_name = data['serieName']
     PrintLog(f"verwijder {serie_name}", "NOTICE")
 
-
     wanted_series = get_config_variable(CONFIG_PATH, 'wanted_series')
     wanted_series.remove(serie_name)
     update_config_array(CONFIG_PATH, 'wanted_series', wanted_series)
@@ -880,26 +819,9 @@ def remove_wanted_serie():
     return '{ "result": "OK"} '
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def strip_year(movie_name):
-    # This function strips the year from the movie name using regular expression
-    # Returns the stripped movie name and the year if present
     match = re.search(r'\(\d{4}\)$', movie_name)
     if match:
-        # Return the title without the year and the year itself
         return movie_name[:match.start()].strip(), int(match.group()[1:-1])
     return movie_name, None
 
@@ -968,19 +890,14 @@ def find_wanted_series_string(series_dir):
         wanted_series = []
 
     m3u_url = get_config_variable(CONFIG_PATH, 'url')
-    
-    # Extract credentials and base URL from m3u_url
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     
-    # Retrieve the full serie list from the API
     series_list = GetSeriesList()
 
-    # Check each wanted serie against the series list
     for wanted in wanted_series.copy():
         PrintLog(f"Searching for wanted serie '{wanted}' (method: string)", "NOTICE")
-        # Find all series where the wanted serie title is a substring of the serie's name
         matches = [serie for serie in series_list if wanted.lower() in serie['name'].lower()]
         for serie in matches:
             DownloadSeries(serie['series_id'])
@@ -1016,12 +933,8 @@ def find_wanted_movies_fuzzy(movies_dir):
             similarity = fuzz.token_set_ratio(wanted, movie_name_stripped)
 
             if similarity >= similarity_threshold:
-                # Check for a new best match
                 is_new_best = (similarity > highest_similarity or
                                (similarity == highest_similarity and year and year > most_recent_year))
-
-                #if is_new_best:
-                #    PrintLog(f"optie? {movie_name_stripped} - similarity:{similarity}", "NOTICE")
 
                 if is_new_best and (year is None or year <= current_year):
                     best_match = movie
@@ -1029,9 +942,7 @@ def find_wanted_movies_fuzzy(movies_dir):
                     most_recent_year = year if year else most_recent_year
 
         if best_match:
-            # PrintLog(f"Winnaar: {best_match}", "NOTICE")
             movie_dir_path = os.path.join(movies_dir, best_match['name'])
-            # Check if directory exists and handle based on overwrite_movies flag
             if not os.path.exists(movie_dir_path) or overwrite_movies == 1:
                 os.makedirs(movie_dir_path, exist_ok=True)
                 strm_file_path = os.path.join(movie_dir_path, f"{best_match['name']}.strm")
@@ -1043,11 +954,8 @@ def find_wanted_movies_fuzzy(movies_dir):
                 wanted_movies.remove(wanted)
             else:
                 PrintLog("No match found", "WARNING")
-                #PrintLog(f"Match found but not overwritten for {best_match['name']}", "INFO")
         else:
             PrintLog("No match found", "WARNING")
-
-
 
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
 
@@ -1059,33 +967,26 @@ def find_wanted_movies_string(movies_dir):
         wanted_movies = []
 
     m3u_url = get_config_variable(CONFIG_PATH, 'url')
-    
-    # Extract credentials and base URL from m3u_url
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     
-    # Retrieve the full movie list from the API
     movies_list = GetMoviesList()
 
-    # Check each wanted movie against the movies list
     for wanted in wanted_movies.copy():
         PrintLog(f"Searching for wanted movie '{wanted}' (method: string)", "NOTICE")
         matches = [movie for movie in movies_list if wanted.lower() in movie['name'].lower()]
         found_match = False
         for movie in matches:
             movie_dir_path = os.path.join(movies_dir, movie['name'])
-            # Check if the directory exists and overwrite is not allowed
             if os.path.exists(movie_dir_path) and overwrite_movies != 1:
                 PrintLog(f"Skipping '{movie['name']}' as it already exists and overwrite is not allowed", "WARNING")
                 continue
 
-            # Prepare the directory and .strm file
             os.makedirs(movie_dir_path, exist_ok=True)
             strm_file_path = os.path.join(movie_dir_path, f"{movie['name']}.strm")
             strm_content = f"{base_url}/movie/{username}/{password}/{movie['stream_id']}.mkv"
 
-            # Write to .strm file
             with open(strm_file_path, 'w') as strm_file:
                 strm_file.write(strm_content)
             PrintLog(f"Created .strm file for {movie['name']}", "NOTICE")
@@ -1095,7 +996,6 @@ def find_wanted_movies_string(movies_dir):
             wanted_movies.remove(wanted)
         else:
             PrintLog(f"No match found for '{wanted}'", "NOTICE")
-
 
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
 
@@ -1111,27 +1011,22 @@ def add_movie_to_server():
 
     username, password = extract_credentials_from_url(m3u_url)
 
-    # Check if URL, username, and password are present
     if not m3u_url or not username or not password:
         raise ValueError("M3U URL, username, or password not found in the configuration.")
     
-    # Parse the M3U URL to get the base parts for constructing the .strm URL
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
-    # Prepare the directory and .strm file
     movie_dir_path = os.path.join(movies_dir, movie_name)
     os.makedirs(movie_dir_path, exist_ok=True)
     strm_file_path = os.path.join(movie_dir_path, f"{movie_name}.strm")
     strm_content = f"{base_url}/movie/{username}/{password}/{movie_id}.mkv"
     
-    # Write to .strm file
     with open(strm_file_path, 'w') as strm_file:
         strm_file.write(strm_content)
 
     PrintLog(f"Adding new file: {strm_file_path}", "NOTICE")
     return jsonify(message="Movie added successfully"), 200
-    # flash('Movie addedd successfully!', 'success')
 
 @main_bp.route('/')
 def index():
@@ -1140,13 +1035,13 @@ def index():
 # Display the group selection form
 @main_bp.route('/channel_selection', methods=['GET'])
 def channel_selection():
-    # Ensure your GROUPS_CACHE is up to date before rendering the page
     if not is_cache_valid():
         update_groups_cache()
     return render_template('channel_selection.html', groups=GROUPS_CACHE['groups'])
 
 # Process the selected groups and update config.py
 @main_bp.route('/save_channel_selection', methods=['POST'])
+@admin_required
 def save_channel_selection():
     selected_groups = request.form.getlist('selected_groups[]')
     all_channels = get_channels_for_selected_groups(selected_groups)
@@ -1172,7 +1067,6 @@ def get_channels_for_selected_groups(selected_groups):
     if not os.path.exists(m3u_path):
         raise FileNotFoundError(f"The original M3U file at '{m3u_path}' was not found.")
     
-    # Use the playlist module correctly to load the M3U file
     m3u_playlist = playlist.loadf(m3u_path)
     for channel in m3u_playlist:
         if channel.attributes.get('group-title') in selected_groups:
@@ -1181,24 +1075,10 @@ def get_channels_for_selected_groups(selected_groups):
     PrintLog(f"Channels to be added: {all_channels}", "INFO")
     return all_channels
 
-def update_target_channel_namesOLD(new_channels):
-    existing_channel_names = get_config_variable(CONFIG_PATH, 'target_channel_names')
-
-    # Combine existing channels with new channels, ensuring uniqueness
-    updated_channel_names = list(set(existing_channel_names + new_channels))
-    PrintLog(f"updated channels: ", updated_channel_names)
-
-    update_config_array(CONFIG_PATH, 'target_channel_names', updated_channel_names)
-
-    return True
-
 def update_target_channel_names(new_channels):
     existing_channel_names = get_config_variable(CONFIG_PATH, 'target_channel_names')
 
-    # Filter out duplicates from new_channels that are already in existing_channel_names
     unique_new_channels = [channel for channel in new_channels if channel not in existing_channel_names]
-
-    # Combine existing channels with unique new channels, maintaining the order
     updated_channel_names = existing_channel_names + unique_new_channels
     PrintLog("updated channels: ", updated_channel_names)
 
@@ -1209,21 +1089,19 @@ def update_target_channel_names(new_channels):
 
 @main_bp.route('/reorder_channels', methods=['GET'])
 def reorder_channels():
-    # Load channels from config.py
     channel_names = get_config_variable(CONFIG_PATH, 'target_channel_names')
-
     return render_template('reorder_channels.html', channel_names=channel_names)
 
 @main_bp.route('/save_reordered_channels', methods=['POST'])
+@admin_required
 def save_reordered_channels():
     new_order = request.form.get('channel_order')
     new_channel_names = json.loads(new_order)
-
     update_config_array(CONFIG_PATH, 'target_channel_names', new_channel_names)
-
     return redirect(url_for('main_bp.reorder_channels'))
 
 @main_bp.route('/settings', methods=['GET', 'POST'])
+@admin_required
 def settings():
     form = ConfigForm(request.form)
     
@@ -1234,7 +1112,7 @@ def settings():
             original_m3u_path = f'{BASE_DIR}/files/original.m3u'
             download_m3u(form.url.data, original_m3u_path)
 
-        update_config_variable(CONFIG_PATH, 'url',form.url.data)
+        update_config_variable(CONFIG_PATH, 'url', form.url.data)
         update_config_variable(CONFIG_PATH, 'output', form.output.data)
         update_config_variable(CONFIG_PATH, 'maxage_before_download', form.maxage.data)
         update_config_variable(CONFIG_PATH, 'new_group_title', form.new_group_title.data)
@@ -1247,8 +1125,6 @@ def settings():
         update_config_variable(CONFIG_PATH, 'hide_webserver_logs', form.hide_webserver_logs.data)
         update_config_variable(CONFIG_PATH, 'match_type', form.match_type.data)
 
-
-        # Reschedule 'M3U Download scheduler'
         job = scheduler.get_job('M3U Download scheduler')
         if job:
             if str(job.trigger.interval) != str(f"{form.maxage.data}:00:00"):
@@ -1259,7 +1135,6 @@ def settings():
                 else:
                     scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=form.maxage.data)
 
-        # Reschdule 'VOD scheduler'
         job = scheduler.get_job('VOD scheduler')
         if form.enable_scheduler.data == "0":
             if job:
@@ -1281,7 +1156,6 @@ def settings():
 
         return redirect(url_for('main_bp.settings'))
 
-    # For a GET request, populate the form with existing values
     else:
         form.url.data = get_config_variable(CONFIG_PATH, 'url')
         form.output.data = get_config_variable(CONFIG_PATH, 'output')
@@ -1301,22 +1175,18 @@ def settings():
 
 @main_bp.route('/groups')
 def groups():
-    global GROUPS_CACHE  # Reference the global cache
+    global GROUPS_CACHE
     desired_group_titles = []
 
     try:
-        # Check if the cache is valid and use it if so
         if is_cache_valid():
-            # Read desired_group_titles from config.py for checking checkboxes
             with open(CONFIG_PATH, 'r') as file:
                 config_content = file.read()
             config_namespace = {}
             exec(config_content, {}, config_namespace)
             desired_group_titles = config_namespace.get('desired_group_titles', [])
-            # Render with cached groups and desired_group_titles for checkbox states
             return render_template('groups.html', groups=GROUPS_CACHE['groups'], desired_group_titles=desired_group_titles)
 
-        # Cache is not valid; proceed to fetch and update
         with open(CONFIG_PATH, 'r') as file:
             config_content = file.read()
         config_namespace = {}
@@ -1334,7 +1204,6 @@ def groups():
         if not os.path.exists(m3u_path):
             raise FileNotFoundError(f"The original M3U file at '{m3u_path}' was not found.")
 
-        # Fetch new groups since the cache is invalid or empty
         GROUPS_CACHE['groups'] = fetch_channel_groups(m3u_path)
         GROUPS_CACHE['last_updated'] = datetime.now()
         desired_group_titles = config_namespace.get('desired_group_titles', [])
@@ -1346,14 +1215,13 @@ def groups():
         flash(str(e), 'danger')
         GROUPS_CACHE['groups'] = []
 
-    # Render the template with groups and desired_group_titles to control checkbox states
     return render_template('groups.html', groups=GROUPS_CACHE['groups'], desired_group_titles=desired_group_titles)
 
 @main_bp.route('/save-groups', methods=['POST'])
+@admin_required
 def save_groups():
     selected_groups = request.form.getlist('selected_groups[]')
     
-    # Call the function to update config.py
     if save_selected_groups(selected_groups):
         flash('Group settings updated successfully!', 'success')
     else:
@@ -1377,13 +1245,12 @@ def reorder_groups():
     return render_template('reorder_groups.html', desired_group_titles=desired_group_titles)
 
 @main_bp.route('/save_reordered_groups', methods=['POST'])
+@admin_required
 def save_reordered_groups():
-
-    # Retrieve and parse the JSON string from the form
     group_order_str = request.form.get('group_order', '[]')
     new_order = json.loads(group_order_str)
 
-    app.logger.debug(f"New order from the form: {new_order}")  # Log for debugging
+    app.logger.debug(f"New order from the form: {new_order}")
     update_config_array(CONFIG_PATH, 'desired_group_titles', new_order)
 
     return redirect(url_for('main_bp.reorder_groups'))
@@ -1393,11 +1260,9 @@ def save_selected_groups(selected_groups):
     end_marker = ']'
 
     try:
-        # Read the entire config file
         with open(CONFIG_PATH, 'r') as file:
             lines = file.readlines()
         
-        # Find start and end of the desired_group_titles list
         start_index = end_index = None
         for i, line in enumerate(lines):
             if start_marker in line:
@@ -1406,18 +1271,14 @@ def save_selected_groups(selected_groups):
                 end_index = i
                 break
         
-        # Safety check in case the markers are not found or improperly formatted
         if start_index is None or end_index is None:
             raise ValueError("Could not locate 'desired_group_titles' list in config.py")
         
-        # Remove existing groups within the markers
         del lines[start_index + 1:end_index]
         
-        # Insert new groups
         new_groups_lines = [f'    "{group}",\n' for group in sorted(selected_groups)]
         lines[start_index + 1:start_index + 1] = new_groups_lines
         
-        # Write back to config.py
         with open(CONFIG_PATH, 'w') as file:
             file.writelines(lines)
 
@@ -1428,48 +1289,37 @@ def save_selected_groups(selected_groups):
 
 
 def ansi_to_html_converter(text):
-    # ANSI color code regex
     ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
 
-    # Dictionary of ANSI color codes and their HTML class equivalents
     ansi_to_html = {
-        '\x1B[0m': '</span>',  # Reset code
-        '\x1B[33m': '<span class="ansi-yellow">',  # Yellow text
-        '\x1B[31m\x1B[1m': '<span class="ansi-bold-red">',  # Bold Red text
-        '\x1B[36m': '<span class="ansi-cyan">',  # Cyan text
-        # Add other color codes and their classes as needed
+        '\x1B[0m': '</span>',
+        '\x1B[33m': '<span class="ansi-yellow">',
+        '\x1B[31m\x1B[1m': '<span class="ansi-bold-red">',
+        '\x1B[36m': '<span class="ansi-cyan">',
     }
 
-
-    # Replace ANSI codes with HTML span tags and classes
     for ansi, html in ansi_to_html.items():
         text = text.replace(ansi, html)
-    # Remove any remaining ANSI codes that haven't been translated
     text = ansi_escape.sub('', text)
     return text
 
 def get_log_lines(page, lines_per_page, hide_webserver_logs):
-    # Assuming BASE_DIR is defined globally or passed into the function. Update accordingly.
     log_file = f'{BASE_DIR}/logs/M3Usort.log'
     all_lines = []
     
     with open(log_file, 'r') as file:
         for line in file:
-            # If hiding webserver logs, skip lines containing "GET /" or "POST /"
             if hide_webserver_logs == "1" and ('GET /' in line or 'POST /' in line):
                 continue
             all_lines.append(line.strip())
     
-    # Reverse the order to show the most recent logs first
     all_lines.reverse()
 
     total_pages = len(all_lines) // lines_per_page + (1 if len(all_lines) % lines_per_page > 0 else 0)
     
-    # Calculate start and end indices for slicing
     start_index = (page - 1) * lines_per_page
     end_index = start_index + lines_per_page
     
-    # Slice the list to get the lines for the requested page
     page_lines = all_lines[start_index:end_index]
     
     return page_lines, total_pages
@@ -1487,13 +1337,12 @@ def log():
     page = request.args.get('page', 1, type=int)
     lines_per_page = 75
 
-    log_entries = []  # Will store tuples of (metadata, message, css_class)
+    log_entries = []
 
     log_content, total_pages = get_log_lines(page, lines_per_page, hide_webserver_logs)
-    #total_pages = len(log_content) // lines_per_page + (1 if len(log_content) % lines_per_page > 0 else 0)
 
     for line in log_content:
-        parts = line.split(' ', 3)  # Split at the third space character
+        parts = line.split(' ', 3)
         if len(parts) >= 4:
             metadata, message = parts[0] + ' ' + parts[1] + ' ' + parts[2], parts[3]
         else:
@@ -1538,13 +1387,8 @@ def fetch_channel_groups(m3u_path):
 
 def init():
     PrintLog(f"Starting M3Usort {VERSION}", "NOTICE")
-
-    # Startup
     startup_instant()
-
-    # Startup stuff that needs the server to be ready before execution
     Thread(target=startup_delayed).start()
-
 
 
 def startup_delayed():
@@ -1572,7 +1416,6 @@ def startup_delayed():
                     PrintLog(f"Using existing M3U file: {original_m3u_path}", "INFO")
                     update_groups_cache()
 
-                # Schedule a task to check for
                 debug = get_config_variable(CONFIG_PATH, 'debug')
                 if debug == "yes":
                     scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', minutes=max_age_before_download)
@@ -1580,7 +1423,6 @@ def startup_delayed():
                     scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=max_age_before_download)
 
                 m3u_url = get_config_variable(CONFIG_PATH, 'url')
-
                 enable_scheduler = get_config_variable(CONFIG_PATH, 'enable_scheduler')
 
                 if enable_scheduler == "1":
@@ -1607,7 +1449,7 @@ def startup_instant():
     current_secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
     if current_secret_key == "ChangeMe!":
         PrintLog("Updating SECRET_KEY . . .", "INFO")
-        new_secret_key = secrets.token_urlsafe(16)  # Generates a secure, random key
+        new_secret_key = secrets.token_urlsafe(16)
         update_config_variable(CONFIG_PATH, 'SECRET_KEY', new_secret_key)
         app.config['SECRET_KEY'] = new_secret_key
 
@@ -1620,13 +1462,11 @@ def startup_instant():
 
     files_dir = f'{BASE_DIR}/files'
     if not os.path.exists(files_dir):
-        # Create the directory
         os.makedirs(files_dir)
         PrintLog(f"Directory {files_dir} created.", "INFO")
 
     check_for_app_updates()
 
-    # Check for default passwords
     hashed_admin_pw_from_config = get_config_variable(CONFIG_PATH, 'admin_password')
     hashed_playlist_pw_from_config = get_config_variable(CONFIG_PATH, 'playlist_password')
 
@@ -1663,11 +1503,9 @@ def update_groups_cache():
     PrintLog("End building the cache", "INFO") 
 
 
-
 def check_for_app_updates():
     global UPDATE_AVAILABLE, UPDATE_VERSION
     try:
-        # Fetch the changelog content from GitHub
         url = "https://raw.githubusercontent.com/koffienl/M3Usort/main/CHANGELOG.md"
         response = requests.get(url)
         if response.status_code != 200:
@@ -1675,7 +1513,6 @@ def check_for_app_updates():
             return
         
         changelog_content = response.text
-        # Extract version numbers from the changelog content
         version_pattern = r"## (\d+\.\d+\.\d+)"
         matches = re.findall(version_pattern, changelog_content)
         
@@ -1683,7 +1520,6 @@ def check_for_app_updates():
             print("No version found in changelog.")
             return
         
-        # Assume the first match is the most recent version
         latest_version = matches[0]
         print(latest_version)
         if version.parse(latest_version) > version.parse(VERSION):
@@ -1705,12 +1541,10 @@ def record_admin_failed_login():
     global ADMIN_FAILED_LOGIN_ATTEMPTS, ADMIN_LAST_ATTEMPT_TIME, ADMIN_LOCKED
     now = datetime.now()
     if ADMIN_LAST_ATTEMPT_TIME is None or now - ADMIN_LAST_ATTEMPT_TIME > LOCKOUT_TIMEFRAME:
-        # Reset the counter if we're outside the timeframe
         ADMIN_FAILED_LOGIN_ATTEMPTS = 1
     else:
         ADMIN_FAILED_LOGIN_ATTEMPTS += 1
     ADMIN_LAST_ATTEMPT_TIME = now
-    # Check for lockout condition
     if ADMIN_FAILED_LOGIN_ATTEMPTS >= MAX_ATTEMPTS:
         ADMIN_LOCKED = 1
         PrintLog(f"Too many login attempts, admin password is now locked for {LOCKOUT_TIMEFRAME}", "WARNING")
@@ -1718,7 +1552,6 @@ def record_admin_failed_login():
 def check_admin_locked():
     global ADMIN_LOCKED, ADMIN_LAST_ATTEMPT_TIME
     if ADMIN_LOCKED and (datetime.now() - ADMIN_LAST_ATTEMPT_TIME) > LOCKOUT_TIMEFRAME:
-        # Reset lockout and counter after the timeframe
         ADMIN_LOCKED = 0
         reset_admin_login_attempts()
     return ADMIN_LOCKED
@@ -1734,12 +1567,10 @@ def record_playlist_failed_login():
     global PLAYLIST_FAILED_LOGIN_ATTEMPTS, PLAYLIST_LAST_ATTEMPT_TIME, PLAYLIST_LOCKED
     now = datetime.now()
     if PLAYLIST_LAST_ATTEMPT_TIME is None or now - PLAYLIST_LAST_ATTEMPT_TIME > LOCKOUT_TIMEFRAME:
-        # Reset the counter if we're outside the timeframe
         PLAYLIST_FAILED_LOGIN_ATTEMPTS = 1
     else:
         PLAYLIST_FAILED_LOGIN_ATTEMPTS += 1
     PLAYLIST_LAST_ATTEMPT_TIME = now
-    # Check for lockout condition
     if PLAYLIST_FAILED_LOGIN_ATTEMPTS >= MAX_ATTEMPTS:
         PLAYLIST_LOCKED = 1
         PrintLog(f"Too many login attempts, playlist password is now locked for {LOCKOUT_TIMEFRAME}", "WARNING")
@@ -1747,7 +1578,6 @@ def record_playlist_failed_login():
 def check_playlist_locked():
     global PLAYLIST_LOCKED, PLAYLIST_LAST_ATTEMPT_TIME
     if PLAYLIST_LOCKED and (datetime.now() - PLAYLIST_LAST_ATTEMPT_TIME) > LOCKOUT_TIMEFRAME:
-        # Reset lockout and counter after the timeframe
         PLAYLIST_LOCKED = 0
         reset_playlist_login_attempts()
     return PLAYLIST_LOCKED
@@ -1755,13 +1585,9 @@ def check_playlist_locked():
 @app.route('/update', methods=['GET', 'POST'])
 def update():
     if request.method == 'POST':
-        # Ensure that base_dir is the path where your git repository is located
         try:
-            # Change the current working directory to BASE_DIR
             os.chdir(BASE_DIR)
-            # Execute the git pull command
             result = subprocess.run(['git', 'pull'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            # Check if the git pull was successful
             if result.returncode == 0:
                 print("Git pull executed successfully.")
                 print(result.stdout.decode('utf-8'))
@@ -1780,7 +1606,6 @@ def running_as_service():
     service_name = "M3Usort.service"
     global RUNNING_AS_SERVICE
 
-    # Skip check when running inside Docker
     if os.environ.get("IN_DOCKER"):
         RUNNING_AS_SERVICE = 0
         return
@@ -1789,8 +1614,7 @@ def running_as_service():
         result = subprocess.run(['systemctl', 'is-active', service_name],
                                 stdout=subprocess.PIPE, 
                                 stderr=subprocess.PIPE,
-                                check=False)  # Use check=False to avoid raising an exception on non-zero exit codes
-        # Set RUNNING_AS_SERVICE based on the command output
+                                check=False)
         if result.stdout.decode('utf-8').strip() == 'active':
             RUNNING_AS_SERVICE = 1
         else:
@@ -1827,8 +1651,6 @@ http://fakeiptv.fake:123/456/789/16644
 
 @app.route('/player_api.php', methods=['GET', 'POST'])
 def player_apiphp():
-
-    # Sample data to mimic the response from the API
     user_info = {"user_info":{"auth":1,"status":"Active","exp_date":"2524876541","is_trial":"1","active_cons":"0","created_at":"1619992800","max_connections":"99"}}
     series_data = [{"name":"Breaking Bad (FAKE)","series_id":"1001"},{"name":"Game of Thrones (FAKE)","series_id":"1002"},{"name":"Stranger Things (FAKE)","series_id":"1003"}]
     episode_data_1001 = {"seasons":[{"episode_count":4,"id":71170,"name":"Season 1","season_number":1}],"info":{"name":"Breaking Bad (FAKE)"},"episodes":{"1":[{"id":"11933","episode_num":1,"season":1},{"id":"11933","episode_num":2,"season":1},{"id":"11933","episode_num":3,"season":1}]}}
@@ -1836,16 +1658,12 @@ def player_apiphp():
     episode_data_1003 = {"seasons":[{"episode_count":4,"id":71170,"name":"Season 1","season_number":1}],"info":{"name":"Stranger Things (FAKE)"},"episodes":{"1":[{"id":"11933","episode_num":1,"season":1},{"id":"11933","episode_num":2,"season":1},{"id":"11933","episode_num":3,"season":1}]}}
     movies_data = [{"name":"Interstellar (FAKE)","stream_id":"103"},{"name":"Blade Runner 2049 (FAKE)","stream_id":"105"},{"name":"The Grand Budapest Hotel (FAKE)","stream_id":"106"}]
 
-
     action = request.args.get('action')
-    #category_id = request.args.get('catgeory_id')
     series_id = request.args.get('series_id')
     
-    # Return user info
     if action == 'get_user_info':
         return jsonify(user_info)
 
-    # Return series data
     if action == 'get_series':
         return jsonify(series_data)
 
@@ -1857,11 +1675,7 @@ def player_apiphp():
         elif series_id == "1003":
             return jsonify(episode_data_1003)
 
-
-    # Return movies data
     elif action == 'get_vod_streams':
         return jsonify(movies_data)
     
-    # Default response for unsupported actions
     return jsonify({"error": "Unsupported action"}), 400
-
