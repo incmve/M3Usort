@@ -8,15 +8,15 @@
             <form action="{{ url_for('login') }}" method="post">
                 <div>
                     <label for="password">Password:</label>
-                    <input type="password" id="password" name="password" required autofocus>
+                    <input type="password" id="password" name="password" autofocus>
                 </div>
-                <div>
-                    <input class="button-primary" type="submit" value="Login" style="margin-top: 1rem;">
-
+                <div style="margin-top: 1rem; display: flex; gap: 1rem; align-items: center;">
+                    <input class="button-primary" type="submit" value="Login">
+                    <button type="submit" name="guest" value="1" style="background: none; border: none; color: #aaa; cursor: pointer; font-size: 0.9rem; padding: 0; text-decoration: underline;">
+                        Continue as Guest
+                    </button>
                 </div>
             </form>
-
-
         </div>
     </div>
 </div>
