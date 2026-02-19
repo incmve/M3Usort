@@ -86,7 +86,7 @@ def admin_required(f):
 
 # ─── Context processor ───────────────────────────────────────────────────────
 
-@main_bp.app_context_processor
+@app.context_processor
 def inject_globals():
     return dict(
         RUNNING_AS_SERVICE=RUNNING_AS_SERVICE,
@@ -767,6 +767,57 @@ def movies():
     movies = [{'name': movie['name'], 'stream_id': movie['stream_id'], 'stream_icon': movie['stream_icon']} for movie in movies_data]
 
     return render_template('movies.html', movies=movies, wanted_movies=wanted_movies)
+
+
+@main_bp.route('/new')
+def new_today():
+    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    scheme, rest = m3u_url.split('://')
+    domain_with_port, _ = rest.split('/get.php')
+    username, password = extract_credentials_from_url(m3u_url)
+
+    today = datetime.now().date()
+    today_str = today.strftime('%B %d, %Y')
+
+    # Fetch new movies
+    new_movies = []
+    try:
+        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams"
+        response = requests.get(api_url)
+        response.raise_for_status()
+        for movie in response.json():
+            added = movie.get('added')
+            if added:
+                added_date = datetime.fromtimestamp(int(added)).date()
+                if added_date == today:
+                    new_movies.append({
+                        'name': movie['name'],
+                        'stream_id': movie['stream_id'],
+                        'stream_icon': movie.get('stream_icon', '')
+                    })
+    except Exception as e:
+        PrintLog(f"Error fetching new movies: {e}", "ERROR")
+
+    # Fetch new series
+    new_series = []
+    try:
+        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series"
+        response = requests.get(api_url)
+        response.raise_for_status()
+        for serie in response.json():
+            added = serie.get('last_modified') or serie.get('added')
+            if added:
+                added_date = datetime.fromtimestamp(int(added)).date()
+                if added_date == today:
+                    new_series.append({
+                        'name': serie['name'],
+                        'series_id': serie['series_id'],
+                        'series_cover': serie.get('cover', '')
+                    })
+    except Exception as e:
+        PrintLog(f"Error fetching new series: {e}", "ERROR")
+
+    return render_template('new.html', new_movies=new_movies, new_series=new_series, today=today_str)
 
 
 @main_bp.route('/add_wanted_serie', methods=['POST'])
