@@ -1,0 +1,177 @@
+{% extends 'layout.html' %}
+
+{% block content %}
+
+<div class="container">
+    <div class="row">
+        <div class="twelve columns">
+            <h4>New Today</h4>
+            <p style="color: #aaa; font-size: 0.9rem;">Showing content added on {{ today }}</p>
+
+            <div class="search-container">
+                <input type="text" class="u-full-width" id="search-bar" placeholder="Search new content..." onkeyup="searchNew()">
+            </div>
+        </div>
+    </div>
+
+    <div class="row" style="margin-top: 1rem;">
+        <!-- Movies column -->
+        <div class="six columns">
+            <h5>🎬 Movies <span style="color: #aaa; font-size: 0.85rem;">({{ new_movies|length }})</span></h5>
+            {% if new_movies %}
+            <ul id="movies-list">
+                {% for movie in new_movies %}
+                <li class="new-item">
+                    <a href="#" class="movie-link"
+                        data-movie-name="{{ movie.name }}"
+                        data-movie-id="{{ movie.stream_id }}"
+                        data-movie-icon="{{ movie.stream_icon }}">
+                        {{ movie.name }}
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p style="color: #aaa;">No new movies today.</p>
+            {% endif %}
+        </div>
+
+        <!-- Series column -->
+        <div class="six columns">
+            <h5>📺 Series <span style="color: #aaa; font-size: 0.85rem;">({{ new_series|length }})</span></h5>
+            {% if new_series %}
+            <ul id="series-list">
+                {% for serie in new_series %}
+                <li class="new-item">
+                    <a href="javascript:void(0)" class="serie-link"
+                        data-serie-name="{{ serie.name }}"
+                        data-serie-id="{{ serie.series_id }}"
+                        data-serie-cover="{{ serie.series_cover }}">
+                        {{ serie.name }}
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p style="color: #aaa;">No new series today.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+    function hideFlashMessagesAfterDelay() {
+        const flashMessages = document.querySelectorAll('.flash-message');
+        flashMessages.forEach(flashMessage => {
+            if (!flashMessage.classList.contains('static')) {
+                setTimeout(() => {
+                    flashMessage.style.opacity = '0';
+                    setTimeout(() => flashMessage.remove(), 600);
+                }, 5000);
+            }
+        });
+    }
+
+    function addMovieToServer(movieName, movieId) {
+        fetch('{{ url_for("main_bp.add_movie_to_server") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ movieName, movieId }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            var container = document.getElementById('flash-messages-container');
+            var div = document.createElement('div');
+            div.textContent = data.message;
+            div.className = 'flash-message info';
+            container.appendChild(div);
+            hideFlashMessagesAfterDelay();
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    function addSerieToServer(serieName, serieId) {
+        fetch('{{ url_for("main_bp.add_series_to_server") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ serieName, serieId }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            var container = document.getElementById('flash-messages-container');
+            var div = document.createElement('div');
+            div.textContent = data.message;
+            div.className = 'flash-message info';
+            container.appendChild(div);
+            hideFlashMessagesAfterDelay();
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const modal = document.getElementById("myModal");
+        const modalText = document.getElementById("modal-text");
+        const modalImage = document.getElementById("modal-image");
+        const confirmBtn = document.getElementById("confirmBtn");
+        const cancelBtn = document.getElementById("cancelBtn");
+        const span = document.getElementsByClassName("close")[0];
+
+        // Movie links
+        document.querySelectorAll('.movie-link').forEach(link => {
+            link.addEventListener('click', function () {
+                const movieName = this.getAttribute('data-movie-name');
+                const movieId = this.getAttribute('data-movie-id');
+                const movieIcon = this.getAttribute('data-movie-icon');
+                modalText.innerHTML = `Are you sure you want to add Movie '${movieName}'?`;
+                modalImage.innerHTML = movieIcon ? `<a href="${movieIcon}" target="_blank"><img src="${movieIcon}"></a>` : '';
+                modal.style.display = "block";
+                confirmBtn.onclick = function () {
+                    modalImage.innerHTML = "";
+                    modal.style.display = "none";
+                    addMovieToServer(movieName, movieId);
+                };
+            });
+        });
+
+        // Serie links
+        document.querySelectorAll('.serie-link').forEach(link => {
+            link.addEventListener('click', function () {
+                const serieName = this.getAttribute('data-serie-name');
+                const serieId = this.getAttribute('data-serie-id');
+                const serieCover = this.getAttribute('data-serie-cover');
+                modalText.innerHTML = `Are you sure you want to add Serie '${serieName}'?`;
+                modalImage.innerHTML = serieCover ? `<a href="${serieCover}" target="_blank"><img src="${serieCover}"></a>` : '';
+                modal.style.display = "block";
+                confirmBtn.onclick = function () {
+                    modalImage.innerHTML = "";
+                    modal.style.display = "none";
+                    addSerieToServer(serieName, serieId);
+                };
+            });
+        });
+
+        cancelBtn.onclick = function () {
+            modalImage.innerHTML = '';
+            modal.style.display = "none";
+        };
+        span.onclick = function () {
+            modalImage.innerHTML = '';
+            modal.style.display = "none";
+        };
+        window.onclick = function (event) {
+            if (event.target == modal) {
+                modalImage.innerHTML = '';
+                modal.style.display = "none";
+            }
+        };
+    });
+
+    function searchNew() {
+        let input = document.getElementById('search-bar').value.toLowerCase();
+        document.querySelectorAll('.new-item').forEach(item => {
+            item.style.display = item.textContent.toLowerCase().includes(input) ? '' : 'none';
+        });
+    }
+</script>
+
+{% endblock %}
