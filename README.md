@@ -218,3 +218,12 @@ This will generate a new M3U playlist file according to your specifications, whi
 - For URLs with special characters (e.g., "&", "?"), ensure they are correctly quoted in `config.py` to avoid parsing issues.
 - The `Requests` library is used for downloading the playlist, and `IPyTV` for parsing and generating M3U files.
 
+---
+
+## ⚠️ Disclaimer
+
+M3Usort is provided as-is without warranty of any kind. It may not work in all environments or with every playlist format.
+
+This project does not endorse or support illegal IPTV services. The author is not responsible for how users choose to use this software. I do not provide, recommend, or have knowledge of illegal IPTV sources.
+
+Feature requests are not guaranteed. If you need additional functionality, feel free to fork the project.
