@@ -41,7 +41,7 @@ scheduler.start()
 
 
 # Global variables
-VERSION = '0.1.23'
+VERSION = '0.1.24'
 UPDATE_AVAILABLE = 0
 UPDATE_VERSION = ""
 GROUPS_CACHE = {'groups': [], 'last_updated': None}
@@ -130,6 +130,35 @@ def scheduled_system_tasks():
     check_for_app_updates()
 
 
+def save_vod_cache():
+    """Fetch and save full movies and series data from provider to local JSON cache files."""
+    try:
+        m3u_url = get_config_variable(CONFIG_PATH, 'url')
+        scheme, rest = m3u_url.split('://')
+        domain_with_port, _ = rest.split('/get.php')
+        username, password = extract_credentials_from_url(m3u_url)
+
+        # Save movies cache
+        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams"
+        response = requests.get(api_url)
+        response.raise_for_status()
+        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+        with open(movies_cache_path, 'w', encoding='utf-8') as f:
+            json.dump(response.json(), f)
+        PrintLog("Saved movies cache", "INFO")
+
+        # Save series cache
+        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series"
+        response = requests.get(api_url)
+        response.raise_for_status()
+        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+        with open(series_cache_path, 'w', encoding='utf-8') as f:
+            json.dump(response.json(), f)
+        PrintLog("Saved series cache", "INFO")
+
+    except Exception as e:
+        PrintLog(f"Error saving VOD cache: {e}", "ERROR")
+
 def scheduled_vod_download():
     series_dir = get_config_variable(CONFIG_PATH, 'series_dir')
     update_series_directory(series_dir)
@@ -138,6 +167,8 @@ def scheduled_vod_download():
     movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir')
     update_movies_directory(movies_dir)
     find_wanted_movies(movies_dir)
+
+    save_vod_cache()
 
 def scheduled_renew_m3u():
     m3u_url = get_config_variable(CONFIG_PATH, 'url')
@@ -771,53 +802,69 @@ def movies():
 
 @main_bp.route('/new')
 def new_today():
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
-    scheme, rest = m3u_url.split('://')
-    domain_with_port, _ = rest.split('/get.php')
-    username, password = extract_credentials_from_url(m3u_url)
-
     today = datetime.now().date()
-    today_str = today.strftime('%B %d, %Y')
+    week_start = today - timedelta(days=6)
+    week_str = f"{week_start.strftime('%B %d')} – {today.strftime('%B %d, %Y')}"
 
-    # Fetch new movies
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+
+    # Check if cache files exist
+    cache_age = None
+    if os.path.exists(movies_cache_path):
+        cache_mod_time = datetime.fromtimestamp(os.path.getmtime(movies_cache_path))
+        cache_age = get_time_diff(movies_cache_path)
+
     new_movies = []
-    try:
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams"
-        response = requests.get(api_url)
-        response.raise_for_status()
-        for movie in response.json():
-            added = movie.get('added')
-            if added:
-                added_date = datetime.fromtimestamp(int(added)).date()
-                if added_date == today:
-                    new_movies.append({
-                        'name': movie['name'],
-                        'stream_id': movie['stream_id'],
-                        'stream_icon': movie.get('stream_icon', '')
-                    })
-    except Exception as e:
-        PrintLog(f"Error fetching new movies: {e}", "ERROR")
+    if os.path.exists(movies_cache_path):
+        try:
+            with open(movies_cache_path, 'r', encoding='utf-8') as f:
+                movies_data = json.load(f)
+            for movie in movies_data:
+                added = movie.get('added')
+                if added:
+                    added_date = datetime.fromtimestamp(int(added)).date()
+                    if added_date >= week_start:
+                        new_movies.append({
+                            'name': movie['name'],
+                            'stream_id': movie['stream_id'],
+                            'stream_icon': movie.get('stream_icon', '')
+                        })
+        except Exception as e:
+            PrintLog(f"Error reading movies cache: {e}", "ERROR")
+            flash("Movies cache could not be read. Please trigger a VOD download first.", "warning")
+    else:
+        flash("No movies cache found. Please trigger a VOD download first.", "warning")
 
-    # Fetch new series
     new_series = []
-    try:
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series"
-        response = requests.get(api_url)
-        response.raise_for_status()
-        for serie in response.json():
-            added = serie.get('last_modified') or serie.get('added')
-            if added:
-                added_date = datetime.fromtimestamp(int(added)).date()
-                if added_date == today:
-                    new_series.append({
-                        'name': serie['name'],
-                        'series_id': serie['series_id'],
-                        'series_cover': serie.get('cover', '')
-                    })
-    except Exception as e:
-        PrintLog(f"Error fetching new series: {e}", "ERROR")
+    if os.path.exists(series_cache_path):
+        try:
+            with open(series_cache_path, 'r', encoding='utf-8') as f:
+                series_data = json.load(f)
+            for serie in series_data:
+                added = serie.get('last_modified') or serie.get('added')
+                if added:
+                    added_date = datetime.fromtimestamp(int(added)).date()
+                    if added_date >= week_start:
+                        new_series.append({
+                            'name': serie['name'],
+                            'series_id': serie['series_id'],
+                            'series_cover': serie.get('cover', '')
+                        })
+        except Exception as e:
+            PrintLog(f"Error reading series cache: {e}", "ERROR")
+            flash("Series cache could not be read. Please trigger a VOD download first.", "warning")
+    else:
+        flash("No series cache found. Please trigger a VOD download first.", "warning")
 
-    return render_template('new.html', new_movies=new_movies, new_series=new_series, today=today_str)
+    return render_template('new.html', new_movies=new_movies, new_series=new_series, today=week_str, cache_age=cache_age)
+
+
+@main_bp.route('/refresh_vod_cache')
+def refresh_vod_cache():
+    save_vod_cache()
+    flash("VOD cache refreshed successfully.", "success")
+    return redirect(url_for('main_bp.new_today'))
 
 
 @main_bp.route('/add_wanted_serie', methods=['POST'])
@@ -1557,7 +1604,7 @@ def update_groups_cache():
 def check_for_app_updates():
     global UPDATE_AVAILABLE, UPDATE_VERSION
     try:
-        url = "https://raw.githubusercontent.com/incmve/M3Usort/main/CHANGELOG.md"
+        url = "https://raw.githubusercontent.com/incmve/M3Usort/refs/heads/beta/CHANGELOG.md"
         response = requests.get(url)
         if response.status_code != 200:
             print("Failed to fetch the changelog.")
