@@ -5,6 +5,8 @@ What started as a small python tool has grown into its current form. With M3USor
 
 After a fresh install, the program will create a URL to emulate the IPTV API. It will connect to itself, providing some fake channel groups, fake channels, fake movies, and fake series. The playlist works for the program but obviously will not work with an IPTV player. It is made to get to know the app. You will need your own IPTV subscription. Do not ask me about where to get that.
 
+The VOD section creates strm files to add to Jellyfin
+
 ## Installation on docker ##
 docker compose
 ```
