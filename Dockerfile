@@ -15,7 +15,7 @@ COPY requirements.txt .
 RUN python3 -m venv /venv && \
     /venv/bin/pip install --no-cache-dir -r requirements.txt
 
-RUN git clone -b beta https://github.com/incmve/M3Usort.git /tmp/M3Usort
+RUN git clone -b main https://github.com/incmve/M3Usort.git /tmp/M3Usort
 
 
 CMD ["/bin/bash", "-c", "cp -r /tmp/M3Usort/* /data/M3Usort/ && exec /venv/bin/python /data/M3Usort/run.py"]
