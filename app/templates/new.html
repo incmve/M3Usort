@@ -5,11 +5,17 @@
 <div class="container">
     <div class="row">
         <div class="twelve columns">
-            <h4>New Today</h4>
-            <p style="color: #aaa; font-size: 0.9rem;">Showing content added on {{ today }}</p>
+            <h4>New This Week</h4>
+            <p style="color: #aaa; font-size: 0.9rem;">
+                Showing content added this week ({{ today }})
+                {% if cache_age %}
+                &nbsp;·&nbsp; Cache updated {{ cache_age }} ago
+                {% endif %}
+                &nbsp;·&nbsp; <a href="{{ url_for('main_bp.refresh_vod_cache') }}" style="color: #aaa;">↻ Refresh cache</a>
+            </p>
 
             <div class="search-container">
-                <input type="text" class="u-full-width" id="search-bar" placeholder="Search new content..." onkeyup="searchNew()">
+                <input type="text" class="u-full-width" id="search-bar" placeholder="Search new this week..." onkeyup="searchNew()">
             </div>
         </div>
     </div>
