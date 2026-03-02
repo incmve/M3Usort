@@ -5,11 +5,49 @@ What started as a small python tool has grown into its current form. With M3USor
 
 After a fresh install, the program will create a URL to emulate the IPTV API. It will connect to itself, providing some fake channel groups, fake channels, fake movies, and fake series. The playlist works for the program but obviously will not work with an IPTV player. It is made to get to know the app. You will need your own IPTV subscription. Do not ask me about where to get that.
 
+The VOD section creates strm files to add to Jellyfin
+
+## Installation on docker ##
+docker compose
+```
+services:
+  m3usort:
+    image: incmve/m3usort:latest
+    container_name: m3usort
+    volumes:
+      - /opt/stacks/m3usort:/data/M3Usort
+      - /data/media/movies:/data/media/movies
+      - /data/media/tv:/data/media/tv
+    restart: always
+    environment:
+      - IN_DOCKER=true
+      - PUID=0
+      - PGID=0
+      - TZ=Europe/Amsterdam
+    ports:
+      - 5050:5050
+networks: {}
+```
+docker run
+```
+docker run -d \
+  --name m3usort \
+  --restart always \
+  -p 5050:5050 \
+  -e IN_DOCKER=true \
+  -e PUID=0 \
+  -e PGID=0 \
+  -e TZ=Europe/Amsterdam \
+  -v /opt/stacks/m3usort:/data/M3Usort \
+  -v /data/media/movies:/data/media/movies \
+  -v /data/media/tv:/data/media/tv \
+  incmve/m3usort:latest
+```
 ## Installation on plain Linux
 When using a freshly installed Linux server (Debian 12, for instance), these are the steps to install:
 ```bash
 apt install python3 pip git -y
-git clone https://github.com/koffienl/M3Usort.git
+git clone https://github.com/incmve/M3Usort.git
 pip install Flask Flask-WTF requests m3u-ipytv flask_apscheduler packaging --break-system-packages
 cd M3Usort
 python3 run.py
@@ -180,3 +218,12 @@ This will generate a new M3U playlist file according to your specifications, whi
 - For URLs with special characters (e.g., "&", "?"), ensure they are correctly quoted in `config.py` to avoid parsing issues.
 - The `Requests` library is used for downloading the playlist, and `IPyTV` for parsing and generating M3U files.
 
+---
+
+## ⚠️ Disclaimer
+
+M3Usort is provided as-is without warranty of any kind. It may not work in all environments or with every playlist format.
+
+This project does not endorse or support illegal IPTV services. The author is not responsible for how users choose to use this software. I do not provide, recommend, or have knowledge of illegal IPTV sources.
+
+Feature requests are not guaranteed. If you need additional functionality, feel free to fork the project.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.24
+- AChanged "New today" to "New this week" and local cache.
+  
+## 0.1.23
+- Added guest user that can only add movies and tv shows
+- Added "New today" in the VOD menu
+  
 ## 0.1.22
 - Project wasn't working when dockerized
 
