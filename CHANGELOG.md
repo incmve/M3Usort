@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.1.24
-- AChanged "New today" to "New this week" and local cache.
+- Changed "New today" to "New this week" and local cache.
   
 ## 0.1.23
 - Added guest user that can only add movies and tv shows
