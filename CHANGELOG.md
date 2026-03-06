@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.25
+- Improved Dockerfile: multi-stage build, clones beta branch, smaller final image (no git or build tools)
+
 ## 0.1.24
 - Changed "New today" to "New this week" and local cache.
   
