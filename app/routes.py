@@ -41,7 +41,7 @@ scheduler.start()
 
 
 # Global variables
-VERSION = '0.1.24'
+VERSION = '0.1.25'
 UPDATE_AVAILABLE = 0
 UPDATE_VERSION = ""
 GROUPS_CACHE = {'groups': [], 'last_updated': None}
