@@ -81,7 +81,7 @@
           <tr>
             <th>Version:</th>
             {% if update_available %}
-            <td id="version"><a href="https://github.com/koffienl/M3Usort/blob/main/CHANGELOG.md" target="_blank"
+            <td id="version"><a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank"
                 class="update">{{ version }}</a></td>
             {% else %}
             <td id="version">{{ version }}</td>
@@ -156,7 +156,7 @@
           if (data.update_available == 0) {
             document.getElementById("version").textContent = data.version;
           } else if (data.update_available == 1) {
-            document.getElementById("version").innerHTML = `<a href="https://github.com/koffienl/M3Usort/blob/main/CHANGELOG.md" target="_blank" class="update">${data.version}</a>`;
+            document.getElementById("version").innerHTML = `<a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" class="update">${data.version}</a>`;
           }
         })
         .catch((error) => console.error("Error fetching data: ", error));
