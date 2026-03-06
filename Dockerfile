@@ -2,8 +2,9 @@
 FROM debian:bookworm-slim AS fetcher
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN git clone -b main https://github.com/incmve/M3Usort.git /tmp/M3Usort
+RUN git clone -b beta https://github.com/incmve/M3Usort.git /tmp/M3Usort
 
 # Stage 2: build the venv
 FROM python:3.11-slim AS builder
@@ -16,4 +17,4 @@ FROM python:3.11-slim
 COPY --from=fetcher /tmp/M3Usort /app/M3Usort
 COPY --from=builder /venv /venv
 WORKDIR /app
-CMD ["/bin/bash", "-c", "cp -r /app/M3Usort/* /data/M3Usort/ && exec /venv/bin/python /data/M3Usort/run.py"]
+CMD ["/bin/bash", "-c", "mkdir -p /data/M3Usort && cp -r /app/M3Usort/* /data/M3Usort/ && exec /venv/bin/python /data/M3Usort/run.py"]
