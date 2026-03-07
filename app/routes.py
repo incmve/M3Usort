@@ -1619,7 +1619,7 @@ def check_for_app_updates():
         url = "https://raw.githubusercontent.com/incmve/M3Usort/refs/heads/main/CHANGELOG.md"
         response = requests.get(url)
         if response.status_code != 200:
-            print("Failed to fetch the changelog.")
+            PrintLog("Failed to fetch the changelog.", "WARNING")
             return
         
         changelog_content = response.text
@@ -1627,18 +1627,20 @@ def check_for_app_updates():
         matches = re.findall(version_pattern, changelog_content)
         
         if not matches:
-            print("No version found in changelog.")
+            PrintLog("No version found in changelog.", "WARNING")
             return
         
         latest_version = matches[0]
-        print(latest_version)
+        PrintLog(f"Latest version in changelog: {latest_version}", "INFO")
         if version.parse(latest_version) > version.parse(VERSION):
             UPDATE_AVAILABLE = 1
             UPDATE_VERSION = latest_version
-            PrintLog(f"Update available!", "WARNING")
+            PrintLog(f"Update available: {latest_version}", "WARNING")
+        else:
+            PrintLog("No update available, running latest version.", "INFO")
     
     except Exception as e:
-        print(f"Error checking for updates: {e}")
+        PrintLog(f"Error checking for updates: {e}", "ERROR")
 
 
 def reset_admin_login_attempts():
