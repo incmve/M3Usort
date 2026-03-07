@@ -41,7 +41,7 @@ scheduler.start()
 
 
 # Global variables
-VERSION = '0.1.25'
+from .__version__ import __version__ as VERSION
 UPDATE_AVAILABLE = 0
 UPDATE_VERSION = ""
 GROUPS_CACHE = {'groups': [], 'last_updated': None}
@@ -187,12 +187,15 @@ def file_hash(filepath):
 
 
 def download_m3u(url, output_path):
-    response = requests.get(url)
-    response.raise_for_status()
-    with open(output_path, 'w', encoding='utf-8') as file:
-        file.write(response.text)
-    sleep(1)
-    update_groups_cache()
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        with open(output_path, 'w', encoding='utf-8') as file:
+            file.write(response.text)
+        sleep(1)
+        update_groups_cache()
+    except Exception as e:
+        PrintLog(f"Error downloading M3U: {e}", "ERROR")
 
 def is_download_needed(file_path, max_age_hours):
     if not os.path.exists(file_path):
@@ -573,11 +576,13 @@ def GetMoviesList():
     username, password = extract_credentials_from_url(m3u_url)
     api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
 
-    response = requests.get(api_url)
-    response.raise_for_status()
-    movies_data = response.json()
-
-    movies = [{'name': movie['name'], 'stream_id': movie['stream_id']} for movie in movies_data]
+    try:
+        response = requests.get(api_url)
+        response.raise_for_status()
+        movies_data = response.json()
+        movies = [{'name': movie['name'], 'stream_id': movie['stream_id']} for movie in movies_data]
+    except Exception as e:
+        PrintLog(f"Error fetching movies list: {e}", "ERROR")
     return movies
 
 @app.route('/GetSeriesList')
@@ -588,12 +593,14 @@ def GetSeriesList():
     username, password = extract_credentials_from_url(m3u_url)
     api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series&category_id=ALL"
 
-    response = requests.get(api_url)
-    response.raise_for_status()
-    series_data = response.json()
-
-    series = [{'name': serie['name'], 'series_id': serie['series_id'], 'series_cover': serie['cover']} for serie in series_data]
-
+    series = []
+    try:
+        response = requests.get(api_url)
+        response.raise_for_status()
+        series_data = response.json()
+        series = [{'name': serie['name'], 'series_id': serie['series_id'], 'series_cover': serie['cover']} for serie in series_data]
+    except Exception as e:
+        PrintLog(f"Error fetching series list: {e}", "ERROR")
     return series
 
 def DownloadSeries(series_id):
@@ -608,8 +615,13 @@ def DownloadSeries(series_id):
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     series_info_url = f"{base_url}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
-    response = requests.get(series_info_url)
-    series_info = response.json()
+    try:
+        response = requests.get(series_info_url)
+        response.raise_for_status()
+        series_info = response.json()
+    except Exception as e:
+        PrintLog(f"Error fetching series info for ID {series_id}: {e}", "ERROR")
+        return
     series_name = series_info['info']['name']
 
     try:

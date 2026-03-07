@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.26
+- Fixed scheduled job crash when provider isn't available
+- changed version info to __version__.py
 ## 0.1.25
 - Improved Dockerfile: multi-stage build, clones beta branch, smaller final image (no git or build tools)
 
