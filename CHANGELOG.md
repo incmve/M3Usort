@@ -1,6 +1,9 @@
 # Changelog
 
 ## 0.1.26
+- Added the option to refresh Jellyfin
+
+## 0.1.26
 - Fixed scheduled job crash when provider isn't available
 - changed version info to __version__.py
 ## 0.1.25
