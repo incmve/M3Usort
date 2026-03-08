@@ -17,4 +17,4 @@ FROM python:3.11-slim
 COPY --from=fetcher /tmp/M3Usort /app/M3Usort
 COPY --from=builder /venv /venv
 WORKDIR /app
-CMD ["/bin/bash", "-c", "mkdir -p /data/M3Usort && cp -r /app/M3Usort/* /data/M3Usort/ && exec /venv/bin/python /data/M3Usort/run.py"]
+CMD ["/bin/bash", "-c", "mkdir -p /data/M3Usort && cp -rf /app/M3Usort/* /data/M3Usort/ && exec /venv/bin/python /data/M3Usort/run.py"]
