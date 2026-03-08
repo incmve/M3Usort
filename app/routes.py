@@ -159,6 +159,19 @@ def save_vod_cache():
     except Exception as e:
         PrintLog(f"Error saving VOD cache: {e}", "ERROR")
 
+def refresh_jellyfin():
+    if get_config_variable(CONFIG_PATH, 'jellyfin_enabled') != "1":
+        return
+    jellyfin_url = get_config_variable(CONFIG_PATH, 'jellyfin_url')
+    jellyfin_api_key = get_config_variable(CONFIG_PATH, 'jellyfin_api_key')
+    if jellyfin_url and jellyfin_api_key:
+        try:
+            requests.post(f"{jellyfin_url}/Library/Refresh",
+                         headers={"X-Emby-Token": jellyfin_api_key})
+            PrintLog("Jellyfin library refresh triggered", "INFO")
+        except Exception as e:
+            PrintLog(f"Error refreshing Jellyfin: {e}", "ERROR")
+
 def scheduled_vod_download():
     series_dir = get_config_variable(CONFIG_PATH, 'series_dir')
     update_series_directory(series_dir)
@@ -169,6 +182,7 @@ def scheduled_vod_download():
     find_wanted_movies(movies_dir)
 
     save_vod_cache()
+    refresh_jellyfin()
 
 def scheduled_renew_m3u():
     m3u_url = get_config_variable(CONFIG_PATH, 'url')
@@ -1234,6 +1248,9 @@ def settings():
         update_config_variable(CONFIG_PATH, 'overwrite_movies', form.overwrite_movies.data)
         update_config_variable(CONFIG_PATH, 'hide_webserver_logs', form.hide_webserver_logs.data)
         update_config_variable(CONFIG_PATH, 'match_type', form.match_type.data)
+        update_config_variable(CONFIG_PATH, 'jellyfin_enabled', form.jellyfin_enabled.data)
+        update_config_variable(CONFIG_PATH, 'jellyfin_url', form.jellyfin_url.data)
+        update_config_variable(CONFIG_PATH, 'jellyfin_api_key', form.jellyfin_api_key.data)
 
         job = scheduler.get_job('M3U Download scheduler')
         if job:
@@ -1279,6 +1296,9 @@ def settings():
         form.overwrite_movies.data = get_config_variable(CONFIG_PATH, 'overwrite_movies')
         form.hide_webserver_logs.data = get_config_variable(CONFIG_PATH, 'hide_webserver_logs')
         form.match_type.data = get_config_variable(CONFIG_PATH, 'match_type')
+        form.jellyfin_enabled.data = get_config_variable(CONFIG_PATH, 'jellyfin_enabled') or "0"
+        form.jellyfin_url.data = get_config_variable(CONFIG_PATH, 'jellyfin_url')
+        form.jellyfin_api_key.data = get_config_variable(CONFIG_PATH, 'jellyfin_api_key')
 
     return render_template('settings.html', form=form)
 

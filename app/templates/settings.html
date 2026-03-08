@@ -77,6 +77,25 @@
                     </div>
                 </div>
 
+                <hr>
+
+                <div class="row">
+                    <div class="six columns">
+                        <label for="jellyfin_enabled">{{ form.jellyfin_enabled.label }}</label>
+                        {{ form.jellyfin_enabled(class_="u-full-width") }}
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="six columns">
+                        <label for="jellyfin_url">{{ form.jellyfin_url.label }}</label>
+                        {{ form.jellyfin_url(class_="u-full-width", placeholder="http://jellyfin:8096") }}
+                    </div>
+                    <div class="six columns">
+                        <label for="jellyfin_api_key">{{ form.jellyfin_api_key.label }}</label>
+                        {{ form.jellyfin_api_key(class_="u-full-width", placeholder="Your Jellyfin API key") }}
+                    </div>
+                </div>
 
                 <input type="submit" name="submit" value="Save" class="button-primary" style="margin-top: 1rem;">
             </form>
