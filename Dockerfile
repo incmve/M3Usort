@@ -4,7 +4,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN git clone -b main https://github.com/incmve/M3Usort.git /tmp/M3Usort
+ARG BRANCH
+RUN git clone -b ${BRANCH} https://github.com/incmve/M3Usort.git /tmp/M3Usort
 
 # Stage 2: build the venv
 FROM python:3.11-slim AS builder
