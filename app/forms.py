@@ -1,6 +1,6 @@
 from flask_wtf import FlaskForm
 from wtforms import StringField, SubmitField, IntegerField, SelectField
-from wtforms.validators import DataRequired, URL, NumberRange
+from wtforms.validators import DataRequired, URL, NumberRange, Optional
 
 class ConfigForm(FlaskForm):
     url = StringField('M3U URL', validators=[DataRequired(), URL()])
@@ -15,5 +15,7 @@ class ConfigForm(FlaskForm):
     overwrite_movies = SelectField ('Overwrite existing movies', choices=[('1', 'Yes'), ('0', 'No')], validators=[DataRequired()])
     hide_webserver_logs = SelectField('Hide webserver logs', choices=[('1', 'Yes'), ('0', 'No')], validators=[DataRequired()])
     match_type = SelectField('Matching method', choices=[('1', 'String comparison'), ('2', 'Fuzzywuzzy')], validators=[DataRequired()])
+    jellyfin_enabled = SelectField('Enable Jellyfin integration', choices=[('1', 'Yes'), ('0', 'No')], validators=[DataRequired()])
+    jellyfin_url = StringField('Jellyfin URL', validators=[Optional()])
+    jellyfin_api_key = StringField('Jellyfin API Key', validators=[Optional()])
     submit = SubmitField('Save')
-

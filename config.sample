@@ -16,6 +16,9 @@ SECRET_KEY = "ChangeMe!"
 debug = "no"
 hide_webserver_logs = "1"
 match_type = "1"
+jellyfin_enabled = "0"
+jellyfin_url = ""
+jellyfin_api_key = ""
 
 
 # List of channel groups to whitelist
