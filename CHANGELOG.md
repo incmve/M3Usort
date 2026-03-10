@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.26
+## 0.1.27
 - Added the option to refresh Jellyfin
 
 ## 0.1.26
