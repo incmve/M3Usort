@@ -114,11 +114,10 @@
         .catch(error => console.error('Error:', error));
     }
 
-    function loadVodInfo(streamId, icon, type) {
+    function loadVodInfo(streamId, icon, type, title) {
         const modalImage = document.getElementById("modal-image");
         const modalLinks = document.getElementById("modal-links");
 
-        // Show image immediately, not clickable yet
         modalImage.innerHTML = icon ? `<img src="${icon}" style="max-width: 100%; max-height: 400px; display: block; margin: 0 auto;">` : '';
         modalLinks.innerHTML = `<span style="color:#999; font-size:0.85em;">Loading info...</span>`;
 
@@ -131,17 +130,17 @@
         fetch(endpoint)
             .then(r => r.json())
             .then(data => {
-                let pageUrl = null;
                 let btns = '';
                 if (data.tmdb_id) {
-                    pageUrl = `https://www.themoviedb.org/${tmdbType}/${data.tmdb_id}`;
-                    btns += `<a href="${pageUrl}" target="_blank" class="button" style="margin-right:8px;">TMDB</a>`;
+                    btns += `<a href="https://www.themoviedb.org/${tmdbType}/${data.tmdb_id}" target="_blank" class="button" style="margin-right:8px;">TMDB</a>`;
                 }
                 if (data.imdb_id) {
-                    if (!pageUrl) pageUrl = `https://www.imdb.com/title/${data.imdb_id}`;
-                    btns += `<a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button">IMDB</a>`;
+                    btns += `<a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button" style="margin-right:8px;">IMDB</a>`;
                 }
-                modalLinks.innerHTML = btns || '';
+                if (!btns) {
+                    btns = `<a href="https://www.themoviedb.org/search?query=${encodeURIComponent(title)}" target="_blank" class="button">Search TMDB</a>`;
+                }
+                modalLinks.innerHTML = btns;
             })
             .catch(() => { modalLinks.innerHTML = ''; });
     }
@@ -169,7 +168,7 @@
                 const movieIcon = this.getAttribute('data-movie-icon');
                 modalText.innerHTML = `Are you sure you want to add Movie '${movieName}'?`;
                 modal.style.display = "block";
-                loadVodInfo(movieId, movieIcon, 'movie');
+                loadVodInfo(movieId, movieIcon, 'movie', movieName);
                 confirmBtn.onclick = function () {
                     closeModal();
                     addMovieToServer(movieName, movieId);
@@ -185,7 +184,7 @@
                 const serieCover = this.getAttribute('data-serie-cover');
                 modalText.innerHTML = `Are you sure you want to add Serie '${serieName}'?`;
                 modal.style.display = "block";
-                loadVodInfo(serieId, serieCover, 'serie');
+                loadVodInfo(serieId, serieCover, 'serie', serieName);
                 confirmBtn.onclick = function () {
                     closeModal();
                     addSerieToServer(serieName, serieId);
