@@ -114,13 +114,56 @@
         .catch(error => console.error('Error:', error));
     }
 
+    function loadVodInfo(streamId, icon, type) {
+        const modalImage = document.getElementById("modal-image");
+        const modalLinks = document.getElementById("modal-links");
+
+        // Show image immediately, not clickable yet
+        modalImage.innerHTML = icon ? `<img src="${icon}" style="max-width: 100%; max-height: 400px; display: block; margin: 0 auto;">` : '';
+        modalLinks.innerHTML = `<span style="color:#999; font-size:0.85em;">Loading info...</span>`;
+
+        const endpoint = type === 'movie'
+            ? `{{ url_for('main_bp.get_vod_info', stream_id=0) }}`.replace('/0', `/${streamId}`)
+            : `{{ url_for('main_bp.get_series_info_meta', series_id=0) }}`.replace('/0', `/${streamId}`);
+
+        const tmdbType = type === 'movie' ? 'movie' : 'tv';
+
+        fetch(endpoint)
+            .then(r => r.json())
+            .then(data => {
+                let pageUrl = null;
+                let btns = '';
+                if (data.tmdb_id) {
+                    pageUrl = `https://www.themoviedb.org/${tmdbType}/${data.tmdb_id}`;
+                    btns += `<a href="${pageUrl}" target="_blank" class="button" style="margin-right:8px;">TMDB</a>`;
+                }
+                if (data.imdb_id) {
+                    if (!pageUrl) pageUrl = `https://www.imdb.com/title/${data.imdb_id}`;
+                    btns += `<a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button">IMDB</a>`;
+                }
+                modalLinks.innerHTML = btns || '';
+                // Make image clickable if we have a url
+                if (pageUrl && icon) {
+                    modalImage.innerHTML = `<a href="${pageUrl}" target="_blank"><img src="${icon}" style="max-width: 100%; max-height: 400px; display: block; margin: 0 auto;"></a>`;
+                }
+            })
+            .catch(() => { modalLinks.innerHTML = ''; });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         const modal = document.getElementById("myModal");
         const modalText = document.getElementById("modal-text");
         const modalImage = document.getElementById("modal-image");
+        const modalLinks = document.getElementById("modal-links");
         const confirmBtn = document.getElementById("confirmBtn");
         const cancelBtn = document.getElementById("cancelBtn");
         const span = document.getElementsByClassName("close")[0];
+
+        function closeModal() {
+            modalImage.innerHTML = '';
+            modalLinks.innerHTML = '';
+            modal.style.display = "none";
+        }
 
         // Movie links
         document.querySelectorAll('.movie-link').forEach(link => {
@@ -129,11 +172,10 @@
                 const movieId = this.getAttribute('data-movie-id');
                 const movieIcon = this.getAttribute('data-movie-icon');
                 modalText.innerHTML = `Are you sure you want to add Movie '${movieName}'?`;
-                modalImage.innerHTML = movieIcon ? `<a href="${movieIcon}" target="_blank"><img src="${movieIcon}"></a>` : '';
                 modal.style.display = "block";
+                loadVodInfo(movieId, movieIcon, 'movie');
                 confirmBtn.onclick = function () {
-                    modalImage.innerHTML = "";
-                    modal.style.display = "none";
+                    closeModal();
                     addMovieToServer(movieName, movieId);
                 };
             });
@@ -146,29 +188,19 @@
                 const serieId = this.getAttribute('data-serie-id');
                 const serieCover = this.getAttribute('data-serie-cover');
                 modalText.innerHTML = `Are you sure you want to add Serie '${serieName}'?`;
-                modalImage.innerHTML = serieCover ? `<a href="${serieCover}" target="_blank"><img src="${serieCover}"></a>` : '';
                 modal.style.display = "block";
+                loadVodInfo(serieId, serieCover, 'serie');
                 confirmBtn.onclick = function () {
-                    modalImage.innerHTML = "";
-                    modal.style.display = "none";
+                    closeModal();
                     addSerieToServer(serieName, serieId);
                 };
             });
         });
 
-        cancelBtn.onclick = function () {
-            modalImage.innerHTML = '';
-            modal.style.display = "none";
-        };
-        span.onclick = function () {
-            modalImage.innerHTML = '';
-            modal.style.display = "none";
-        };
+        cancelBtn.onclick = closeModal;
+        span.onclick = closeModal;
         window.onclick = function (event) {
-            if (event.target == modal) {
-                modalImage.innerHTML = '';
-                modal.style.display = "none";
-            }
+            if (event.target == modal) closeModal();
         };
     });
 
