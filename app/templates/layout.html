@@ -47,6 +47,11 @@
     <!-- Footer -->
     {% block footer %}{% endblock %}
 
+    <!-- Lightbox overlay -->
+    <div id="lightbox" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:9999; cursor:zoom-out; align-items:center; justify-content:center;">
+        <img id="lightbox-img" src="" style="max-width:90vw; max-height:90vh; object-fit:contain; border-radius:4px;">
+    </div>
+
     <div id="myModal" class="modal">
         <div class="modal-content">
             <span class="close">&times;</span>
