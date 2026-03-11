@@ -36,93 +36,51 @@
 }
 
 .delete-btn {
-    margin-left: auto; /* This ensures that the delete button aligns to the right */
+    margin-left: auto;
 }
 
 .button-container {
-    display: flex; /* Aligns children (the buttons) in a row */
-    justify-content: flex-start; /* Aligns the buttons to the start of the container */
+    display: flex;
+    justify-content: flex-start;
 }
 
 .button-primary, #cancelBtn {
-    margin-right: 10px; /* Add space between the buttons */
-    /* Other styles for your buttons */
+    margin-right: 10px;
 }
 
-/* Remove any margin-right on the last button */
 .button-primary:last-child, #cancelBtn:last-child {
     margin-right: 0;
 }
 
 .modal-body {
-    display: flex; /* Use flexbox for layout */
-    align-items: center; /* Center-align the items vertically */
+    display: flex;
+    align-items: flex-start;
     padding: 10px;
+    gap: 20px;
 }
 
 #modal-image {
-    opacity: 1;
-    width: 120px; /* Set the width of the thumbnail */
-    height: 120px; /* Set the height of the thumbnail */
-    margin-right: 20px; /* Space between the image container and the text */
-    display: flex;
-    justify-content: center; /* Centers content horizontally */
-    font-size: 120px; /* Adjust the size to fit within the container */
-    color: #e74c3c; /* Text color */
-    font-weight: bold; /* Make the character bold */
     flex: none;
-    align-items: center;  Centers content vertically 
+    width: 180px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
 }
 
 #modal-image img {
-    opacity: 1;
-    max-width: 100%; /* Ensure the image fits inside the div */
-    max-height: 100%; /* Ensure the image fits inside the div */
-    
+    max-width: 100%;
+    max-height: 300px;
+    display: block;
+    border-radius: 4px;
+    cursor: zoom-in;
 }
 
 .modal-text-buttons {
-    flex-grow: 1; /* Allow this div to take the remaining space */
+    flex-grow: 1;
     display: flex;
-    flex-direction: column; /* Stack items vertically */
-    justify-content: center; /* Center items vertically within the container */
+    flex-direction: column;
+    justify-content: center;
 }
-
-
-
-#modal-image a {
-
-    width: 120px; /* Set the width of the thumbnail */
-    height: 120px; /* Set the height of the thumbnail */
-
-    margin-right: 20px; /* Space between the image container and the text */
-    display: flex;
-    justify-content: center; /* Centers content horizontally */
-    font-size: 120px; /* Adjust the size to fit within the container */
-    color: #e74c3c; /* Text color */
-    font-weight: bold; /* Make the character bold */
-    flex: none;
-    align-items: center;  Centers content vertically 
-
-
-
-    display: inline-block; /* or 'block' depending on your layout */
-    text-decoration: none; /* Removes underline from links */
-    padding: 0;
-    margin: 0;
-    /* Add other resets if necessary */
-}
-
-#modal-image a img {
-    display: block; /* This will ensure the image is a block level element inside the link /
-    width: 100%; / Inherit width from the parent /
-    height: auto; / Maintain aspect ratio */
-    }
-
-
-
-
-
 
 #movies-list {
     max-height: 30vh;
@@ -133,8 +91,8 @@
 }
 
 #series-list {
-    max-height: 30vh; /* Adjust based on preference */
-    overflow-y: auto; /* Enable vertical scrolling */
+    max-height: 30vh;
+    overflow-y: auto;
     margin: 0;
     padding: 0;
     list-style-type: none;
@@ -149,8 +107,8 @@
 }
 
 #wanted-series-list {
-    max-height: 30vh; /* Adjust based on preference */
-    overflow-y: auto; /* Enable vertical scrolling */
+    max-height: 30vh;
+    overflow-y: auto;
     margin: 0;
     padding: 0;
     list-style-type: none;
@@ -160,175 +118,71 @@
     margin-bottom: 20px;
 }
 
-
-
 /* Dark mode specific styles */
 .list-group-item {
-    background-color: #333; /* Darker background for contrast */
-    color: #fff; /* White text for visibility */
-    border: 1px solid #444; /* Slightly lighter border for definition */
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #444;
 }
 
 .list-group-item .drag-handle {
-    color: #aaa; /* Lighter color for the drag handle */
+    color: #aaa;
 }
 
-
-/* Add this to ensure that during dragging, the item has a distinct style */
- .list-group-item.dragging {
-    opacity: 0.95; /* Semi-transparent */
-    background-color: #555; /* Different background to indicate dragging */
-    border: 1px dashed #666; /* Dashed border for a "moving" effect */
+.list-group-item.dragging {
+    opacity: 0.95;
+    background-color: #555;
+    border: 1px dashed #666;
 }
 
 .list-group-item:hover {
-    background-color: #383838; /* Slightly lighter background on hover for feedback */
+    background-color: #383838;
 }
 
-/* Add this to ensure that during dragging, the item has a distinct style */
 .list-group-item.dragging {
-    opacity: 0.75; /* Semi-transparent */
-    background-color: #555; /* Different background to indicate dragging */
-    border: 1px dashed #666; /* Dashed border for a "moving" effect */
+    opacity: 0.75;
+    background-color: #555;
+    border: 1px dashed #666;
 }
 
 .delete-btn {
-  border: none;
-  background: none;
-  cursor: pointer;
-  color: red;
-  /* or any color */
-  float: right;
-  /* position it to the right */
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: red;
+    float: right;
     text-decoration: none;
-
+    display: none;
 }
 
 .draggable-item:hover .delete-btn {
-  display: block;
+    display: block;
     text-decoration: none;
-
-}
-
-.delete-btn {
-  display: none;
 }
 
 .draggable-item {
-  cursor: move;
-  /* Change cursor to indicate moving */
-  padding: 10px;
-  border: 1px solid #ccc;
-  background-color: #626363;
-  margin-bottom: 5px;
-  /* Space between items */
-  border-radius: 5px;
-  /* Optional: adds rounded corners */
-  display: flex;
-  align-items: center;
+    cursor: move;
+    padding: 10px;
+    border: 1px solid #ccc;
+    background-color: #626363;
+    margin-bottom: 5px;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
 }
 
 .drag-handle {
-  margin-right: 10px;
-    color: #aaa; /* Lighter color for the drag handle */
-  /* A shade of gray */
-  user-select: none;
-  /* Prevents text selection */
+    margin-right: 10px;
+    color: #aaa;
+    user-select: none;
 }
-
-
-
-
-
 
 .navbar {
-  position: relative;
+    position: relative;
     margin: 0 auto;
     padding: 0 20px;
     max-width: 960px;
-
 }
-
-.nnavbar {
-padding-top: 80px;
-    width: 80%;
-padding-right: 0px;
-    padding-bottom: 0px;
-    padding-left: 0px;
-    position: static;
-    width: 100%;
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 0 20px;
-    box-sizing: border-box;
-}
-
-.ttt
-{
-    position: fixed;
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 0 20px;
-    box-sizing: border-box;
-    width: 85%;
-
-
-}
-
-
-
-.ccontainer {
- padding-top: 80px;
-}
-
-/* Adjust body padding so content doesn't hide behind navbar */
-bbody {
-  padding-top: 60px; /* Adjust based on the height of your navbar */
-}
-
-
-/* Responsive adjustments for smaller screens */
-@media (max-width: 768px) { /* Adjust this breakpoint as necessary */
-  body {
-    padding-top: 100px; /* Increase padding for smaller screens */
-  }
-}
-
-@media (max-width: 600px) {
-  .navbar {
-    height: auto;
-    padding-bottom: 120px; /* Give extra space for the stacked menu items */
-  }
-  
-  body {
-    padding-top: 180px; /* Increase padding for the taller navbar */
-  }
-}
-
-
-.__menu-item:hover {
-    background-color: #333; /* Or any dark color of your choice */
-    color: #fff; /* Change text color to white for better visibility if needed */
-}
-
-.__nav-menu li:hover {
-    background-color: #333; /* Or any dark color of your choice */
-    color: #fff; /* Change text color to white for better visibility if needed */
-}
-
-
-.nfixed-top {
-  position: fixed; /* Fix the position */
-  top: 0; /* Align the navbar to the top */
-  width: 100%; /* Make the navbar extend full width */
-  z-index: 1030; /* Ensure it sits above other content */
-}
-
-/* Optional: Add some padding to the body to prevent content from hiding behind the navbar */
-bbody {
-  padding-top: 60px; /* This value depends on the exact height of your navbar */
-}
-
 
 .flash-message {
     padding: 15px;
@@ -363,8 +217,6 @@ bbody {
     border-color: #f1c40f;
 }
 
-
-/* Add this to your CSS file (e.g., style.css) */
 .navbar-list {
     list-style-type: none;
     margin: 0;
@@ -391,7 +243,6 @@ bbody {
 .dropdown-content {
     display: none;
     position: absolute;
-/*]f9f9f9 */
     background-color: #f9f9f9;
     min-width: 160px;
     box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
