@@ -1124,6 +1124,46 @@ def find_wanted_movies_string(movies_dir):
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
 
 
+@main_bp.route('/get_vod_info/<int:stream_id>')
+def get_vod_info(stream_id):
+    try:
+        m3u_url = get_config_variable(CONFIG_PATH, 'url')
+        scheme, rest = m3u_url.split('://')
+        domain_with_port, _ = rest.split('/get.php')
+        username, password = extract_credentials_from_url(m3u_url)
+        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_info&vod_id={stream_id}"
+        response = requests.get(api_url, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        info = data.get('info', {})
+        return jsonify({
+            'tmdb_id': info.get('tmdb_id') or info.get('tmdb'),
+            'imdb_id': info.get('imdb_id') or info.get('imdb'),
+        })
+    except Exception as e:
+        return jsonify({'tmdb_id': None, 'imdb_id': None, 'error': str(e)})
+
+
+@main_bp.route('/get_series_info/<int:series_id>')
+def get_series_info_meta(series_id):
+    try:
+        m3u_url = get_config_variable(CONFIG_PATH, 'url')
+        scheme, rest = m3u_url.split('://')
+        domain_with_port, _ = rest.split('/get.php')
+        username, password = extract_credentials_from_url(m3u_url)
+        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
+        response = requests.get(api_url, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        info = data.get('info', {})
+        return jsonify({
+            'tmdb_id': info.get('tmdb_id') or info.get('tmdb'),
+            'imdb_id': info.get('imdb_id') or info.get('imdb'),
+        })
+    except Exception as e:
+        return jsonify({'tmdb_id': None, 'imdb_id': None, 'error': str(e)})
+
+
 @main_bp.route('/add_movie_to_server', methods=['POST'])
 def add_movie_to_server():
     data = request.get_json()

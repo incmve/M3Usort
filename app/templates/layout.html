@@ -18,8 +18,6 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='normalize.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='skeleton-main.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='skeleton-dark.css') }}">
-
-
     <link rel="stylesheet" href="{{ url_for('static', filename='extra.css') }}">
 
     <!-- Favicon -->
@@ -31,9 +29,6 @@
 <body>
 
     {% include 'nav.html' %}
-    <!-- <div class="container"> -->
-
-
 
     <!-- Flash Messages -->
     <div id="flash-messages-container" class="container">
@@ -51,30 +46,19 @@
 
     <!-- Footer -->
     {% block footer %}{% endblock %}
-    <!-- </div> -->
-
-
-    <!-- The Modal 
-    <div id="myModal" class="modal">
-        <div class="modal-content">
-            <span class="close">&times;</span>
-            <p id="modal-text">Are you sure you want to add this movie?</p>
-            <button class="button-primary" id="confirmBtn" style="margin-right: 10px;">Yes</button>
-            <button id="cancelBtn">No</button>
-        </div>
-    </div>
--->
-
 
     <div id="myModal" class="modal">
         <div class="modal-content">
             <span class="close">&times;</span>
             <div class="modal-body">
                 <div id="modal-image">
-                    <!-- Insert your image here -->
+                    <!-- poster image injected here -->
                 </div>
                 <div class="modal-text-buttons">
-                    <p id="modal-text">Qustion?</p>
+                    <p id="modal-text">Question?</p>
+                    <div id="modal-links" style="margin-bottom: 8px;">
+                        <!-- TMDB / IMDB buttons injected here -->
+                    </div>
                     <div class="button-container">
                         <button class="button-primary" id="confirmBtn">Yes</button>
                         <button id="cancelBtn">No</button>
@@ -83,9 +67,6 @@
             </div>
         </div>
     </div>
-
-
-
 
     {% block scripts %}{% endblock %}
 </body>

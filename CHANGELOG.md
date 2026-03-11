@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.28
+- Added TMDB and IMDB buttons to the movie/series add modal
+- Poster image now displays large directly in modal (no new tab on click)
+- Added /get_vod_info/<stream_id> and /get_series_info/<series_id> routes
+  that proxy the provider API to retrieve tmdb_id and imdb_id
+- Updated layout.html with modal-links div for dynamic button injection
+
 ## 0.1.27
 - Added the option to refresh Jellyfin
 
