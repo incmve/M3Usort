@@ -170,19 +170,19 @@
         };
     });
 
-    // Lightbox
-    document.getElementById('modal-image').addEventListener('click', function (e) {
-        if (e.target.tagName === 'IMG') {
-            const lb = document.getElementById('lightbox');
-            document.getElementById('lightbox-img').src = e.target.src;
-            lb.style.display = 'flex';
-        }
-    });
-    document.getElementById('lightbox').addEventListener('click', function () {
-        this.style.display = 'none';
-    });
-    document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') document.getElementById('lightbox').style.display = 'none';
+        document.getElementById('modal-image').addEventListener('click', function (e) {
+            if (e.target.tagName === 'IMG') {
+                const lb = document.getElementById('lightbox');
+                document.getElementById('lightbox-img').src = e.target.src;
+                lb.style.display = 'flex';
+            }
+        });
+        document.getElementById('lightbox').addEventListener('click', function () {
+            this.style.display = 'none';
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') document.getElementById('lightbox').style.display = 'none';
+        });
     });
 
     function searchMovies() {

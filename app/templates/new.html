@@ -198,21 +198,21 @@
         window.onclick = function (event) {
             if (event.target == modal) closeModal();
         };
-    });
 
-    // Lightbox
-    document.getElementById('modal-image').addEventListener('click', function (e) {
-        if (e.target.tagName === 'IMG') {
-            const lb = document.getElementById('lightbox');
-            document.getElementById('lightbox-img').src = e.target.src;
-            lb.style.display = 'flex';
-        }
-    });
-    document.getElementById('lightbox').addEventListener('click', function () {
-        this.style.display = 'none';
-    });
-    document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') document.getElementById('lightbox').style.display = 'none';
+        // Lightbox
+        document.getElementById('modal-image').addEventListener('click', function (e) {
+            if (e.target.tagName === 'IMG') {
+                const lb = document.getElementById('lightbox');
+                document.getElementById('lightbox-img').src = e.target.src;
+                lb.style.display = 'flex';
+            }
+        });
+        document.getElementById('lightbox').addEventListener('click', function () {
+            this.style.display = 'none';
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') document.getElementById('lightbox').style.display = 'none';
+        });
     });
 
     function searchNew() {
