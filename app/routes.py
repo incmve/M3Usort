@@ -117,7 +117,14 @@ def healthcheck():
     return jsonify({"status": "OK"})
 
 def get_internal_ip():
-    return "host.docker.internal"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            return ip
+    except Exception as e:
+        PrintLog(f"Error obtaining internal IP address: {e}", "ERROR")
+        return None
 
 def scheduled_system_tasks():
     check_for_app_updates()
