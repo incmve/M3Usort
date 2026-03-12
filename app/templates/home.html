@@ -133,29 +133,27 @@
           </tr>
         </table>
       </div>
-    </div>
-  </div>
 
-  <div class="row" style="margin-top: 1.5rem;">
-    <div class="six columns">
-      <div class="collapsible-header" onclick="toggleVisibility('vod-stats', this)">
-        <b>VOD Statistics</b> <span>&#9660;</span>
-      </div>
-      <div id="vod-stats">
-        <table class="info-table">
-          <tr>
-            <th>&nbsp;</th>
-            <td></td>
-          </tr>
-          <tr>
-            <th>Total Movies:</th>
-            <td id="total_movies">{{ total_movies }}</td>
-          </tr>
-          <tr>
-            <th>Total TV Shows:</th>
-            <td id="total_series">{{ total_series }}</td>
-          </tr>
-        </table>
+      <div style="margin-top: 1.5rem;">
+        <div class="collapsible-header" onclick="toggleVisibility('vod-stats', this)">
+          <b>VOD Statistics</b> <span>&#9660;</span>
+        </div>
+        <div id="vod-stats">
+          <table class="info-table">
+            <tr>
+              <th>&nbsp;</th>
+              <td></td>
+            </tr>
+            <tr>
+              <th>Total Movies:</th>
+              <td id="total_movies">{{ total_movies }}</td>
+            </tr>
+            <tr>
+              <th>Total TV Shows:</th>
+              <td id="total_series">{{ total_series }}</td>
+            </tr>
+          </table>
+        </div>
       </div>
     </div>
   </div>
