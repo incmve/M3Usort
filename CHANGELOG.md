@@ -2,6 +2,7 @@
 
 ## 0.1.29
 - when using docker add environment variable for host IP in dashboard
+- sort "New this week" newest first
 
 ## 0.1.28
 - Added TMDB and IMDB buttons to the movie/series add modal
