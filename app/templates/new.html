@@ -23,7 +23,7 @@
     <div class="row" style="margin-top: 1rem;">
         <!-- Movies column -->
         <div class="six columns">
-            <h5>🎬 Movies <span style="color: #aaa;">({{ new_movies|length }})</span></h5>
+            <h5>🎬 Movies <span style="color: #aaa; font-size: 0.85rem;">({{ new_movies|length }})</span></h5>
             {% if new_movies %}
             <ul id="movies-list">
                 {% for movie in new_movies %}
@@ -44,7 +44,7 @@
 
         <!-- Series column -->
         <div class="six columns">
-            <h5>📺 Series <span style="color: #aaa;">({{ new_series|length }})</span></h5>
+            <h5>📺 Series <span style="color: #aaa; font-size: 0.85rem;">({{ new_series|length }})</span></h5>
             {% if new_series %}
             <ul id="series-list">
                 {% for serie in new_series %}
@@ -114,6 +114,68 @@
         .catch(error => console.error('Error:', error));
     }
 
+    function renderModalInfo(data, title, type, modalLinks) {
+        // Rating + Jellyfin row
+        let metaHtml = '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:4px;">';
+        if (data.rating) {
+            metaHtml += `<span style="color:#f5c518; font-weight:bold;">⭐ ${parseFloat(data.rating).toFixed(1)}</span>`;
+        }
+        metaHtml += `<span id="jf-status" style="font-size:0.85rem; color:#888;">⏳ Checking Jellyfin...</span>`;
+        metaHtml += '</div>';
+
+        // TMDB / IMDB buttons
+        let btns = '';
+        if (data.tmdb_id) {
+            const tmdbType = type === 'movie' ? 'movie' : 'tv';
+            btns += `<a href="https://www.themoviedb.org/${tmdbType}/${data.tmdb_id}" target="_blank" class="button" style="margin-right:8px;">TMDB</a>`;
+        }
+        if (data.imdb_id) {
+            btns += `<a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button" style="margin-right:8px;">IMDB</a>`;
+        }
+        if (!data.tmdb_id && !data.imdb_id) {
+            btns += `<a href="https://www.themoviedb.org/search?query=${encodeURIComponent(title)}" target="_blank" class="button">Search TMDB</a>`;
+        }
+
+        // Description
+        let descHtml = '';
+        if (data.plot) {
+            const short = data.plot.length > 180 ? data.plot.substring(0, 180) + '...' : data.plot;
+            const hasMore = data.plot.length > 180;
+            descHtml = `<div style="font-size:0.83rem; color:#aaa; line-height:1.5; border-top:1px solid #3a3a3a; padding-top:8px; margin-top:4px;">`;
+            if (hasMore) {
+                descHtml += `<span id="desc-short">${short} <span onclick="document.getElementById('desc-short').style.display='none'; document.getElementById('desc-full').style.display='block';" style="color:#888; font-size:0.78rem; cursor:pointer; text-decoration:underline;">read more</span></span>`;
+                descHtml += `<span id="desc-full" style="display:none;">${data.plot} <span onclick="document.getElementById('desc-full').style.display='none'; document.getElementById('desc-short').style.display='block';" style="color:#888; font-size:0.78rem; cursor:pointer; text-decoration:underline;">read less</span></span>`;
+            } else {
+                descHtml += short;
+            }
+            descHtml += '</div>';
+        }
+
+        modalLinks.innerHTML = metaHtml + btns + descHtml;
+    }
+
+    function checkJellyfin(name, type) {
+        const encoded = encodeURIComponent(name);
+        fetch(`{{ url_for('main_bp.check_jellyfin', type='movie', name='placeholder') }}`.replace('movie', type).replace('placeholder', encoded))
+            .then(r => r.json())
+            .then(data => {
+                const el = document.getElementById('jf-status');
+                if (el) {
+                    if (data.exists) {
+                        el.textContent = '✅ In Jellyfin';
+                        el.style.color = '#4caf50';
+                    } else {
+                        el.textContent = '❌ Not in Jellyfin';
+                        el.style.color = '#e57373';
+                    }
+                }
+            })
+            .catch(() => {
+                const el = document.getElementById('jf-status');
+                if (el) el.style.display = 'none';
+            });
+    }
+
     function loadVodInfo(streamId, icon, type, title) {
         const modalImage = document.getElementById("modal-image");
         const modalLinks = document.getElementById("modal-links");
@@ -125,22 +187,11 @@
             ? `{{ url_for('main_bp.get_vod_info', stream_id=0) }}`.replace('/0', `/${streamId}`)
             : `{{ url_for('main_bp.get_series_info_meta', series_id=0) }}`.replace('/0', `/${streamId}`);
 
-        const tmdbType = type === 'movie' ? 'movie' : 'tv';
-
         fetch(endpoint)
             .then(r => r.json())
             .then(data => {
-                let btns = '';
-                if (data.tmdb_id) {
-                    btns += `<a href="https://www.themoviedb.org/${tmdbType}/${data.tmdb_id}" target="_blank" class="button" style="margin-right:8px;">TMDB</a>`;
-                }
-                if (data.imdb_id) {
-                    btns += `<a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button" style="margin-right:8px;">IMDB</a>`;
-                }
-                if (!btns) {
-                    btns = `<a href="https://www.themoviedb.org/search?query=${encodeURIComponent(title)}" target="_blank" class="button">Search TMDB</a>`;
-                }
-                modalLinks.innerHTML = btns;
+                renderModalInfo(data, title, type, modalLinks);
+                checkJellyfin(title, type);
             })
             .catch(() => { modalLinks.innerHTML = ''; });
     }
