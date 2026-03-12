@@ -23,7 +23,7 @@
     <div class="row" style="margin-top: 1rem;">
         <!-- Movies column -->
         <div class="six columns">
-            <h5>🎬 Movies <span style="color: #aaa; font-size: 0.85rem;">({{ new_movies|length }})</span></h5>
+            <h5>🎬 Movies <span style="color: #aaa;">({{ new_movies|length }})</span></h5>
             {% if new_movies %}
             <ul id="movies-list">
                 {% for movie in new_movies %}
@@ -44,7 +44,7 @@
 
         <!-- Series column -->
         <div class="six columns">
-            <h5>📺 Series <span style="color: #aaa; font-size: 0.85rem;">({{ new_series|length }})</span></h5>
+            <h5>📺 Series <span style="color: #aaa;">({{ new_series|length }})</span></h5>
             {% if new_series %}
             <ul id="series-list">
                 {% for serie in new_series %}

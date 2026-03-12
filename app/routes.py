@@ -117,6 +117,8 @@ def healthcheck():
     return jsonify({"status": "OK"})
 
 def get_internal_ip():
+    if os.environ.get('HOST_IP'):
+        return os.environ.get('HOST_IP')
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
@@ -854,7 +856,8 @@ def new_today():
                         new_movies.append({
                             'name': movie['name'],
                             'stream_id': movie['stream_id'],
-                            'stream_icon': movie.get('stream_icon', '')
+                            'stream_icon': movie.get('stream_icon', ''),
+                            'added': int(added)
                         })
         except Exception as e:
             PrintLog(f"Error reading movies cache: {e}", "ERROR")
@@ -875,13 +878,17 @@ def new_today():
                         new_series.append({
                             'name': serie['name'],
                             'series_id': serie['series_id'],
-                            'series_cover': serie.get('cover', '')
+                            'series_cover': serie.get('cover', ''),
+                            'added': int(added)
                         })
         except Exception as e:
             PrintLog(f"Error reading series cache: {e}", "ERROR")
             flash("Series cache could not be read. Please trigger a VOD download first.", "warning")
     else:
         flash("No series cache found. Please trigger a VOD download first.", "warning")
+
+    new_movies.sort(key=lambda x: x['added'], reverse=True)
+    new_series.sort(key=lambda x: x['added'], reverse=True)
 
     return render_template('new.html', new_movies=new_movies, new_series=new_series, today=week_str, cache_age=cache_age)
 
