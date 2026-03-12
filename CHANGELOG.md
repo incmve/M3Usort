@@ -1,8 +1,13 @@
 # Changelog
 
+## 0.1.30
+- Added TMDB ratings
+- Added plot
+- Added Jellyfin check to see if move or show is already in Jellyfin.
+
 ## 0.1.29
-- when using docker add environment variable for host IP in dashboard
-- sort "New this week" newest first
+- When using docker add environment variable for host IP in dashboard
+- Sort "New this week" newest first
 
 ## 0.1.28
 - Added TMDB and IMDB buttons to the movie/series add modal

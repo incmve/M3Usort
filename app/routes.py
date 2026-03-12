@@ -856,8 +856,7 @@ def new_today():
                         new_movies.append({
                             'name': movie['name'],
                             'stream_id': movie['stream_id'],
-                            'stream_icon': movie.get('stream_icon', ''),
-                            'added': int(added)
+                            'stream_icon': movie.get('stream_icon', '')
                         })
         except Exception as e:
             PrintLog(f"Error reading movies cache: {e}", "ERROR")
@@ -878,17 +877,13 @@ def new_today():
                         new_series.append({
                             'name': serie['name'],
                             'series_id': serie['series_id'],
-                            'series_cover': serie.get('cover', ''),
-                            'added': int(added)
+                            'series_cover': serie.get('cover', '')
                         })
         except Exception as e:
             PrintLog(f"Error reading series cache: {e}", "ERROR")
             flash("Series cache could not be read. Please trigger a VOD download first.", "warning")
     else:
         flash("No series cache found. Please trigger a VOD download first.", "warning")
-
-    new_movies.sort(key=lambda x: x['added'], reverse=True)
-    new_series.sort(key=lambda x: x['added'], reverse=True)
 
     return render_template('new.html', new_movies=new_movies, new_series=new_series, today=week_str, cache_age=cache_age)
 
@@ -1146,9 +1141,11 @@ def get_vod_info(stream_id):
         return jsonify({
             'tmdb_id': info.get('tmdb_id') or info.get('tmdb'),
             'imdb_id': info.get('imdb_id') or info.get('imdb'),
+            'rating': info.get('rating') or info.get('rating_5based'),
+            'plot': info.get('plot') or info.get('description') or info.get('overview') or '',
         })
     except Exception as e:
-        return jsonify({'tmdb_id': None, 'imdb_id': None, 'error': str(e)})
+        return jsonify({'tmdb_id': None, 'imdb_id': None, 'rating': None, 'plot': '', 'error': str(e)})
 
 
 @main_bp.route('/get_series_info/<int:series_id>')
@@ -1166,9 +1163,25 @@ def get_series_info_meta(series_id):
         return jsonify({
             'tmdb_id': info.get('tmdb_id') or info.get('tmdb'),
             'imdb_id': info.get('imdb_id') or info.get('imdb'),
+            'rating': info.get('rating') or info.get('rating_5based'),
+            'plot': info.get('plot') or info.get('description') or info.get('overview') or '',
         })
     except Exception as e:
-        return jsonify({'tmdb_id': None, 'imdb_id': None, 'error': str(e)})
+        return jsonify({'tmdb_id': None, 'imdb_id': None, 'rating': None, 'plot': '', 'error': str(e)})
+
+
+@main_bp.route('/check_jellyfin/<string:type>/<path:name>')
+def check_jellyfin(type, name):
+    try:
+        if type == 'movie':
+            media_dir = get_config_variable(CONFIG_PATH, 'movies_dir')
+            exists = os.path.exists(os.path.join(media_dir, name, f"{name}.strm"))
+        else:
+            media_dir = get_config_variable(CONFIG_PATH, 'series_dir')
+            exists = os.path.isdir(os.path.join(media_dir, name))
+        return jsonify({'exists': exists})
+    except Exception as e:
+        return jsonify({'exists': False, 'error': str(e)})
 
 
 @main_bp.route('/add_movie_to_server', methods=['POST'])
