@@ -117,6 +117,8 @@ def healthcheck():
     return jsonify({"status": "OK"})
 
 def get_internal_ip():
+    if os.environ.get('HOST_IP'):
+        return os.environ.get('HOST_IP')
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
