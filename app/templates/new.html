@@ -141,7 +141,7 @@
         if (data.plot) {
             const short = data.plot.length > 180 ? data.plot.substring(0, 180) + '...' : data.plot;
             const hasMore = data.plot.length > 180;
-            descHtml = `<div style="font-size:0.83rem; color:#aaa; line-height:1.5; border-top:1px solid #3a3a3a; padding-top:8px; margin-top:4px;">`;
+            descHtml = `<div style="color:#aaa; line-height:1.5; border-top:1px solid #3a3a3a; padding-top:8px; margin-top:4px;">`;
             if (hasMore) {
                 descHtml += `<span id="desc-short">${short} <span onclick="document.getElementById('desc-short').style.display='none'; document.getElementById('desc-full').style.display='block';" style="color:#888; font-size:0.78rem; cursor:pointer; text-decoration:underline;">read more</span></span>`;
                 descHtml += `<span id="desc-full" style="display:none;">${data.plot} <span onclick="document.getElementById('desc-full').style.display='none'; document.getElementById('desc-short').style.display='block';" style="color:#888; font-size:0.78rem; cursor:pointer; text-decoration:underline;">read less</span></span>`;
