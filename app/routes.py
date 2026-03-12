@@ -52,9 +52,6 @@ CONFIG_PATH = os.path.join(CURRENT_DIR, '..', 'config.py')
 CONFIG_PATH = os.path.normpath(CONFIG_PATH)
 BASE_DIR = os.path.dirname(CONFIG_PATH)
 
-RUNNING_AS_SERVICE = 0
-
-# Global security settings
 MUST_CHANGE_PW = 0
 LOCKOUT_TIMEFRAME = timedelta(minutes=30)
 MAX_ATTEMPTS = 5
@@ -89,28 +86,10 @@ def admin_required(f):
 @app.context_processor
 def inject_globals():
     return dict(
-        RUNNING_AS_SERVICE=RUNNING_AS_SERVICE,
         UPDATE_AVAILABLE=UPDATE_AVAILABLE,
         is_admin=session.get('is_admin', False)
     )
 
-
-@app.route('/restart', methods=['GET', 'POST'])
-def restart():
-    command = ['systemctl', 'restart', 'M3Usort.service']
-    if request.method == 'POST':
-        try:
-            subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            return json
-        except subprocess.CalledProcessError:
-            try:
-                subprocess.run(['sudo'] + command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                return json
-            except subprocess.CalledProcessError as e:
-                PrintLog(f"Error restarting service: {e}", "ERROR")
-                return "Error restarting the service", 500
-    else:
-        return "Not allowed", 500
 
 @app.route('/healthcheck')
 def healthcheck():
@@ -458,6 +437,12 @@ def update_home_data():
         user_info = response.json()['user_info']
 
         exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
+        exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
+
+        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+        total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
+        total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
 
         uptime_duration = current_time - app.app_start_time
         total_seconds = int(uptime_duration.total_seconds())
@@ -483,13 +468,16 @@ def update_home_data():
             "sorted_m3u_age": sorted_m3u_age,
             "uptime": uptime_str,
             "output": output,
-            "internal_ip": internal_ip, 
-            "port_number": port_number, 
+            "internal_ip": internal_ip,
+            "port_number": port_number,
             "status": user_info['status'],
             "exp_date": exp_date_readable,
+            "exp_date_days_left": exp_date_days_left,
             "active_cons": user_info['active_cons'],
             "is_trial": user_info['is_trial'],
-            "max_connections": user_info['max_connections']
+            "max_connections": user_info['max_connections'],
+            "total_movies": total_movies,
+            "total_series": total_series,
         }
         return jsonify(data)
     except Exception as e:
@@ -540,6 +528,12 @@ def home():
         user_info = response.json()['user_info']
 
         exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
+        exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
+
+        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+        total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
+        total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
 
         uptime_duration = current_time - app.app_start_time
         total_seconds = int(uptime_duration.total_seconds())
@@ -557,21 +551,24 @@ def home():
             version = VERSION
 
         return render_template('home.html',
-                               version=version, 
-                               update_available=UPDATE_AVAILABLE, 
+                               version=version,
+                               update_available=UPDATE_AVAILABLE,
                                next_m3u=next_m3u,
                                next_vod=next_vod,
                                original_m3u_age=original_m3u_age,
                                sorted_m3u_age=sorted_m3u_age,
                                uptime=uptime_str,
-                               internal_ip=internal_ip, 
-                               port_number=port_number, 
-                               output=output, 
-                               status=user_info['status'], 
-                               exp_date=exp_date_readable, 
-                               is_trial=user_info['is_trial'], 
-                               active_cons=user_info['active_cons'], 
-                               max_connections=user_info['max_connections'])
+                               internal_ip=internal_ip,
+                               port_number=port_number,
+                               output=output,
+                               status=user_info['status'],
+                               exp_date=exp_date_readable,
+                               exp_date_days_left=exp_date_days_left,
+                               is_trial=user_info['is_trial'],
+                               active_cons=user_info['active_cons'],
+                               max_connections=user_info['max_connections'],
+                               total_movies=total_movies,
+                               total_series=total_series)
     except Exception as e:
         return str(e)
 
@@ -856,7 +853,8 @@ def new_today():
                         new_movies.append({
                             'name': movie['name'],
                             'stream_id': movie['stream_id'],
-                            'stream_icon': movie.get('stream_icon', '')
+                            'stream_icon': movie.get('stream_icon', ''),
+                            'added': int(added)
                         })
         except Exception as e:
             PrintLog(f"Error reading movies cache: {e}", "ERROR")
@@ -877,13 +875,17 @@ def new_today():
                         new_series.append({
                             'name': serie['name'],
                             'series_id': serie['series_id'],
-                            'series_cover': serie.get('cover', '')
+                            'series_cover': serie.get('cover', ''),
+                            'added': int(added)
                         })
         except Exception as e:
             PrintLog(f"Error reading series cache: {e}", "ERROR")
             flash("Series cache could not be read. Please trigger a VOD download first.", "warning")
     else:
         flash("No series cache found. Please trigger a VOD download first.", "warning")
+
+    new_movies.sort(key=lambda x: x['added'], reverse=True)
+    new_series.sort(key=lambda x: x['added'], reverse=True)
 
     return render_template('new.html', new_movies=new_movies, new_series=new_series, today=week_str, cache_age=cache_age)
 
@@ -1662,7 +1664,6 @@ def startup_instant():
 
     if check_password_hash(hashed_admin_pw_from_config, "IPTV") or check_password_hash(hashed_playlist_pw_from_config, "IPTV"):
         MUST_CHANGE_PW = 1
-    running_as_service()
 
 def PrintLog(string, type):
     if type == "DEBUG":
@@ -1773,47 +1774,6 @@ def check_playlist_locked():
         PLAYLIST_LOCKED = 0
         reset_playlist_login_attempts()
     return PLAYLIST_LOCKED
-
-@app.route('/update', methods=['GET', 'POST'])
-def update():
-    if request.method == 'POST':
-        try:
-            os.chdir(BASE_DIR)
-            result = subprocess.run(['git', 'pull'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if result.returncode == 0:
-                print("Git pull executed successfully.")
-                print(result.stdout.decode('utf-8'))
-                restart()
-            else:
-                print("Git pull failed.")
-                print(result.stderr.decode('utf-8'))
-        except Exception as e:
-            print(f"Failed to execute git pull: {e}")
-    else:
-        return "Not supported", 500
-
-    return "OK"
-
-def running_as_service():
-    service_name = "M3Usort.service"
-    global RUNNING_AS_SERVICE
-
-    if os.environ.get("IN_DOCKER"):
-        RUNNING_AS_SERVICE = 0
-        return
-    
-    try:
-        result = subprocess.run(['systemctl', 'is-active', service_name],
-                                stdout=subprocess.PIPE, 
-                                stderr=subprocess.PIPE,
-                                check=False)
-        if result.stdout.decode('utf-8').strip() == 'active':
-            RUNNING_AS_SERVICE = 1
-        else:
-            RUNNING_AS_SERVICE = 0
-    except subprocess.SubprocessError as e:
-        print(f"Failed to check service status: {e}")
-        RUNNING_AS_SERVICE = 0
 
 ###################################################
 # Emulate functions
