@@ -24,6 +24,7 @@ services:
       - PUID=0
       - PGID=0
       - TZ=Europe/Amsterdam
+	  - HOST_IP=192.168.0.x
     ports:
       - 5050:5050
 networks: {}
@@ -38,6 +39,7 @@ docker run -d \
   -e PUID=0 \
   -e PGID=0 \
   -e TZ=Europe/Amsterdam \
+  -e - HOST_IP=192.168.0.x \
   -v /opt/stacks/m3usort:/data/M3Usort \
   -v /data/media/movies:/data/media/movies \
   -v /data/media/tv:/data/media/tv \
@@ -79,6 +81,7 @@ Here you can change all the settings:
 - Overwrite Existing Episodes: If set to Yes, it will recreate all the episode files every time the interval runs.
 - Movies Directory: Where to put the files for movies.
 - Overwrite Existing Movies: If set to Yes, it will recreate the movie file every time the interval runs.
+- Enable Jellyfin library refresh on VOD or TvShow fetch.
 
 ### Admin -> Security
 Here you can change the password for the admin and for downloading the playlists. It is strongly advised to change this after installation.

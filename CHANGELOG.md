@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.29
+- when using docker add environment variable for host IP in dashboard
+
 ## 0.1.28
 - Added TMDB and IMDB buttons to the movie/series add modal
 - Poster image now displays large directly in modal (no new tab on click)
