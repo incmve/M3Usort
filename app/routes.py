@@ -52,6 +52,8 @@ CONFIG_PATH = os.path.join(CURRENT_DIR, '..', 'config.py')
 CONFIG_PATH = os.path.normpath(CONFIG_PATH)
 BASE_DIR = os.path.dirname(CONFIG_PATH)
 
+
+# Global security settings
 MUST_CHANGE_PW = 0
 LOCKOUT_TIMEFRAME = timedelta(minutes=30)
 MAX_ATTEMPTS = 5
@@ -794,35 +796,50 @@ def change_playlist_credentials():
 
 @main_bp.route('/series')
 def series():
-    series = GetSeriesList()
+    wanted_series = get_config_array(CONFIG_PATH, "wanted_series") or []
+    series = []
+    categories = []
+    cache_age = None
 
-    wanted_series = get_config_array(CONFIG_PATH, "wanted_series")
-    if wanted_series == None:
-        wanted_series = []
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    if os.path.exists(series_cache_path):
+        cache_age = get_time_diff(series_cache_path)
+        try:
+            with open(series_cache_path, 'r', encoding='utf-8') as f:
+                series_data = json.load(f)
+            series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', ''), 'category': s.get('category_name', '')} for s in series_data]
+            categories = sorted(set(s['category'] for s in series if s['category']))
+        except Exception as e:
+            PrintLog(f"Error reading series cache: {e}", "ERROR")
+            flash("Series cache could not be read. Please trigger a VOD download first.", "warning")
+    else:
+        flash("No series cache found. Please trigger a VOD download first.", "warning")
 
-    return render_template('series.html', series=series, wanted_series=wanted_series)
+    return render_template('series.html', series=series, wanted_series=wanted_series, categories=categories, cache_age=cache_age)
 
 
 @main_bp.route('/movies')
 def movies():
+    wanted_movies = get_config_array(CONFIG_PATH, "wanted_movies") or []
     movies = []
-    wanted_movies = get_config_array(CONFIG_PATH, "wanted_movies")
-    if wanted_movies == None:
-        wanted_movies = []
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
-    
-    scheme, rest = m3u_url.split('://')
-    domain_with_port, _ = rest.split('/get.php')
-    username, password = extract_credentials_from_url(m3u_url)
-    api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
+    categories = []
+    cache_age = None
 
-    response = requests.get(api_url)
-    response.raise_for_status()
-    movies_data = response.json()
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    if os.path.exists(movies_cache_path):
+        cache_age = get_time_diff(movies_cache_path)
+        try:
+            with open(movies_cache_path, 'r', encoding='utf-8') as f:
+                movies_data = json.load(f)
+            movies = [{'name': m['name'], 'stream_id': m['stream_id'], 'stream_icon': m.get('stream_icon', ''), 'category': m.get('category_name', '')} for m in movies_data]
+            categories = sorted(set(m['category'] for m in movies if m['category']))
+        except Exception as e:
+            PrintLog(f"Error reading movies cache: {e}", "ERROR")
+            flash("Movies cache could not be read. Please trigger a VOD download first.", "warning")
+    else:
+        flash("No movies cache found. Please trigger a VOD download first.", "warning")
 
-    movies = [{'name': movie['name'], 'stream_id': movie['stream_id'], 'stream_icon': movie['stream_icon']} for movie in movies_data]
-
-    return render_template('movies.html', movies=movies, wanted_movies=wanted_movies)
+    return render_template('movies.html', movies=movies, wanted_movies=wanted_movies, categories=categories, cache_age=cache_age)
 
 
 @main_bp.route('/new')

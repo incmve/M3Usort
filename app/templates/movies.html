@@ -6,14 +6,26 @@
     <div class="row">
         <div class="eight columns">
             <h4>Search and save movies</h4>
+            <p style="color: #aaa; font-size: 0.9rem;">
+                {% if cache_age %}
+                Cache updated {{ cache_age }} ago
+                &nbsp;·&nbsp; <a href="{{ url_for('main_bp.refresh_vod_cache') }}" style="color: #aaa;">↻ Refresh cache</a>
+                {% endif %}
+            </p>
             <div id="main">
-                <div class="search-container">
+                <div class="search-container" style="display:flex; gap:8px; flex-wrap:wrap;">
                     <input type="text" class="u-full-width" id="search-bar" placeholder="Search movies..."
-                        onkeyup="searchMovies()">
+                        onkeyup="searchMovies()" style="flex:1; min-width:160px;">
+                    <select id="category-filter" onchange="searchMovies()" style="min-width:160px;">
+                        <option value="">All categories</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat }}">{{ cat }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
                 <ul id="movies-list">
                     {% for movie in movies %}
-                    <li><a href="#" class="movie-link" data-movie-name="{{ movie.name }}"
+                    <li data-category="{{ movie.category }}"><a href="#" class="movie-link" data-movie-name="{{ movie.name }}"
                             data-movie-id="{{ movie.stream_id }}" data-movie-icon="{{ movie.stream_icon }}">{{
                             movie.name }}</a></li>
                     {% endfor %}
@@ -235,10 +247,14 @@
     });
 
     function searchMovies() {
-        let input = document.getElementById('search-bar').value.toLowerCase();
+        const input = document.getElementById('search-bar').value.toLowerCase();
+        const category = document.getElementById('category-filter').value;
         document.querySelectorAll('#movies-list li').forEach(item => {
-            let name = item.textContent || item.innerText;
-            item.style.display = name.toLowerCase().includes(input) ? '' : 'none';
+            const name = (item.textContent || item.innerText).toLowerCase();
+            const itemCategory = item.getAttribute('data-category');
+            const matchSearch = name.includes(input);
+            const matchCategory = !category || itemCategory === category;
+            item.style.display = matchSearch && matchCategory ? '' : 'none';
         });
     }
 </script>
