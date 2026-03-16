@@ -52,8 +52,6 @@ CONFIG_PATH = os.path.join(CURRENT_DIR, '..', 'config.py')
 CONFIG_PATH = os.path.normpath(CONFIG_PATH)
 BASE_DIR = os.path.dirname(CONFIG_PATH)
 
-
-# Global security settings
 MUST_CHANGE_PW = 0
 LOCKOUT_TIMEFRAME = timedelta(minutes=30)
 MAX_ATTEMPTS = 5
@@ -121,22 +119,38 @@ def save_vod_cache():
         domain_with_port, _ = rest.split('/get.php')
         username, password = extract_credentials_from_url(m3u_url)
 
-        # Save movies cache
+        # Fetch movie categories
+        cat_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_categories"
+        movie_cats = {str(c['category_id']): c['category_name'] for c in requests.get(cat_url).json()}
+
+        # Save movies cache with category_name resolved
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams"
         response = requests.get(api_url)
         response.raise_for_status()
+        movies_data = response.json()
+        for movie in movies_data:
+            if not movie.get('category_name'):
+                movie['category_name'] = movie_cats.get(str(movie.get('category_id', '')), '')
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
         with open(movies_cache_path, 'w', encoding='utf-8') as f:
-            json.dump(response.json(), f)
+            json.dump(movies_data, f)
         PrintLog("Saved movies cache", "INFO")
 
-        # Save series cache
+        # Fetch series categories
+        cat_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series_categories"
+        series_cats = {str(c['category_id']): c['category_name'] for c in requests.get(cat_url).json()}
+
+        # Save series cache with category_name resolved
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series"
         response = requests.get(api_url)
         response.raise_for_status()
+        series_data = response.json()
+        for serie in series_data:
+            if not serie.get('category_name'):
+                serie['category_name'] = series_cats.get(str(serie.get('category_id', '')), '')
         series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
         with open(series_cache_path, 'w', encoding='utf-8') as f:
-            json.dump(response.json(), f)
+            json.dump(series_data, f)
         PrintLog("Saved series cache", "INFO")
 
     except Exception as e:
