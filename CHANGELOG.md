@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.01
+- Added categories
+- Movies and TV shows no longer call the API but use local cache.
+- Option to manually refresh cache.
+- Made the image a little smaller
+
+## 0.2.00
+- Removed fork connection with the original G https://github.com/koffienl/M3Usort
+- remove bare linux install, docker all the way.
+- Flash expiration date when <30 days
+- Add some stats to the dashboard
+
 ## 0.1.30
 - Added TMDB ratings
 - Added plot

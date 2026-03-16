@@ -31,6 +31,10 @@
   .hidden {
     display: none;
   }
+
+  @keyframes blink {
+    50% { opacity: 0.2; }
+  }
 </style>
 
 <div class="container">
@@ -111,7 +115,9 @@
           </tr>
           <tr>
             <th>Expiration Date:</th>
-            <td id="exp_date">{{ exp_date }}</td>
+            <td id="exp_date" {% if exp_date_days_left <= 30 %}style="color: #ff4444; font-weight: bold; animation: blink 1.5s step-start infinite;"{% endif %}>
+              {{ exp_date }}{% if exp_date_days_left <= 30 %} ({{ exp_date_days_left }} days left){% endif %}
+            </td>
           </tr>
           <tr>
             <th>Active Connections:</th>
@@ -126,6 +132,28 @@
             <td id="is_trial">{{ 'Yes' if is_trial == '1' else 'No' }}</td>
           </tr>
         </table>
+      </div>
+
+      <div style="margin-top: 1.5rem;">
+        <div class="collapsible-header" onclick="toggleVisibility('vod-stats', this)">
+          <b>VOD Statistics</b> <span>&#9660;</span>
+        </div>
+        <div id="vod-stats">
+          <table class="info-table">
+            <tr>
+              <th>&nbsp;</th>
+              <td></td>
+            </tr>
+            <tr>
+              <th>Total Movies:</th>
+              <td id="total_movies">{{ total_movies }}</td>
+            </tr>
+            <tr>
+              <th>Total TV Shows:</th>
+              <td id="total_series">{{ total_series }}</td>
+            </tr>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -143,7 +171,20 @@
           document.getElementById("original_m3u_age").textContent = data.original_m3u_age;
           document.getElementById("sorted_m3u_age").textContent = data.sorted_m3u_age;
           document.getElementById("status").textContent = data.status;
-          document.getElementById("exp_date").textContent = data.exp_date;
+          
+          const expEl = document.getElementById("exp_date");
+          if (data.exp_date_days_left <= 30) {
+            expEl.textContent = `${data.exp_date} (${data.exp_date_days_left} days left)`;
+            expEl.style.color = '#ff4444';
+            expEl.style.fontWeight = 'bold';
+            expEl.style.animation = 'blink 1.5s step-start infinite';
+          } else {
+            expEl.textContent = data.exp_date;
+            expEl.style.color = '';
+            expEl.style.fontWeight = '';
+            expEl.style.animation = '';
+          }
+
           document.getElementById("active_cons").textContent = data.active_cons;
           if (data.is_trial == 0) {
             document.getElementById("is_trial").textContent = "No";
@@ -152,6 +193,8 @@
           }
           document.getElementById("status").textContent = data.status;
           document.getElementById("max_connections").textContent = data.max_connections;
+          document.getElementById("total_movies").textContent = data.total_movies;
+          document.getElementById("total_series").textContent = data.total_series;
 
           if (data.update_available == 0) {
             document.getElementById("version").textContent = data.version;
@@ -182,6 +225,7 @@
   window.onload = function () {
     document.getElementById("server-info").style.display = "";
     document.getElementById("account-info").style.display = "";
+    document.getElementById("vod-stats").style.display = "";
   };
 </script>
 {% endblock %}

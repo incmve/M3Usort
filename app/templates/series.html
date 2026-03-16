@@ -6,14 +6,26 @@
     <div class="row">
         <div class="eight columns">
             <h4>Search and save series</h4>
+            <p style="color: #aaa; font-size: 0.9rem;">
+                {% if cache_age %}
+                Cache updated {{ cache_age }} ago
+                &nbsp;·&nbsp; <a href="{{ url_for('main_bp.refresh_vod_cache') }}" style="color: #aaa;">↻ Refresh cache</a>
+                {% endif %}
+            </p>
             <div id="main">
-                <div class="search-container">
+                <div class="search-container" style="display:flex; gap:8px; flex-wrap:wrap;">
                     <input type="text" class="u-full-width" id="search-bar" placeholder="Search series..."
-                        onkeyup="searchSeries()">
+                        onkeyup="searchSeries()" style="flex:1; min-width:160px;">
+                    <select id="category-filter" onchange="searchSeries()" style="min-width:160px;">
+                        <option value="">All categories</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat }}">{{ cat }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
                 <ul id="series-list">
                     {% for serie in series %}
-                    <li><a href="javascript:void(0)" class="serie-link" data-serie-name="{{ serie.name }}" data-serie-id="{{ serie.series_id }}" data-serie-cover="{{ serie.series_cover }}">{{ serie.name }}</a></li>
+                    <li data-category="{{ serie.category }}"><a href="javascript:void(0)" class="serie-link" data-serie-name="{{ serie.name }}" data-serie-id="{{ serie.series_id }}" data-serie-cover="{{ serie.series_cover }}">{{ serie.name }}</a></li>
                     {% endfor %}
                 </ul>
             </div>
@@ -231,10 +243,14 @@
     });
 
     function searchSeries() {
-        let input = document.getElementById('search-bar').value.toLowerCase();
+        const input = document.getElementById('search-bar').value.toLowerCase();
+        const category = document.getElementById('category-filter').value;
         document.querySelectorAll('#series-list li').forEach(item => {
-            let name = item.textContent || item.innerText;
-            item.style.display = name.toLowerCase().includes(input) ? '' : 'none';
+            const name = (item.textContent || item.innerText).toLowerCase();
+            const itemCategory = item.getAttribute('data-category');
+            const matchSearch = name.includes(input);
+            const matchCategory = !category || itemCategory === category;
+            item.style.display = matchSearch && matchCategory ? '' : 'none';
         });
     }
 </script>

@@ -8,8 +8,8 @@ services:
       - /data/media/tv:/data/media/tv
     restart: always
     environment:
-      - IN_DOCKER=true
       - HOST_IP=192.168.0.x
+      - TZ=Europe/Amsterdam
     ports:
       - 5050:5050
 networks: {}
