@@ -1578,6 +1578,9 @@ wanted_movies = [
         return redirect(url_for('login'))
 
     return render_template('setup.html')
+
+
+@main_bp.route('/groups')
 def groups():
     global GROUPS_CACHE
     desired_group_titles = []
