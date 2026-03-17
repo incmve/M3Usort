@@ -25,6 +25,8 @@ from packaging import version
 import hashlib
 import difflib
 import shutil
+from cryptography.fernet import Fernet
+import base64
 
 from fuzzywuzzy import process, fuzz
 
@@ -114,7 +116,7 @@ def scheduled_system_tasks():
 def save_vod_cache():
     """Fetch and save full movies and series data from provider to local JSON cache files."""
     try:
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
+        m3u_url = get_credential('url')
         scheme, rest = m3u_url.split('://')
         domain_with_port, _ = rest.split('/get.php')
         username, password = extract_credentials_from_url(m3u_url)
@@ -160,7 +162,7 @@ def refresh_jellyfin():
     if get_config_variable(CONFIG_PATH, 'jellyfin_enabled') != "1":
         return
     jellyfin_url = get_config_variable(CONFIG_PATH, 'jellyfin_url')
-    jellyfin_api_key = get_config_variable(CONFIG_PATH, 'jellyfin_api_key')
+    jellyfin_api_key = get_credential('jellyfin_api_key')
     if jellyfin_url and jellyfin_api_key:
         try:
             requests.post(f"{jellyfin_url}/Library/Refresh",
@@ -182,7 +184,7 @@ def scheduled_vod_download():
     refresh_jellyfin()
 
 def scheduled_renew_m3u():
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     original_m3u_path = f'{BASE_DIR}/files/original.m3u'
     download_m3u(m3u_url, original_m3u_path)
     PrintLog(f"Downloaded the M3U file to: {original_m3u_path}", "INFO")
@@ -239,7 +241,7 @@ def update_movies_directory(movies_dir):
     movies_list = GetMoviesList()
     overwrite_movies = int(get_config_variable(CONFIG_PATH, 'overwrite_movies'))
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -330,8 +332,56 @@ def extract_credentials_from_url(m3u_url):
     return None, None
 
 
+# ─── Credential encryption ───────────────────────────────────────────────────
+
+ENCRYPTED_FIELDS = ['url', 'jellyfin_api_key']
+ENCRYPTION_PREFIX = 'enc:'
+
+def _get_fernet():
+    secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY') or 'default-insecure-key'
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret_key.encode()).digest())
+    return Fernet(key)
+
+def encrypt_credential(value):
+    if not value:
+        return value
+    try:
+        f = _get_fernet()
+        return ENCRYPTION_PREFIX + f.encrypt(value.encode()).decode()
+    except Exception as e:
+        PrintLog(f"Encryption error: {e}", "ERROR")
+        return value
+
+def decrypt_credential(value):
+    if not value or not value.startswith(ENCRYPTION_PREFIX):
+        return value
+    try:
+        f = _get_fernet()
+        return f.decrypt(value[len(ENCRYPTION_PREFIX):].encode()).decode()
+    except Exception as e:
+        PrintLog(f"Decryption error: {e}", "ERROR")
+        return value
+
+def get_credential(key):
+    value = get_config_variable(CONFIG_PATH, key)
+    return decrypt_credential(value)
+
+def set_credential(key, value):
+    encrypted = encrypt_credential(value)
+    update_config_variable(CONFIG_PATH, key, encrypted)
+
+def migrate_credentials():
+    """One-time migration: encrypt any plaintext credential fields."""
+    for field in ENCRYPTED_FIELDS:
+        value = get_config_variable(CONFIG_PATH, field)
+        if value and not value.startswith(ENCRYPTION_PREFIX):
+            PrintLog(f"Encrypting credential field: {field}", "INFO")
+            set_credential(field, value)
+
+
 @app.before_request
 def require_auth():
+    # Always allow static files, healthcheck, m3u, and setup
     if request.path.startswith('/m3u'):
         return
     if request.path.startswith('/get.php'):
@@ -340,6 +390,12 @@ def require_auth():
         return
     if request.path.startswith('/healthcheck'):
         return
+    if request.path.startswith('/setup'):
+        return
+
+    # Redirect to setup wizard if config doesn't exist
+    if not os.path.exists(CONFIG_PATH):
+        return redirect(url_for('setup'))
 
     if not request.path.startswith('/static') and not request.path.startswith('/update_home_data') and not request.method == 'POST':
         if BASE_DIR.endswith('_dev'):
@@ -443,7 +499,7 @@ def update_home_data():
             minutes, seconds = divmod(remainder, 60)
             next_vod = f"{hours:02d}:{minutes:02d}"
 
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
+        m3u_url = get_credential('url')
         scheme, rest = m3u_url.split('://')
         domain_with_port, _ = rest.split('/get.php')
         username, password = extract_credentials_from_url(m3u_url)
@@ -534,7 +590,7 @@ def home():
             minutes, seconds = divmod(remainder, 60)
             next_vod = f"{hours:02d}:{minutes:02d}"
 
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
+        m3u_url = get_credential('url')
         scheme, rest = m3u_url.split('://')
         domain_with_port, _ = rest.split('/get.php')
         username, password = extract_credentials_from_url(m3u_url)
@@ -598,7 +654,7 @@ def logout():
 @app.route('/GetMoviesList')
 def GetMoviesList():
     movies = []
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     
     scheme, rest = m3u_url.split('://')
     domain_with_port, _ = rest.split('/get.php')
@@ -616,7 +672,7 @@ def GetMoviesList():
 
 @app.route('/GetSeriesList')
 def GetSeriesList():
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     scheme, rest = m3u_url.split('://')
     domain_with_port, _ = rest.split('/get.php')
     username, password = extract_credentials_from_url(m3u_url)
@@ -634,7 +690,7 @@ def GetSeriesList():
 
 def DownloadSeries(series_id):
     series_dir = get_config_variable(CONFIG_PATH, 'series_dir')
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series'))
 
@@ -1008,7 +1064,7 @@ def find_wanted_series_fuzzy(series_dir):
     if wanted_series is None:
         wanted_series = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -1048,7 +1104,7 @@ def find_wanted_series_string(series_dir):
     if wanted_series == None:
         wanted_series = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -1074,7 +1130,7 @@ def find_wanted_movies_fuzzy(movies_dir):
     if wanted_movies is None:
         wanted_movies = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -1125,7 +1181,7 @@ def find_wanted_movies_string(movies_dir):
     if wanted_movies == None:
         wanted_movies = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -1162,7 +1218,7 @@ def find_wanted_movies_string(movies_dir):
 @main_bp.route('/get_vod_info/<int:stream_id>')
 def get_vod_info(stream_id):
     try:
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
+        m3u_url = get_credential('url')
         scheme, rest = m3u_url.split('://')
         domain_with_port, _ = rest.split('/get.php')
         username, password = extract_credentials_from_url(m3u_url)
@@ -1184,7 +1240,7 @@ def get_vod_info(stream_id):
 @main_bp.route('/get_series_info/<int:series_id>')
 def get_series_info_meta(series_id):
     try:
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
+        m3u_url = get_credential('url')
         scheme, rest = m3u_url.split('://')
         domain_with_port, _ = rest.split('/get.php')
         username, password = extract_credentials_from_url(m3u_url)
@@ -1223,7 +1279,7 @@ def add_movie_to_server():
     movie_name = data['movieName']
     movie_id = data['movieId']
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir')
 
     username, password = extract_credentials_from_url(m3u_url)
@@ -1274,7 +1330,7 @@ def save_channel_selection():
 def get_channels_for_selected_groups(selected_groups):
     all_channels = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     if not username or not password:
         raise ValueError("Username or password could not be extracted from the M3U URL.")
@@ -1324,12 +1380,12 @@ def settings():
     
     if request.method == 'POST' and form.validate():
 
-        current_url = get_config_variable(CONFIG_PATH, 'url')
+        current_url = get_credential('url')
         if form.url.data != current_url:
             original_m3u_path = f'{BASE_DIR}/files/original.m3u'
             download_m3u(form.url.data, original_m3u_path)
 
-        update_config_variable(CONFIG_PATH, 'url', form.url.data)
+        set_credential('url', form.url.data)
         update_config_variable(CONFIG_PATH, 'output', form.output.data)
         update_config_variable(CONFIG_PATH, 'maxage_before_download', form.maxage.data)
         update_config_variable(CONFIG_PATH, 'new_group_title', form.new_group_title.data)
@@ -1343,14 +1399,14 @@ def settings():
         update_config_variable(CONFIG_PATH, 'match_type', form.match_type.data)
         update_config_variable(CONFIG_PATH, 'jellyfin_enabled', form.jellyfin_enabled.data)
         update_config_variable(CONFIG_PATH, 'jellyfin_url', form.jellyfin_url.data)
-        update_config_variable(CONFIG_PATH, 'jellyfin_api_key', form.jellyfin_api_key.data)
+        set_credential('jellyfin_api_key', form.jellyfin_api_key.data)
+        update_config_variable(CONFIG_PATH, 'debug', form.debug.data)
 
         job = scheduler.get_job('M3U Download scheduler')
         if job:
             if str(job.trigger.interval) != str(f"{form.maxage.data}:00:00"):
                 scheduler.remove_job(id='M3U Download scheduler')
-                debug = get_config_variable(CONFIG_PATH, 'debug')
-                if debug == "yes":
+                if form.debug.data == "yes":
                     scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', minutes=form.maxage.data)
                 else:
                     scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=form.maxage.data)
@@ -1362,22 +1418,20 @@ def settings():
                 scheduler.remove_job(id='VOD scheduler')
 
         if form.enable_scheduler.data == "1":
-            form.scan_interval.data = form.scan_interval.data
             if job:
                 if str(job.trigger.interval) != str(f"{form.scan_interval.data}:00:00"):
                     scheduler.remove_job(id='VOD scheduler')
                     PrintLog("Enable scheduled task", "INFO")
-            
-                    debug = get_config_variable(CONFIG_PATH, 'debug')
-                    if debug == "yes":
+                    if form.debug.data == "yes":
                         scheduler.add_job(id='VOD scheduler', func=scheduled_vod_download, trigger='interval', minutes=form.scan_interval.data)
                     else:
                         scheduler.add_job(id='VOD scheduler', func=scheduled_vod_download, trigger='interval', hours=form.scan_interval.data)
 
+        flash("Settings saved successfully.", "success")
         return redirect(url_for('main_bp.settings'))
 
     else:
-        form.url.data = get_config_variable(CONFIG_PATH, 'url')
+        form.url.data = get_credential('url')
         form.output.data = get_config_variable(CONFIG_PATH, 'output')
         form.maxage.data = get_config_variable(CONFIG_PATH, 'maxage_before_download')
         form.new_group_title.data = get_config_variable(CONFIG_PATH, 'new_group_title')
@@ -1391,12 +1445,139 @@ def settings():
         form.match_type.data = get_config_variable(CONFIG_PATH, 'match_type')
         form.jellyfin_enabled.data = get_config_variable(CONFIG_PATH, 'jellyfin_enabled') or "0"
         form.jellyfin_url.data = get_config_variable(CONFIG_PATH, 'jellyfin_url')
-        form.jellyfin_api_key.data = get_config_variable(CONFIG_PATH, 'jellyfin_api_key')
+        form.jellyfin_api_key.data = get_credential('jellyfin_api_key')
+        form.debug.data = get_config_variable(CONFIG_PATH, 'debug') or "no"
 
     return render_template('settings.html', form=form)
 
 
-@main_bp.route('/groups')
+@main_bp.route('/backup_config')
+@admin_required
+def backup_config():
+    return send_from_directory(
+        os.path.dirname(CONFIG_PATH),
+        os.path.basename(CONFIG_PATH),
+        as_attachment=True,
+        download_name='config.py'
+    )
+
+
+@main_bp.route('/restore_config', methods=['POST'])
+@admin_required
+def restore_config():
+    if 'config_file' not in request.files:
+        flash("No file uploaded.", "danger")
+        return redirect(url_for('main_bp.settings'))
+
+    f = request.files['config_file']
+    if not f.filename.endswith('.py'):
+        flash("Invalid file. Please upload a config.py file.", "danger")
+        return redirect(url_for('main_bp.settings'))
+
+    content = f.read().decode('utf-8')
+
+    # Validate required keys exist
+    required_keys = ['url', 'output', 'admin_password', 'playlist_password', 'SECRET_KEY']
+    config_ns = {}
+    try:
+        exec(content, {}, config_ns)
+    except Exception as e:
+        flash(f"Invalid config file: {e}", "danger")
+        return redirect(url_for('main_bp.settings'))
+
+    missing = [k for k in required_keys if k not in config_ns]
+    if missing:
+        flash(f"Config file is missing required keys: {', '.join(missing)}", "danger")
+        return redirect(url_for('main_bp.settings'))
+
+    # Backup current config before overwriting
+    shutil.copy(CONFIG_PATH, CONFIG_PATH + '.bak')
+
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as cf:
+        cf.write(content)
+
+    # Re-encrypt credentials if they came in plaintext
+    migrate_credentials()
+
+    flash("Config restored successfully. Previous config saved as config.py.bak", "success")
+    return redirect(url_for('main_bp.settings'))
+
+
+@app.route('/setup', methods=['GET', 'POST'])
+def setup():
+    if os.path.exists(CONFIG_PATH):
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        provider_url = request.form.get('provider_url', '').strip()
+        admin_password = request.form.get('admin_password', '').strip()
+        playlist_password = request.form.get('playlist_password', '').strip()
+        movies_dir = request.form.get('movies_dir', '/data/media/movies').strip()
+        series_dir = request.form.get('series_dir', '/data/media/tv').strip()
+
+        if not provider_url or not admin_password or not playlist_password:
+            flash("Provider URL, admin password and playlist password are required.", "danger")
+            return render_template('setup.html')
+
+        # Generate SECRET_KEY
+        secret_key = secrets.token_urlsafe(32)
+
+        # Hash passwords
+        hashed_admin = generate_password_hash(admin_password)
+        hashed_playlist = generate_password_hash(playlist_password)
+
+        # Write config.py from template
+        config_content = f'''# Configuration variables
+url = ""
+output = "sorted.m3u"
+base_dir = "/data/M3Usort"
+maxage_before_download = "4"
+movies_dir = "{movies_dir}"
+series_dir = "{series_dir}"
+admin_password = "{hashed_admin}"
+playlist_password = "{hashed_playlist}"
+port_number = "5050"
+enable_scheduler = "1"
+overwrite_series = "0"
+overwrite_movies = "0"
+scan_interval = "4"
+SECRET_KEY = "{secret_key}"
+debug = "no"
+hide_webserver_logs = "1"
+match_type = "1"
+jellyfin_enabled = "0"
+jellyfin_url = ""
+jellyfin_api_key = ""
+new_group_title = "Custom"
+
+# List of channel groups to whitelist
+desired_group_titles = [
+]
+
+# List of specific target channel names, in the desired order
+target_channel_names = [
+]
+
+wanted_series = [
+]
+wanted_movies = [
+]
+'''
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as cf:
+            cf.write(config_content)
+
+        # Encrypt the provider URL
+        set_credential('url', provider_url)
+
+        # Create files directory
+        files_dir = os.path.join(BASE_DIR, 'files')
+        os.makedirs(files_dir, exist_ok=True)
+
+        flash("Setup complete! Please log in.", "success")
+        return redirect(url_for('login'))
+
+    return render_template('setup.html')
 def groups():
     global GROUPS_CACHE
     desired_group_titles = []
@@ -1591,12 +1772,6 @@ def log():
     
     return render_template('log.html', log_entries=log_entries, current_page=page, total_pages=total_pages)
 
-def extract_credentials_from_url(m3u_url):
-    match = re.search(r'username=([^&]+)&password=([^&]+)', m3u_url)
-    if match:
-        return match.groups()
-    return None, None
-
 def is_cache_valid():
     if not GROUPS_CACHE['last_updated']:
         return False
@@ -1628,7 +1803,7 @@ def startup_delayed():
             if response.status_code == 200:
                 PrintLog("Server is up and running.", "INFO")
 
-                m3u_url = get_config_variable(CONFIG_PATH, 'url')
+                m3u_url = get_credential('url')
                 maxage_before_download = int(get_config_variable(CONFIG_PATH, 'maxage_before_download'))
                 original_m3u_path = f'{BASE_DIR}/files/original.m3u'
                 if is_download_needed(original_m3u_path, maxage_before_download):
@@ -1645,7 +1820,7 @@ def startup_delayed():
                 else:
                     scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=max_age_before_download)
 
-                m3u_url = get_config_variable(CONFIG_PATH, 'url')
+                m3u_url = get_credential('url')
                 enable_scheduler = get_config_variable(CONFIG_PATH, 'enable_scheduler')
 
                 if enable_scheduler == "1":
@@ -1669,6 +1844,10 @@ def startup_delayed():
 def startup_instant():
     global MUST_CHANGE_PW
 
+    if not os.path.exists(CONFIG_PATH):
+        PrintLog("No config.py found — setup wizard will be shown.", "WARNING")
+        return
+
     current_secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
     if current_secret_key == "ChangeMe!":
         PrintLog("Updating SECRET_KEY . . .", "INFO")
@@ -1676,12 +1855,15 @@ def startup_instant():
         update_config_variable(CONFIG_PATH, 'SECRET_KEY', new_secret_key)
         app.config['SECRET_KEY'] = new_secret_key
 
-    current_url = get_config_variable(CONFIG_PATH, 'url')
-    if current_url == "":
+    # Migrate any plaintext credentials to encrypted
+    migrate_credentials()
+
+    current_url = get_credential('url')
+    if not current_url:
         internal_ip = get_internal_ip()
         port_number = get_config_variable(CONFIG_PATH, 'port_number')
         new_url = "http://" + internal_ip + ":" + port_number + "/get.php?username=123&password=456&output=mpegts&type=m3u_plus"
-        update_config_variable(CONFIG_PATH, 'url', new_url)
+        set_credential('url', new_url)
 
     files_dir = f'{BASE_DIR}/files'
     if not os.path.exists(files_dir):

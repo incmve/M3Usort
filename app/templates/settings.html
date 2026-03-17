@@ -45,6 +45,10 @@
                         <label for="HideWebserverLogs">{{ form.hide_webserver_logs.label }}</label>
                         {{ form.hide_webserver_logs(class_="u-full-width") }}
                     </div>
+                    <div class="six columns">
+                        <label for="debug">{{ form.debug.label }}</label>
+                        {{ form.debug(class_="u-full-width") }}
+                    </div>
                 </div>
 
                 <hr>
@@ -70,9 +74,10 @@
                         {{ form.overwrite_movies(class_="u-full-width") }}
                     </div>
                 </div>
+
                 <div class="row">
                     <div class="six columns">
-                        <label for="moviesDir">{{ form.match_type.label }}</label>
+                        <label>{{ form.match_type.label }}</label>
                         {{ form.match_type(class_="u-full-width") }}
                     </div>
                 </div>
@@ -99,6 +104,19 @@
 
                 <input type="submit" name="submit" value="Save" class="button-primary" style="margin-top: 1rem;">
             </form>
+
+            <hr>
+
+            <h5>Backup &amp; Restore</h5>
+            <p style="color: #aaa; font-size: 0.9rem;">Download your current config for safekeeping, or restore a previously downloaded config. Note: encrypted credentials in the backup are tied to the current SECRET_KEY.</p>
+            <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top: 1rem;">
+                <a href="{{ url_for('main_bp.backup_config') }}" class="button">&#11015; Download config</a>
+                <form method="POST" action="{{ url_for('main_bp.restore_config') }}" enctype="multipart/form-data" style="display:flex; gap:8px; align-items:center;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="file" name="config_file" accept=".py" required style="color:#ccc;">
+                    <button type="submit" class="button">&#11014; Restore config</button>
+                </form>
+            </div>
         </div>
     </div>
 </div>

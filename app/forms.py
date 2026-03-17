@@ -18,4 +18,5 @@ class ConfigForm(FlaskForm):
     jellyfin_enabled = SelectField('Enable Jellyfin integration', choices=[('1', 'Yes'), ('0', 'No')], validators=[DataRequired()])
     jellyfin_url = StringField('Jellyfin URL', validators=[Optional()])
     jellyfin_api_key = StringField('Jellyfin API Key', validators=[Optional()])
+    debug = SelectField('Debug mode', choices=[('no', 'No'), ('yes', 'Yes')], validators=[DataRequired()])
     submit = SubmitField('Save')
