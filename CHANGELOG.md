@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.02
+⚠️ BREAKING CHANGE
+
+SECRET_KEY, HOST_IP and TZ must now be set in a .env file next to your docker-compose.yml.
+Copy .env.sample to .env and fill in your values before upgrading.
+If SECRET_KEY changes, encrypted credentials in config.py will be invalidated and you will need to re-enter your provider URL in Settings.
+- Dashboard: expiration date flashes red with days remaining when within 30 days
+- Credentials (url, jellyfin_api_key) are now encrypted at rest in config.py using Fernet encryption
+- Added first-run setup wizard — no more manual config.py editing to get started
+- Setup wizard includes a config restore option for existing users
+- Added config backup (download) and restore (upload) buttons to the Settings page
+- Added debug mode toggle to the Settings page
+- SECRET_KEY is now read from the SECRET_KEY environment variable (.env) instead of config.py
+- HOST_IP and TZ moved from hardcoded docker-compose.yml to .env
+- Added .env.sample as a template
+- Improved Dockerfile: multi-stage build, no git dependency, uses COPY instead of git clone
+
 ## 0.2.01
 - Added categories
 - Movies and TV shows no longer call the API but use local cache.

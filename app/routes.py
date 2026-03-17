@@ -1473,7 +1473,7 @@ def restore_config():
     content = f.read().decode('utf-8')
 
     # Validate required keys exist
-    required_keys = ['url', 'output', 'admin_password', 'playlist_password', 'SECRET_KEY']
+    required_keys = ['url', 'output', 'admin_password', 'playlist_password']
     config_ns = {}
     try:
         exec(content, {}, config_ns)
@@ -1593,7 +1593,7 @@ def setup_restore():
     content = f.read().decode('utf-8')
 
     # Validate required keys
-    required_keys = ['url', 'output', 'admin_password', 'playlist_password', 'SECRET_KEY']
+    required_keys = ['url', 'output', 'admin_password', 'playlist_password']
     config_ns = {}
     try:
         exec(content, {}, config_ns)
