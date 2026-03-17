@@ -112,7 +112,7 @@
             <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top: 1rem;">
                 <a href="{{ url_for('main_bp.backup_config') }}" class="button">&#11015; Download config</a>
                 <form method="POST" action="{{ url_for('main_bp.restore_config') }}" enctype="multipart/form-data" style="display:flex; gap:8px; align-items:center;">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="csrf_token" value="{{ form.csrf_token._value() }}">
                     <input type="file" name="config_file" accept=".py" required style="color:#ccc;">
                     <button type="submit" class="button">&#11014; Restore config</button>
                 </form>
