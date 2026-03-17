@@ -11,10 +11,14 @@ def create_app():
 
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
     
-    config_namespace = {}
-    with open(CONFIG_PATH, 'r') as file:
-        exec(file.read(), {}, config_namespace)
-    app.config['SECRET_KEY'] = config_namespace.get('SECRET_KEY')
+    # Use a fallback SECRET_KEY if config doesn't exist yet (setup wizard flow)
+    if os.path.exists(CONFIG_PATH):
+        config_namespace = {}
+        with open(CONFIG_PATH, 'r') as file:
+            exec(file.read(), {}, config_namespace)
+        app.config['SECRET_KEY'] = config_namespace.get('SECRET_KEY', 'setup-mode-temp-key')
+    else:
+        app.config['SECRET_KEY'] = 'setup-mode-temp-key'
 
     with app.app_context():
         from .routes import main_bp, init
