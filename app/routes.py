@@ -336,7 +336,7 @@ ENCRYPTED_FIELDS = ['url', 'jellyfin_api_key']
 ENCRYPTION_PREFIX = 'enc:'
 
 def _get_fernet():
-    secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY') or 'default-insecure-key'
+    secret_key = os.environ.get('SECRET_KEY') or get_config_variable(CONFIG_PATH, 'SECRET_KEY') or 'default-insecure-key'
     key = base64.urlsafe_b64encode(hashlib.sha256(secret_key.encode()).digest())
     return Fernet(key)
 
@@ -1897,12 +1897,19 @@ def startup_instant():
         PrintLog("No config.py found — setup wizard will be shown.", "WARNING")
         return
 
-    current_secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
-    if current_secret_key == "ChangeMe!":
-        PrintLog("Updating SECRET_KEY . . .", "INFO")
-        new_secret_key = secrets.token_urlsafe(16)
-        update_config_variable(CONFIG_PATH, 'SECRET_KEY', new_secret_key)
-        app.config['SECRET_KEY'] = new_secret_key
+    # Set SECRET_KEY from env var if available, otherwise fall back to config
+    env_secret = os.environ.get('SECRET_KEY')
+    if env_secret:
+        app.config['SECRET_KEY'] = env_secret
+    else:
+        config_secret = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
+        if config_secret and config_secret != "ChangeMe!":
+            app.config['SECRET_KEY'] = config_secret
+        else:
+            new_secret_key = secrets.token_urlsafe(32)
+            update_config_variable(CONFIG_PATH, 'SECRET_KEY', new_secret_key)
+            app.config['SECRET_KEY'] = new_secret_key
+            PrintLog("Generated new SECRET_KEY and saved to config.", "INFO")
 
     # Migrate any plaintext credentials to encrypted
     migrate_credentials()

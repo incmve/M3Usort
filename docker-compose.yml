@@ -8,8 +8,9 @@ services:
       - /data/media/tv:/data/media/tv
     restart: always
     environment:
-      - HOST_IP=192.168.0.x
-      - TZ=Europe/Amsterdam
+      - HOST_IP=${HOST_IP}
+      - TZ=${TZ}
+      - SECRET_KEY=${SECRET_KEY}
     ports:
       - 5050:5050
 networks: {}

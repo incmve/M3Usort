@@ -108,7 +108,7 @@
             <hr>
 
             <h5>Backup &amp; Restore</h5>
-            <p style="color: #aaa; font-size: 0.9rem;">Download your current config for safekeeping, or restore a previously downloaded config. Note: encrypted credentials in the backup are tied to the current SECRET_KEY.</p>
+            <p style="color: #aaa; font-size: 0.9rem;">Download your current config for safekeeping, or restore a previously downloaded config. Credentials are encrypted using the <code>SECRET_KEY</code> from your <code>.env</code> file — make sure it stays the same across restores.</p>
             <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top: 1rem;">
                 <a href="{{ url_for('main_bp.backup_config') }}" class="button">&#11015; Download config</a>
                 <label class="button" style="cursor:pointer; margin:0;">
