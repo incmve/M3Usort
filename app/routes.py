@@ -390,8 +390,6 @@ def require_auth():
         return
     if request.path.startswith('/setup'):
         return
-
-    # Redirect to setup wizard if config doesn't exist
     if not os.path.exists(CONFIG_PATH):
         return redirect(url_for('setup'))
 
@@ -1576,6 +1574,51 @@ wanted_movies = [
         return redirect(url_for('login'))
 
     return render_template('setup.html')
+
+
+@app.route('/setup_restore', methods=['POST'])
+def setup_restore():
+    if os.path.exists(CONFIG_PATH):
+        return redirect(url_for('login'))
+
+    if 'config_file' not in request.files:
+        flash("No file uploaded.", "danger")
+        return redirect(url_for('setup'))
+
+    f = request.files['config_file']
+    if not f.filename.endswith('.py'):
+        flash("Invalid file. Please upload a config.py file.", "danger")
+        return redirect(url_for('setup'))
+
+    content = f.read().decode('utf-8')
+
+    # Validate required keys
+    required_keys = ['url', 'output', 'admin_password', 'playlist_password', 'SECRET_KEY']
+    config_ns = {}
+    try:
+        exec(content, {}, config_ns)
+    except Exception as e:
+        flash(f"Invalid config file: {e}", "danger")
+        return redirect(url_for('setup'))
+
+    missing = [k for k in required_keys if k not in config_ns]
+    if missing:
+        flash(f"Config file is missing required keys: {', '.join(missing)}", "danger")
+        return redirect(url_for('setup'))
+
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as cf:
+        cf.write(content)
+
+    # Encrypt any plaintext credentials from the restored config
+    migrate_credentials()
+
+    # Create files directory
+    files_dir = os.path.join(BASE_DIR, 'files')
+    os.makedirs(files_dir, exist_ok=True)
+
+    flash("Config restored successfully. Please log in.", "success")
+    return redirect(url_for('login'))
 
 
 @main_bp.route('/groups')
