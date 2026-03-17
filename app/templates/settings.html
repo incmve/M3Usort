@@ -109,13 +109,15 @@
 
             <h5>Backup &amp; Restore</h5>
             <p style="color: #aaa; font-size: 0.9rem;">Download your current config for safekeeping, or restore a previously downloaded config. Note: encrypted credentials in the backup are tied to the current SECRET_KEY.</p>
-            <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top: 1rem;">
+            <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top: 1rem;">
                 <a href="{{ url_for('main_bp.backup_config') }}" class="button">&#11015; Download config</a>
-                <form method="POST" action="{{ url_for('main_bp.restore_config') }}" enctype="multipart/form-data" style="display:flex; gap:8px; align-items:center;">
-                    <input type="hidden" name="csrf_token" value="{{ form.csrf_token._value() }}">
-                    <input type="file" name="config_file" accept=".py" required style="color:#ccc;">
-                    <button type="submit" class="button">&#11014; Restore config</button>
-                </form>
+                <label class="button" style="cursor:pointer; margin:0;">
+                    &#11014; Restore config
+                    <form id="restore-form" method="POST" action="{{ url_for('main_bp.restore_config') }}" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ form.csrf_token._value() }}">
+                        <input type="file" name="config_file" accept=".py" required style="display:none;" onchange="document.getElementById('restore-form').submit();">
+                    </form>
+                </label>
             </div>
         </div>
     </div>
