@@ -262,29 +262,27 @@ def update_movies_directory(movies_dir):
 
 
 def get_config_variable(config_path, variable_name):
+    config_variable = None
     try:
         with open(CONFIG_PATH, 'r') as file:
             config_content = file.read()
         config_namespace = {}
         exec(config_content, {}, config_namespace)
         config_variable = config_namespace.get(variable_name)
-
     except Exception as e:
-        flash(f"An error occurred: {e}", "danger")
-
+        PrintLog(f"Error reading config variable '{variable_name}': {e}", "ERROR")
     return config_variable
 
 def get_config_array(config_path, array_name):
+    config_variable = None
     try:
         with open(CONFIG_PATH, 'r') as file:
             config_content = file.read()
         config_namespace = {}
         exec(config_content, {}, config_namespace)
         config_variable = config_namespace.get(array_name)
-
     except Exception as e:
-        flash(f"An error occurred: {e}", "danger")
-
+        PrintLog(f"Error reading config array '{array_name}': {e}", "ERROR")
     return config_variable
 
 def update_config_variable(config_path, variable_name, new_value):
@@ -1794,6 +1792,11 @@ def init():
 
 def startup_delayed():
     sleep(1)
+
+    if not os.path.exists(CONFIG_PATH):
+        PrintLog("No config.py found — skipping startup tasks.", "WARNING")
+        return
+
     internal_ip = get_internal_ip()
     port_number = get_config_variable(CONFIG_PATH, 'port_number')
     max_age_before_download = get_config_variable(CONFIG_PATH, 'maxage_before_download')
