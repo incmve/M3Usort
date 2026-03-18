@@ -233,18 +233,8 @@ function openItemModal(item) {
 
     document.getElementById('jm-path').textContent = item.path || '—';
 
-    // Watch status
-    const watchWrap = document.getElementById('jm-watch-wrap');
-    const watchEl = document.getElementById('jm-watch-status');
-    if (item.all_users && item.all_users.length) {
-        watchEl.innerHTML = item.all_users.map(u => {
-            const watched = item.watched_by && item.watched_by.includes(u);
-            return `<span style="font-size:12px; padding:3px 10px; border-radius:20px; background:${watched ? '#0a2018' : '#141414'}; border:1px solid ${watched ? '#1a4a30' : '#222'}; color:${watched ? '#4aad70' : '#444'};">${watched ? '✓' : '○'} ${u}</span>`;
-        }).join('');
-        watchWrap.style.display = '';
-    } else {
-        watchWrap.style.display = 'none';
-    }
+    // Watch status - hidden for now
+    document.getElementById('jm-watch-wrap').style.display = 'none';
 
     const ovEl = document.getElementById('jm-overview');
     const ovWrap = document.getElementById('jm-overview-wrap');

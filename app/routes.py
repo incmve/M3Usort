@@ -1747,10 +1747,11 @@ def jellyfin_library():
     jellyfin_url = jellyfin_url.rstrip('/')
 
     try:
-        # Users for watch status
+        # Users
         users_resp = requests.get(f'{jellyfin_url}/Users', headers=headers, timeout=10)
         users_resp.raise_for_status()
         users = [{'id': u['Id'], 'name': u['Name']} for u in users_resp.json() if not u.get('Policy', {}).get('IsDisabled')]
+        all_user_names = [u['name'] for u in users]
 
         movies_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
             'IncludeItemTypes': 'Movie', 'Recursive': 'true',
@@ -1766,42 +1767,35 @@ def jellyfin_library():
         series_resp.raise_for_status()
         jf_series = series_resp.json().get('Items', [])
 
-        # Watch status per user
-        # Movies: use IsPlayed on Movie items
-        # Series: use HasAnyEpisodeWatched to show if user has watched anything (not requiring all episodes)
+        # Watch status: movies use IsPlayed on Movie, series use any watched Episode
         watched = {}
         for user in users:
             try:
-                # Movies watched
-                w_resp = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
+                w = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
                     'IncludeItemTypes': 'Movie', 'Recursive': 'true',
                     'IsPlayed': 'true', 'Fields': 'Id', 'Limit': 5000
                 }, timeout=20)
-                w_resp.raise_for_status()
-                for item in w_resp.json().get('Items', []):
+                w.raise_for_status()
+                for item in w.json().get('Items', []):
                     watched.setdefault(item['Id'], []).append(user['name'])
             except Exception:
                 pass
             try:
-                # Series: fetch episodes with play count > 0, collect unique SeriesId values
-                ep_resp = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
+                w = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
                     'IncludeItemTypes': 'Episode', 'Recursive': 'true',
                     'IsPlayed': 'true', 'Fields': 'SeriesId', 'Limit': 5000
                 }, timeout=20)
-                ep_resp.raise_for_status()
-                for ep in ep_resp.json().get('Items', []):
-                    series_id = ep.get('SeriesId')
-                    if series_id and user['name'] not in watched.get(series_id, []):
-                        watched.setdefault(series_id, []).append(user['name'])
+                w.raise_for_status()
+                for ep in w.json().get('Items', []):
+                    sid = ep.get('SeriesId')
+                    if sid and user['name'] not in watched.get(sid, []):
+                        watched.setdefault(sid, []).append(user['name'])
             except Exception:
                 pass
-
-        all_user_names = [u['name'] for u in users]
 
         items = []
         for movie in jf_movies:
             path = movie.get('Path', '')
-            # Movies: Jellyfin Path points to the actual file
             in_m3usort = path.endswith('.strm')
             items.append({
                 'id': movie['Id'],
@@ -1818,7 +1812,6 @@ def jellyfin_library():
 
         for serie in jf_series:
             path = serie.get('Path', '')
-            # Series: path is the series folder — check if it lives inside series_dir
             in_m3usort = bool(series_dir and path.startswith(series_dir))
             items.append({
                 'id': serie['Id'],
