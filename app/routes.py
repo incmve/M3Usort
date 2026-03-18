@@ -1747,6 +1747,11 @@ def jellyfin_library():
     jellyfin_url = jellyfin_url.rstrip('/')
 
     try:
+        # Users for watch status
+        users_resp = requests.get(f'{jellyfin_url}/Users', headers=headers, timeout=10)
+        users_resp.raise_for_status()
+        users = [{'id': u['Id'], 'name': u['Name']} for u in users_resp.json() if not u.get('Policy', {}).get('IsDisabled')]
+
         movies_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
             'IncludeItemTypes': 'Movie', 'Recursive': 'true',
             'Fields': 'Path,Overview,ProductionYear,CommunityRating', 'Limit': 5000
@@ -1761,10 +1766,27 @@ def jellyfin_library():
         series_resp.raise_for_status()
         jf_series = series_resp.json().get('Items', [])
 
+        # Watch status per user
+        watched = {}
+        for user in users:
+            try:
+                w_resp = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
+                    'IncludeItemTypes': 'Movie,Series', 'Recursive': 'true',
+                    'IsPlayed': 'true', 'Fields': 'Id', 'Limit': 5000
+                }, timeout=20)
+                w_resp.raise_for_status()
+                for item in w_resp.json().get('Items', []):
+                    watched.setdefault(item['Id'], []).append(user['name'])
+            except Exception:
+                pass
+
+        all_user_names = [u['name'] for u in users]
+
         items = []
         for movie in jf_movies:
             path = movie.get('Path', '')
-            in_m3usort = path.startswith(movies_dir) if movies_dir else False
+            # Movies: Jellyfin Path points to the actual file
+            in_m3usort = path.endswith('.strm')
             items.append({
                 'id': movie['Id'],
                 'name': movie['Name'],
@@ -1774,11 +1796,19 @@ def jellyfin_library():
                 'overview': movie.get('Overview', ''),
                 'path': path,
                 'in_m3usort': in_m3usort,
+                'watched_by': watched.get(movie['Id'], []),
+                'all_users': all_user_names,
             })
 
         for serie in jf_series:
             path = serie.get('Path', '')
-            in_m3usort = path.startswith(series_dir) if series_dir else False
+            # Series: Jellyfin Path points to the series folder — check if any .strm file exists inside
+            in_m3usort = False
+            if path and os.path.isdir(path):
+                for root, dirs, files in os.walk(path):
+                    if any(f.endswith('.strm') for f in files):
+                        in_m3usort = True
+                        break
             items.append({
                 'id': serie['Id'],
                 'name': serie['Name'],
@@ -1788,6 +1818,8 @@ def jellyfin_library():
                 'overview': serie.get('Overview', ''),
                 'path': path,
                 'in_m3usort': in_m3usort,
+                'watched_by': watched.get(serie['Id'], []),
+                'all_users': all_user_names,
             })
 
         items.sort(key=lambda x: x['name'].lower())

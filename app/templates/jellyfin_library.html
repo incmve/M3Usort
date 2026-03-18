@@ -110,6 +110,11 @@
                 <span onclick="closeItemModal()" style="position:absolute; top:12px; right:14px; cursor:pointer; color:#444; font-size:20px; line-height:1;">&times;</span>
             </div>
             <div style="padding:16px 20px;">
+                <!-- Watch status -->
+                <div id="jm-watch-wrap" style="margin-bottom:14px; display:none;">
+                    <div class="jm-section-label">Watch status</div>
+                    <div id="jm-watch-status" style="display:flex; gap:10px; flex-wrap:wrap;"></div>
+                </div>
                 <!-- File path -->
                 <div style="margin-bottom:14px;">
                     <div class="jm-section-label">File path</div>
@@ -228,6 +233,19 @@ function openItemModal(item) {
 
     document.getElementById('jm-path').textContent = item.path || '—';
 
+    // Watch status
+    const watchWrap = document.getElementById('jm-watch-wrap');
+    const watchEl = document.getElementById('jm-watch-status');
+    if (item.all_users && item.all_users.length) {
+        watchEl.innerHTML = item.all_users.map(u => {
+            const watched = item.watched_by && item.watched_by.includes(u);
+            return `<span style="font-size:12px; padding:3px 10px; border-radius:20px; background:${watched ? '#0a2018' : '#141414'}; border:1px solid ${watched ? '#1a4a30' : '#222'}; color:${watched ? '#4aad70' : '#444'};">${watched ? '✓' : '○'} ${u}</span>`;
+        }).join('');
+        watchWrap.style.display = '';
+    } else {
+        watchWrap.style.display = 'none';
+    }
+
     const ovEl = document.getElementById('jm-overview');
     const ovWrap = document.getElementById('jm-overview-wrap');
     if (item.overview) { ovEl.textContent = item.overview; ovWrap.style.display = ''; }
@@ -258,6 +276,7 @@ function openItemModal(item) {
 
                     const epList = document.createElement('div');
                     epList.className = 'season-episodes';
+                    epList.classList.add('hidden');
                     s.episodes.forEach(ep => {
                         const row = document.createElement('div');
                         row.className = 'ep-row';
@@ -274,7 +293,7 @@ function openItemModal(item) {
                             header.querySelector('.season-arrow').classList.remove('open');
                             header.style.borderRadius = '6px';
                         } else {
-                            epList.style.display = '';
+                            epList.style.display = 'block';
                             epList.classList.remove('hidden');
                             header.querySelector('.season-arrow').classList.add('open');
                             header.style.borderRadius = '6px 6px 0 0';
