@@ -1,80 +1,65 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <!-- Basic Page Needs -->
     <meta charset="utf-8">
-    <title>{% block title %}IPTV M3U tool{% endblock %}</title>
-    <meta name="description" content="{% block description %}{% endblock %}">
-    <meta name="author" content="{% block author %}{% endblock %}">
-
-    <!-- Mobile Specific Metas -->
+    <title>{% block title %}M3Usort{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-
-    <!-- Fonts -->
-    <link href="//fonts.googleapis.com/css?family=Raleway:400,300,600" rel="stylesheet" type="text/css">
-
-    <!-- CSS -->
+    <link href="//fonts.googleapis.com/css?family=Inter:400,500,600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='normalize.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='skeleton-main.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='skeleton-dark.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='extra.css') }}">
-
-    <!-- Favicon -->
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
-
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    </style>
     {% block head %}{% endblock %}
 </head>
-
 <body>
 
+<div class="app-shell">
     {% include 'nav.html' %}
 
-    <!-- Flash Messages -->
-    <div id="flash-messages-container" class="container">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        {% for category, message in messages %}
-        <div id="flash-message" class="flash-message {{ category }}">{{ message }}</div>
-        {% endfor %}
-        {% endif %}
-        {% endwith %}
+    <div class="page-wrapper">
+        <div class="flash-wrap">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            {% for category, message in messages %}
+            <div class="flash-message {{ category }}" style="margin-top:10px;">{{ message }}</div>
+            {% endfor %}
+            {% endif %}
+            {% endwith %}
+        </div>
+
+        {% block content %}{% endblock %}
+        {% block footer %}{% endblock %}
     </div>
+</div>
 
-    <!-- Main content -->
-    {% block content %}{% endblock %}
+<!-- Lightbox -->
+<div id="lightbox" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:9999; cursor:zoom-out; align-items:center; justify-content:center;">
+    <img id="lightbox-img" src="" style="max-width:90vw; max-height:90vh; object-fit:contain; border-radius:6px; opacity:1;">
+</div>
 
-    <!-- Footer -->
-    {% block footer %}{% endblock %}
-
-    <!-- Lightbox overlay -->
-    <div id="lightbox" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:9999; cursor:zoom-out; align-items:center; justify-content:center;">
-        <img id="lightbox-img" src="" style="max-width:90vw; max-height:90vh; object-fit:contain; border-radius:4px;">
-    </div>
-
-    <div id="myModal" class="modal">
-        <div class="modal-content">
-            <span class="close">&times;</span>
-            <div class="modal-body">
-                <div id="modal-image">
-                    <!-- poster image injected here -->
-                </div>
-                <div class="modal-text-buttons">
-                    <p id="modal-text">Question?</p>
-                    <div id="modal-links" style="margin-bottom: 8px;">
-                        <!-- TMDB / IMDB buttons injected here -->
-                    </div>
-                    <div class="button-container">
-                        <button class="button-primary" id="confirmBtn">Yes</button>
-                        <button id="cancelBtn">No</button>
-                    </div>
+<!-- Modal -->
+<div id="myModal" class="modal">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <div class="modal-body">
+            <div id="modal-image"></div>
+            <div class="modal-text-buttons">
+                <p id="modal-text" style="font-size:14px; color:#e0e0e0; margin:0;"></p>
+                <div id="modal-links" style="margin-bottom:4px;"></div>
+                <div class="button-container">
+                    <button class="button-primary" id="confirmBtn">Yes</button>
+                    <button id="cancelBtn">No</button>
                 </div>
             </div>
         </div>
     </div>
+</div>
 
-    {% block scripts %}{% endblock %}
-</body>
+{% block scripts %}{% endblock %}
 <script src="{{ url_for('static', filename='extra.js') }}"></script>
-
+</body>
 </html>

@@ -1,0 +1,303 @@
+{% extends 'layout.html' %}
+
+{% block content %}
+<div class="topbar">
+    <span class="topbar-title">Jellyfin Library</span>
+    <div class="topbar-right">
+        {% if not error %}
+        <span class="topbar-pill ok">● Connected</span>
+        {% endif %}
+    </div>
+</div>
+<div class="page-content">
+    {% if error %}
+    <p style="color:#aaa;">Please configure Jellyfin in <a href="{{ url_for('main_bp.settings') }}">Settings</a> first.</p>
+    {% else %}
+
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:1rem; align-items:center;">
+        <input type="text" id="search-bar" placeholder="Search library..." onkeyup="filterItems()"
+            style="flex:1; min-width:160px;" class="u-full-width">
+        <select id="type-filter" onchange="filterItems()" style="min-width:120px;">
+            <option value="">All types</option>
+            <option value="Movie">Movies</option>
+            <option value="Series">Series</option>
+        </select>
+        <select id="source-filter" onchange="filterItems()" style="min-width:160px;">
+            <option value="">All sources</option>
+            <option value="m3usort">M3Usort only</option>
+            <option value="other">Other sources</option>
+        </select>
+        <select id="watched-filter" onchange="filterItems()" style="min-width:160px;">
+            <option value="">All watch states</option>
+            <option value="all">Watched by all</option>
+            <option value="none">Not watched</option>
+            <option value="partial">Partially watched</option>
+        </select>
+        <div style="display:flex; gap:4px;">
+            <button id="btn-list" class="button button-primary" onclick="setView('list')" style="padding:6px 10px;">&#9776; List</button>
+            <button id="btn-grid" class="button" onclick="setView('grid')" style="padding:6px 10px;">&#9783; Posters</button>
+        </div>
+    </div>
+
+    <p id="item-count" style="color:#aaa; font-size:0.9rem;"></p>
+
+    <!-- LIST VIEW -->
+    <div id="view-list">
+        <table style="width:100%; border-collapse:collapse;" id="library-table">
+            <thead>
+                <tr style="border-bottom:1px solid #444; text-align:left;">
+                    <th style="padding:8px 4px;">Name</th>
+                    <th style="padding:8px 4px;">Type</th>
+                    <th style="padding:8px 4px;">Year</th>
+                    <th style="padding:8px 4px;">Rating</th>
+                    <th style="padding:8px 4px;">Watch status</th>
+                    <th style="padding:8px 4px;">Source</th>
+                    <th style="padding:8px 4px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in items %}
+            <tr class="library-row"
+                data-name="{{ item.name | lower }}"
+                data-type="{{ item.type }}"
+                data-source="{{ 'm3usort' if item.in_m3usort else 'other' }}"
+                data-watched-count="{{ item.watched_by | length }}"
+                data-user-count="{{ item.all_users | length }}"
+                style="border-bottom:1px solid #333; cursor:pointer;"
+                onclick="toggleDetail(this)">
+                <td style="padding:8px 4px;">
+                    <strong>{{ item.name }}</strong>
+                    <div class="detail" style="display:none; color:#aaa; font-size:0.85rem; margin-top:4px; max-width:400px;">
+                        {{ item.overview[:200] }}{% if item.overview|length > 200 %}...{% endif %}
+                        <br><small style="color:#666;">{{ item.path }}</small>
+                    </div>
+                </td>
+                <td style="padding:8px 4px; color:#aaa;">{{ item.type }}</td>
+                <td style="padding:8px 4px; color:#aaa;">{{ item.year }}</td>
+                <td style="padding:8px 4px; color:#f5c518;">
+                    {% if item.rating %}⭐ {{ "%.1f"|format(item.rating) }}{% endif %}
+                </td>
+                <td style="padding:8px 4px;">
+                    {% if item.all_users %}
+                        {% for user in item.all_users %}
+                            {% if user in item.watched_by %}
+                                <span style="color:#4caf50; margin-right:6px;">✅ {{ user }}</span>
+                            {% else %}
+                                <span style="color:#aaa; margin-right:6px;">⬜ {{ user }}</span>
+                            {% endif %}
+                        {% endfor %}
+                    {% else %}
+                        <span style="color:#aaa;">No users</span>
+                    {% endif %}
+                </td>
+                <td style="padding:8px 4px;">
+                    {% if item.in_m3usort %}
+                        <span style="color:#3d6b9e; font-size:0.8rem;">M3Usort</span>
+                    {% else %}
+                        <span style="color:#666; font-size:0.8rem;">Other</span>
+                    {% endif %}
+                </td>
+                <td style="padding:8px 4px;" onclick="event.stopPropagation()">
+                    <button class="button" style="padding:4px 10px; font-size:0.8rem; color:#e57373; border-color:#e57373;"
+                        onclick="removeItem('{{ item.id }}', '{{ item.path }}', '{{ item.type }}', '{{ item.name }}', this)">
+                        Remove
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- POSTER GRID VIEW -->
+    <div id="view-grid" style="display:none;">
+        <div style="display:flex; flex-wrap:wrap; gap:16px;">
+        {% for item in items %}
+        <div class="poster-card library-row"
+            data-name="{{ item.name | lower }}"
+            data-type="{{ item.type }}"
+            data-source="{{ 'm3usort' if item.in_m3usort else 'other' }}"
+            data-watched-count="{{ item.watched_by | length }}"
+            data-user-count="{{ item.all_users | length }}"
+            style="width:150px; position:relative; cursor:pointer;"
+            onclick="openPosterModal({{ item | tojson }})">
+
+            <img src="{{ jellyfin_url }}/Items/{{ item.id }}/Images/Primary?maxHeight=220&api_key={{ jellyfin_api_key }}"
+                onerror="this.src='{{ url_for('static', filename='favicon.png') }}'"
+                style="width:150px; height:220px; object-fit:cover; border-radius:4px; display:block;">
+
+            <!-- Watch badge -->
+            <div style="position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.7); border-radius:3px; padding:2px 5px; font-size:0.75rem;">
+                {% if item.watched_by | length == item.all_users | length and item.all_users | length > 0 %}
+                    <span style="color:#4caf50;">✅</span>
+                {% elif item.watched_by | length == 0 %}
+                    <span style="color:#aaa;">⬜</span>
+                {% else %}
+                    <span style="color:#f5c518;">◑</span>
+                {% endif %}
+            </div>
+
+            <!-- M3Usort badge -->
+            {% if item.in_m3usort %}
+            <div style="position:absolute; top:4px; left:4px; background:#3d6b9e; border-radius:3px; padding:2px 5px; font-size:0.7rem; color:#fff;">M</div>
+            {% endif %}
+
+            <div style="padding:4px 0; font-size:0.82rem; color:#ccc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="{{ item.name }}">
+                {{ item.name }}
+            </div>
+            <div style="font-size:0.75rem; color:#666;">{{ item.year }}{% if item.rating %} · ⭐{{ "%.1f"|format(item.rating) }}{% endif %}</div>
+        </div>
+        {% endfor %}
+        </div>
+    </div>
+
+    <!-- POSTER MODAL -->
+    <div id="poster-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9998; align-items:center; justify-content:center;">
+        <div style="background:#2a2a2a; border:1px solid #444; border-radius:6px; padding:24px; max-width:560px; width:90%; position:relative; display:flex; gap:20px; align-items:flex-start;">
+            <span onclick="closePosterModal()" style="position:absolute; top:10px; right:14px; cursor:pointer; color:#aaa; font-size:1.4rem;">&times;</span>
+            <img id="pm-poster" src="" style="width:130px; border-radius:4px; flex-shrink:0;">
+            <div style="flex:1;">
+                <p id="pm-title" style="font-size:1.1rem; font-weight:bold; margin-bottom:4px;"></p>
+                <p id="pm-meta" style="color:#aaa; font-size:0.85rem; margin-bottom:8px;"></p>
+                <p id="pm-watched" style="font-size:0.85rem; margin-bottom:8px;"></p>
+                <p id="pm-overview" style="color:#aaa; font-size:0.85rem; line-height:1.5; margin-bottom:12px;"></p>
+                <p id="pm-path" style="color:#555; font-size:0.75rem; margin-bottom:12px; word-break:break-all;"></p>
+                <button id="pm-remove" class="button" style="color:#e57373; border-color:#e57373; padding:5px 14px;">Remove</button>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+
+<script>
+    const jellyfinUrl = "{{ jellyfin_url }}";
+    const jellyfinKey = "{{ jellyfin_api_key }}";
+    let currentView = localStorage.getItem('jf_view') || 'list';
+
+    function setView(view) {
+        currentView = view;
+        localStorage.setItem('jf_view', view);
+        document.getElementById('view-list').style.display = view === 'list' ? '' : 'none';
+        document.getElementById('view-grid').style.display = view === 'grid' ? '' : 'none';
+        document.getElementById('btn-list').className = view === 'list' ? 'button button-primary' : 'button';
+        document.getElementById('btn-grid').className = view === 'grid' ? 'button button-primary' : 'button';
+        filterItems();
+    }
+
+    function filterItems() {
+        const search = document.getElementById('search-bar').value.toLowerCase();
+        const type = document.getElementById('type-filter').value;
+        const source = document.getElementById('source-filter').value;
+        const watched = document.getElementById('watched-filter').value;
+        let visible = 0;
+
+        document.querySelectorAll('.library-row').forEach(row => {
+            const matchSearch = row.getAttribute('data-name').includes(search);
+            const matchType = !type || row.getAttribute('data-type') === type;
+            const matchSource = !source || row.getAttribute('data-source') === source;
+            const watchedCount = parseInt(row.getAttribute('data-watched-count'));
+            const userCount = parseInt(row.getAttribute('data-user-count'));
+            const matchWatched = !watched ||
+                (watched === 'all' && watchedCount === userCount && userCount > 0) ||
+                (watched === 'none' && watchedCount === 0) ||
+                (watched === 'partial' && watchedCount > 0 && watchedCount < userCount);
+
+            const show = matchSearch && matchType && matchSource && matchWatched;
+            row.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+
+        const visibleCount = document.querySelectorAll('#library-table tbody tr.library-row:not([style*="display: none"])').length;
+        document.getElementById('item-count').textContent = `Showing ${visibleCount} items`;
+    }
+
+    function toggleDetail(row) {
+        const detail = row.querySelector('.detail');
+        if (detail) detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function openPosterModal(item) {
+        document.getElementById('pm-poster').src = `${jellyfinUrl}/Items/${item.id}/Images/Primary?maxHeight=300&api_key=${jellyfinKey}`;
+        document.getElementById('pm-title').textContent = item.name;
+        document.getElementById('pm-meta').textContent = [item.type, item.year, item.rating ? '⭐ ' + parseFloat(item.rating).toFixed(1) : ''].filter(Boolean).join(' · ');
+        document.getElementById('pm-overview').textContent = item.overview || '';
+        document.getElementById('pm-path').textContent = item.path || '';
+
+        const watchedHtml = item.all_users.map(u =>
+            item.watched_by.includes(u)
+                ? `<span style="color:#4caf50; margin-right:8px;">✅ ${u}</span>`
+                : `<span style="color:#aaa; margin-right:8px;">⬜ ${u}</span>`
+        ).join('');
+        document.getElementById('pm-watched').innerHTML = watchedHtml;
+
+        const btn = document.getElementById('pm-remove');
+        btn.onclick = function() {
+            if (!confirm(`Remove "${item.name}" from Jellyfin and delete strm files?`)) return;
+            btn.textContent = '...';
+            btn.disabled = true;
+            fetch('{{ url_for("main_bp.jellyfin_remove") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({item_id: item.id, item_path: item.path, item_type: item.type})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    closePosterModal();
+                    // Remove from both views
+                    document.querySelectorAll('.library-row').forEach(row => {
+                        if (row.getAttribute('data-name') === item.name.toLowerCase()) row.remove();
+                    });
+                    filterItems();
+                } else {
+                    alert('Error: ' + data.error);
+                    btn.textContent = 'Remove';
+                    btn.disabled = false;
+                }
+            });
+        };
+
+        document.getElementById('poster-modal').style.display = 'flex';
+    }
+
+    function closePosterModal() {
+        document.getElementById('poster-modal').style.display = 'none';
+    }
+
+    function removeItem(itemId, itemPath, itemType, itemName, btn) {
+        if (!confirm(`Remove "${itemName}" from Jellyfin and delete strm files?`)) return;
+        btn.textContent = '...';
+        btn.disabled = true;
+        fetch('{{ url_for("main_bp.jellyfin_remove") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item_id: itemId, item_path: itemPath, item_type: itemType})
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                btn.closest('tr').remove();
+                filterItems();
+            } else {
+                alert('Error: ' + data.error);
+                btn.textContent = 'Remove';
+                btn.disabled = false;
+            }
+        })
+        .catch(() => {
+            alert('Request failed');
+            btn.textContent = 'Remove';
+            btn.disabled = false;
+        });
+    }
+
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closePosterModal(); });
+    document.getElementById('poster-modal').addEventListener('click', function(e) {
+        if (e.target === this) closePosterModal();
+    });
+
+    // Init view from localStorage
+    setView(currentView);
+</script>
+{% endblock %}

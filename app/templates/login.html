@@ -1,23 +1,15 @@
 {% extends 'layout.html' %}
-
 {% block content %}
-<div class="container">
-    <h4>Login</h4>
-    <div class="row">
-        <div class="twelve columns">
-            <form action="{{ url_for('login') }}" method="post">
-                <div>
-                    <label for="password">Password:</label>
-                    <input type="password" id="password" name="password" autofocus>
-                </div>
-                <div style="margin-top: 1rem; display: flex; gap: 1rem; align-items: center;">
-                    <input class="button-primary" type="submit" value="Login">
-                    <button type="submit" name="guest" value="1" style="background: none; border: none; color: #aaa; cursor: pointer; font-size: 0.9rem; padding: 0; text-decoration: underline;">
-                        Continue as Guest
-                    </button>
-                </div>
-            </form>
-        </div>
+<div style="display:flex; align-items:center; justify-content:center; min-height:80vh;">
+    <div style="background:#141414; border:1px solid #1e1e1e; border-radius:10px; padding:32px; width:320px;">
+        <h4 style="margin-bottom:4px;">M3Usort</h4>
+        <p style="color:#444; font-size:13px; margin-bottom:24px;">IPTV Manager</p>
+        <form action="{{ url_for('login') }}" method="post">
+            <label>Password</label>
+            <input type="password" name="password" autofocus class="filter-input" style="width:100%; margin-bottom:14px;" placeholder="Enter password">
+            <button type="submit" class="button button-primary" style="width:100%; margin-bottom:10px;">Login</button>
+            <button type="submit" name="guest" value="1" style="width:100%; background:transparent; border:1px solid #1e1e1e; color:#444; border-radius:6px; padding:7px; font-size:12px; cursor:pointer; letter-spacing:.04em; text-transform:uppercase;">Continue as Guest</button>
+        </form>
     </div>
 </div>
 {% endblock %}

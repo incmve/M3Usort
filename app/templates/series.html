@@ -1,257 +1,152 @@
 {% extends 'layout.html' %}
-
 {% block content %}
-
-<div class="container">
-    <div class="row">
-        <div class="eight columns">
-            <h4>Search and save series</h4>
-            <p style="color: #aaa; font-size: 0.9rem;">
-                {% if cache_age %}
-                Cache updated {{ cache_age }} ago
-                &nbsp;·&nbsp; <a href="{{ url_for('main_bp.refresh_vod_cache') }}" style="color: #aaa;">↻ Refresh cache</a>
-                {% endif %}
-            </p>
-            <div id="main">
-                <div class="search-container" style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <input type="text" class="u-full-width" id="search-bar" placeholder="Search series..."
-                        onkeyup="searchSeries()" style="flex:1; min-width:160px;">
-                    <select id="category-filter" onchange="searchSeries()" style="min-width:160px;">
-                        <option value="">All categories</option>
-                        {% for cat in categories %}
-                        <option value="{{ cat }}">{{ cat }}</option>
-                        {% endfor %}
-                    </select>
+<div class="topbar">
+    <span class="topbar-title">Series</span>
+    <div class="topbar-right">
+        <span class="topbar-pill">{{ series|length }} titles</span>
+        {% if cache_age %}<span class="topbar-pill">Cache {{ cache_age }} ago</span>{% endif %}
+        <a href="{{ url_for('main_bp.refresh_vod_cache') }}" class="topbar-btn">↻ Refresh</a>
+    </div>
+</div>
+<div class="page-content">
+    <div style="display:grid; grid-template-columns:1fr 280px; gap:20px; align-items:start;">
+        <div>
+            <div class="filter-bar">
+                <input type="text" class="filter-input" id="search-bar" placeholder="Search series..." onkeyup="filterSeries()">
+                <select id="category-filter" class="filter-select" onchange="filterSeries()">
+                    <option value="">All categories</option>
+                    {% for cat in categories %}<option value="{{ cat }}">{{ cat }}</option>{% endfor %}
+                </select>
+                <div class="view-toggle">
+                    <button class="vt-btn" id="btn-list" onclick="setView('list')" title="List view">≡</button>
+                    <button class="vt-btn active" id="btn-grid" onclick="setView('grid')" title="Poster view">⊞</button>
                 </div>
-                <ul id="series-list">
-                    {% for serie in series %}
-                    <li data-category="{{ serie.category }}"><a href="javascript:void(0)" class="serie-link" data-serie-name="{{ serie.name }}" data-serie-id="{{ serie.series_id }}" data-serie-cover="{{ serie.series_cover }}">{{ serie.name }}</a></li>
-                    {% endfor %}
-                </ul>
+            </div>
+
+            <div id="view-grid">
+                <div class="poster-grid">
+                {% for serie in series %}
+                <div class="poster-card" data-category="{{ serie.category }}" data-name="{{ serie.name|lower }}"
+                    onclick="openSerieModal('{{ serie.name|replace("'","\\'")|replace('"','&quot;') }}', '{{ serie.series_id }}', '{{ serie.series_cover }}')">
+                    <div class="poster-img">
+                        {% if serie.series_cover %}<img src="{{ serie.series_cover }}" onerror="this.style.display='none'" loading="lazy">{% else %}📺{% endif %}
+                    </div>
+                    <div class="poster-name" title="{{ serie.name }}">{{ serie.name }}</div>
+                    <div class="poster-meta">{{ serie.category }}</div>
+                </div>
+                {% endfor %}
+                </div>
+            </div>
+
+            <div id="view-list" style="display:none;">
+                <div class="list-view">
+                {% for serie in series %}
+                <div class="list-row" data-category="{{ serie.category }}" data-name="{{ serie.name|lower }}"
+                    onclick="openSerieModal('{{ serie.name|replace("'","\\'")|replace('"','&quot;') }}', '{{ serie.series_id }}', '{{ serie.series_cover }}')">
+                    <div class="list-thumb">
+                        {% if serie.series_cover %}<img src="{{ serie.series_cover }}" onerror="this.style.display='none'" loading="lazy">{% else %}📺{% endif %}
+                    </div>
+                    <div>
+                        <div class="list-name">{{ serie.name }}</div>
+                        <div class="list-sub">{{ serie.category }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+                </div>
             </div>
         </div>
 
-        <div class="four columns">
-            <div id="main">
-                <h4>Watchlist</h4>
-                <div>
+        <div>
+            <div class="info-block">
+                <div class="info-block-header">Watchlist</div>
+                <div style="padding:14px;">
                     <form method="POST" action="{{ url_for('main_bp.add_wanted_serie') }}">
-                        <input type="text" class="u-full-width" id="wanted_serie" name="wanted_serie"
-                            placeholder="Add serie to watchlist">
+                        <input type="text" class="filter-input" name="wanted_serie" placeholder="Add to watchlist..." style="width:100%; margin-bottom:8px;">
+                        <button type="submit" class="button button-primary" style="width:100%;">Add</button>
                     </form>
+                    <ul id="wanted-series-list" style="margin-top:12px;">
+                        {% for s in wanted_series %}
+                        <li style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #181818;font-size:13px;color:#888;">
+                            <a href="javascript:void(0)" class="wanted-serie-link" data-serie-name="{{ s }}" style="color:#a04040;text-decoration:none;font-size:16px;">✕</a>
+                            {{ s }}
+                        </li>
+                        {% endfor %}
+                    </ul>
                 </div>
-                <ul id="wanted-series-list">
-                    {% for wanted_serie in wanted_series %}
-                    <li> <a href="javascript:void(0)" class="wanted-serie-link" style="text-decoration: none;"
-                            data-serie-name="{{ wanted_serie }}">&#10060;</a> {{ wanted_serie }}
-                    </li>
-                    {% endfor %}
-                </ul>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-    function hideFlashMessagesAfterDelay() {
-        const flashMessages = document.querySelectorAll('.flash-message');
-        flashMessages.forEach(flashMessage => {
-            if (!flashMessage.classList.contains('static')) {
-                setTimeout(() => {
-                    flashMessage.style.opacity = '0';
-                    setTimeout(() => flashMessage.remove(), 600);
-                }, 5000);
-            }
-        });
-    }
-
-    function addSerieToServer(serieName, serieId) {
-        fetch('{{ url_for("main_bp.add_series_to_server") }}', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ serieName, serieId }),
-        })
-        .then(response => response.json())
-        .then(data => {
-            var container = document.getElementById('flash-messages-container');
-            var div = document.createElement('div');
-            div.textContent = data.message;
-            div.className = 'flash-message info';
-            container.appendChild(div);
-            hideFlashMessagesAfterDelay();
-        })
-        .catch(error => console.error('Error:', error));
-    }
-
-    function RemoveWantedSerie(serieName) {
-        fetch('{{ url_for("main_bp.remove_wanted_serie") }}', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ serieName }),
-        })
-        .then(response => response.json())
-        .then(data => {
-            location.reload();
-            var container = document.getElementById('flash-messages-container');
-            var div = document.createElement('div');
-            div.textContent = data.message;
-            div.className = 'flash-message info';
-            container.appendChild(div);
-            hideFlashMessagesAfterDelay();
-        })
-        .catch(error => console.error('Error:', error));
-    }
-
-    function renderModalInfo(data, title, type, modalLinks) {
-        let metaHtml = '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:4px;">';
-        if (data.rating) {
-            metaHtml += `<span style="color:#f5c518; font-weight:bold;">⭐ ${parseFloat(data.rating).toFixed(1)}</span>`;
-        }
-        metaHtml += `<span id="jf-status" style="font-size:0.85rem; color:#888;">⏳ Checking Jellyfin...</span>`;
-        metaHtml += '</div>';
-
-        let btns = '';
-        if (data.tmdb_id) {
-            const tmdbType = type === 'movie' ? 'movie' : 'tv';
-            btns += `<a href="https://www.themoviedb.org/${tmdbType}/${data.tmdb_id}" target="_blank" class="button" style="margin-right:8px;">TMDB</a>`;
-        }
-        if (data.imdb_id) {
-            btns += `<a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button" style="margin-right:8px;">IMDB</a>`;
-        }
-        if (!data.tmdb_id && !data.imdb_id) {
-            btns += `<a href="https://www.themoviedb.org/search?query=${encodeURIComponent(title)}" target="_blank" class="button">Search TMDB</a>`;
-        }
-
-        let descHtml = '';
-        if (data.plot) {
-            const short = data.plot.length > 180 ? data.plot.substring(0, 180) + '...' : data.plot;
-            const hasMore = data.plot.length > 180;
-            descHtml = `<div style="color:#aaa; line-height:1.5; border-top:1px solid #3a3a3a; padding-top:8px; margin-top:4px;">`;
-            if (hasMore) {
-                descHtml += `<span id="desc-short">${short} <span onclick="document.getElementById('desc-short').style.display='none'; document.getElementById('desc-full').style.display='block';" style="color:#888; font-size:0.78rem; cursor:pointer; text-decoration:underline;">read more</span></span>`;
-                descHtml += `<span id="desc-full" style="display:none;">${data.plot} <span onclick="document.getElementById('desc-full').style.display='none'; document.getElementById('desc-short').style.display='block';" style="color:#888; font-size:0.78rem; cursor:pointer; text-decoration:underline;">read less</span></span>`;
-            } else {
-                descHtml += short;
-            }
-            descHtml += '</div>';
-        }
-
-        modalLinks.innerHTML = metaHtml + btns + descHtml;
-    }
-
-    function checkJellyfin(name, type) {
-        const encoded = encodeURIComponent(name);
-        fetch(`{{ url_for('main_bp.check_jellyfin', type='movie', name='placeholder') }}`.replace('movie', type).replace('placeholder', encoded))
-            .then(r => r.json())
-            .then(data => {
-                const el = document.getElementById('jf-status');
-                if (el) {
-                    if (data.exists) {
-                        el.textContent = '✅ In Jellyfin';
-                        el.style.color = '#4caf50';
-                    } else {
-                        el.textContent = '❌ Not in Jellyfin';
-                        el.style.color = '#e57373';
-                    }
-                }
-            })
-            .catch(() => {
-                const el = document.getElementById('jf-status');
-                if (el) el.style.display = 'none';
-            });
-    }
-
-    function loadSerieInfo(serieId, cover, serieName) {
-        const modalImage = document.getElementById("modal-image");
-        const modalLinks = document.getElementById("modal-links");
-
-        modalImage.innerHTML = cover ? `<img src="${cover}" style="max-width: 100%; max-height: 400px; display: block; margin: 0 auto;">` : '';
-        modalLinks.innerHTML = `<span style="color:#999; font-size:0.85em;">Loading info...</span>`;
-
-        fetch(`{{ url_for('main_bp.get_series_info_meta', series_id=0) }}`.replace('/0', `/${serieId}`))
-            .then(r => r.json())
-            .then(data => {
-                renderModalInfo(data, serieName, 'serie', modalLinks);
-                checkJellyfin(serieName, 'serie');
-            })
-            .catch(() => { modalLinks.innerHTML = ''; });
-    }
-
-    document.addEventListener('DOMContentLoaded', function () {
-        const modal = document.getElementById("myModal");
-        const modalText = document.getElementById("modal-text");
-        const modalImage = document.getElementById("modal-image");
-        const modalLinks = document.getElementById("modal-links");
-        const confirmBtn = document.getElementById("confirmBtn");
-        const cancelBtn = document.getElementById("cancelBtn");
-        const span = document.getElementsByClassName("close")[0];
-
-        function closeModal() {
-            modalImage.innerHTML = '';
-            modalLinks.innerHTML = '';
-            modal.style.display = "none";
-        }
-
-        document.querySelectorAll('.serie-link').forEach(link => {
-            link.addEventListener('click', function () {
-                const serieName = this.getAttribute('data-serie-name');
-                const serieId = this.getAttribute('data-serie-id');
-                const serieCover = this.getAttribute('data-serie-cover');
-                modalText.innerHTML = `Are you sure you want to add Serie '${serieName}'?`;
-                modal.style.display = "block";
-                loadSerieInfo(serieId, serieCover, serieName);
-                confirmBtn.onclick = function () {
-                    closeModal();
-                    addSerieToServer(serieName, serieId);
-                };
-            });
-        });
-
-        document.querySelectorAll('.wanted-serie-link').forEach(link => {
-            link.addEventListener('click', function () {
-                const serieName = this.getAttribute('data-serie-name');
-                modalText.innerHTML = `Are you sure you want to remove '${serieName}' from the wanted list?`;
-                modalImage.innerHTML = "";
-                modalLinks.innerHTML = "";
-                modal.style.display = "block";
-                confirmBtn.onclick = function () {
-                    closeModal();
-                    RemoveWantedSerie(serieName);
-                };
-            });
-        });
-
-        cancelBtn.onclick = closeModal;
-        span.onclick = closeModal;
-        window.onclick = function (event) {
-            if (event.target == modal) closeModal();
-        };
-
-        document.getElementById('modal-image').addEventListener('click', function (e) {
-            if (e.target.tagName === 'IMG') {
-                const lb = document.getElementById('lightbox');
-                document.getElementById('lightbox-img').src = e.target.src;
-                lb.style.display = 'flex';
-            }
-        });
-        document.getElementById('lightbox').addEventListener('click', function () {
-            this.style.display = 'none';
-        });
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') document.getElementById('lightbox').style.display = 'none';
+let currentView = localStorage.getItem('series_view') || 'grid';
+function setView(v) {
+    currentView = v; localStorage.setItem('series_view', v);
+    document.getElementById('view-grid').style.display=v==='grid'?'':'none';
+    document.getElementById('view-list').style.display=v==='list'?'':'none';
+    document.getElementById('btn-grid').className=v==='grid'?'vt-btn active':'vt-btn';
+    document.getElementById('btn-list').className=v==='list'?'vt-btn active':'vt-btn';
+}
+function filterSeries() {
+    const search=document.getElementById('search-bar').value.toLowerCase();
+    const cat=document.getElementById('category-filter').value;
+    document.querySelectorAll('.poster-card, .list-row').forEach(item=>{
+        const matchName=item.getAttribute('data-name').includes(search);
+        const matchCat=!cat||item.getAttribute('data-category')===cat;
+        item.style.display=matchName&&matchCat?'':'none';
+    });
+}
+function hideFlash(){document.querySelectorAll('.flash-message').forEach(m=>{if(!m.classList.contains('static')){setTimeout(()=>{m.style.opacity='0';setTimeout(()=>m.remove(),600);},5000);}});}
+function addSerieToServer(serieName,serieId){
+    fetch('{{ url_for("main_bp.add_series_to_server") }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serieName,serieId})})
+    .then(r=>r.json()).then(data=>{const c=document.querySelector('.flash-wrap');if(c){const d=document.createElement('div');d.textContent=data.message;d.className='flash-message info';c.appendChild(d);hideFlash();}}).catch(e=>console.error(e));
+}
+function RemoveWantedSerie(serieName){fetch('{{ url_for("main_bp.remove_wanted_serie") }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serieName})}).then(()=>location.reload());}
+function renderModalInfo(data,title,type,modalLinks){
+    let m='<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px;">';
+    if(data.rating) m+=`<span style="color:#c8a030;font-weight:600;">★ ${parseFloat(data.rating).toFixed(1)}</span>`;
+    m+=`<span id="jf-status" style="font-size:12px;color:#444;">⏳ Checking Jellyfin...</span></div>`;
+    let b='';
+    if(data.tmdb_id) b+=`<a href="https://www.themoviedb.org/tv/${data.tmdb_id}" target="_blank" class="button" style="margin-right:6px;">TMDB</a>`;
+    if(data.imdb_id) b+=`<a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button" style="margin-right:6px;">IMDB</a>`;
+    if(!data.tmdb_id&&!data.imdb_id) b+=`<a href="https://www.themoviedb.org/search?query=${encodeURIComponent(title)}" target="_blank" class="button">Search TMDB</a>`;
+    let d='';
+    if(data.plot){const s=data.plot.length>180?data.plot.substring(0,180)+'...':data.plot;d=`<div style="color:#777;line-height:1.5;border-top:1px solid #1e1e1e;padding-top:8px;margin-top:4px;font-size:13px;">${s}</div>`;}
+    modalLinks.innerHTML=m+b+d;
+}
+function checkJellyfin(name,type){
+    fetch(`{{ url_for('main_bp.check_jellyfin', type='movie', name='placeholder') }}`.replace('movie',type).replace('placeholder',encodeURIComponent(name)))
+    .then(r=>r.json()).then(data=>{const el=document.getElementById('jf-status');if(el){el.textContent=data.exists?'✅ In Jellyfin':'❌ Not in Jellyfin';el.style.color=data.exists?'#3a8a5a':'#a04040';}}).catch(()=>{});
+}
+function openSerieModal(serieName,serieId,serieCover){
+    const modal=document.getElementById('myModal');
+    document.getElementById('modal-text').textContent=`Add Series '${serieName}'?`;
+    document.getElementById('modal-image').innerHTML=serieCover?`<img src="${serieCover}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">`:'';
+    document.getElementById('modal-links').innerHTML=`<span style="color:#444;font-size:12px;">Loading...</span>`;
+    modal.style.display='block';
+    fetch(`{{ url_for('main_bp.get_series_info_meta', series_id=0) }}`.replace('/0',`/${serieId}`))
+    .then(r=>r.json()).then(data=>{renderModalInfo(data,serieName,'serie',document.getElementById('modal-links'));checkJellyfin(serieName,'serie');}).catch(()=>{document.getElementById('modal-links').innerHTML='';});
+    document.getElementById('confirmBtn').onclick=function(){closeModal();addSerieToServer(serieName,serieId);};
+}
+document.addEventListener('DOMContentLoaded',function(){
+    setView(currentView);
+    document.querySelectorAll('.wanted-serie-link').forEach(link=>{
+        link.addEventListener('click',function(){
+            const n=this.getAttribute('data-serie-name');
+            const modal=document.getElementById('myModal');
+            document.getElementById('modal-text').textContent=`Remove '${n}' from watchlist?`;
+            document.getElementById('modal-image').innerHTML=''; document.getElementById('modal-links').innerHTML='';
+            modal.style.display='block';
+            document.getElementById('confirmBtn').onclick=function(){closeModal();RemoveWantedSerie(n);};
         });
     });
-
-    function searchSeries() {
-        const input = document.getElementById('search-bar').value.toLowerCase();
-        const category = document.getElementById('category-filter').value;
-        document.querySelectorAll('#series-list li').forEach(item => {
-            const name = (item.textContent || item.innerText).toLowerCase();
-            const itemCategory = item.getAttribute('data-category');
-            const matchSearch = name.includes(input);
-            const matchCategory = !category || itemCategory === category;
-            item.style.display = matchSearch && matchCategory ? '' : 'none';
-        });
-    }
+    function closeModal(){document.getElementById('modal-image').innerHTML='';document.getElementById('modal-links').innerHTML='';document.getElementById('myModal').style.display='none';}
+    document.getElementById('cancelBtn').onclick=closeModal;
+    document.querySelector('.close').onclick=closeModal;
+    window.onclick=function(e){if(e.target===document.getElementById('myModal'))closeModal();};
+    document.getElementById('modal-image').addEventListener('click',function(e){if(e.target.tagName==='IMG'){const lb=document.getElementById('lightbox');document.getElementById('lightbox-img').src=e.target.src;lb.style.display='flex';}});
+    document.getElementById('lightbox').addEventListener('click',function(){this.style.display='none';});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'){document.getElementById('lightbox').style.display='none';document.getElementById('myModal').style.display='none';}});
+});
 </script>
 {% endblock %}
