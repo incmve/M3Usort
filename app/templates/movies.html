@@ -3,7 +3,7 @@
 <div class="topbar">
     <span class="topbar-title">Movies</span>
     <div class="topbar-right">
-        <span class="topbar-pill">{{ movies|length }} titles</span>
+        <span class="topbar-pill" id="total-count">{{ total }} titles</span>
         {% if cache_age %}<span class="topbar-pill">Cache {{ cache_age }} ago</span>{% endif %}
         <a href="{{ url_for('main_bp.refresh_vod_cache') }}" class="topbar-btn">↻ Refresh</a>
     </div>
@@ -23,37 +23,9 @@
                 </div>
             </div>
 
-            <div id="view-grid">
-                <div class="poster-grid" id="movies-grid">
-                {% for movie in movies %}
-                <div class="poster-card" data-category="{{ movie.category }}" data-name="{{ movie.name|lower }}"
-                    onclick="openMovieModal('{{ movie.name|replace("'","\\'")|replace('"','&quot;') }}', '{{ movie.stream_id }}', '{{ movie.stream_icon }}')">
-                    <div class="poster-img">
-                        {% if movie.stream_icon %}<img src="{{ movie.stream_icon }}" onerror="this.style.display='none'" loading="lazy">{% else %}🎬{% endif %}
-                    </div>
-                    <div class="poster-name" title="{{ movie.name }}">{{ movie.name }}</div>
-                    <div class="poster-meta">{{ movie.category }}</div>
-                </div>
-                {% endfor %}
-                </div>
-            </div>
-
-            <div id="view-list" style="display:none;">
-                <div class="list-view" id="movies-list-view">
-                {% for movie in movies %}
-                <div class="list-row" data-category="{{ movie.category }}" data-name="{{ movie.name|lower }}"
-                    onclick="openMovieModal('{{ movie.name|replace("'","\\'")|replace('"','&quot;') }}', '{{ movie.stream_id }}', '{{ movie.stream_icon }}')">
-                    <div class="list-thumb">
-                        {% if movie.stream_icon %}<img src="{{ movie.stream_icon }}" onerror="this.style.display='none'" loading="lazy">{% else %}🎬{% endif %}
-                    </div>
-                    <div>
-                        <div class="list-name">{{ movie.name }}</div>
-                        <div class="list-sub">{{ movie.category }}</div>
-                    </div>
-                </div>
-                {% endfor %}
-                </div>
-            </div>
+            <div id="count-bar" style="font-size:12px; color:#444; margin-bottom:10px;"></div>
+            <div id="view-grid"><div class="poster-grid" id="movies-grid"></div><div id="grid-load-more" style="text-align:center; padding:16px; display:none;"><button class="button" onclick="loadMoreGrid()">Load more</button></div></div>
+            <div id="view-list" style="display:none;"><div class="list-view" id="movies-list-view"></div><div id="list-load-more" style="text-align:center; padding:16px; display:none;"><button class="button" onclick="loadMoreList()">Load more</button></div></div>
         </div>
 
         <div>
@@ -81,29 +53,81 @@
 </div>
 
 <script>
+let ALL_MOVIES = [];
+const PAGE_SIZE = 120;
+let filteredMovies = [];
+let gridPage = 0;
+let listPage = 0;
 let currentView = localStorage.getItem('movies_view') || 'grid';
+
+// Fetch data after page load — page appears instantly, data loads in background
+fetch('{{ url_for("main_bp.api_movies") }}')
+    .then(r => r.json())
+    .then(data => {
+        ALL_MOVIES = data;
+        filteredMovies = data;
+        document.getElementById('count-bar').textContent = `${data.length} movies`;
+        renderCurrent();
+    })
+    .catch(e => { document.getElementById('count-bar').textContent = 'Error loading movies'; console.error(e); });
+
+function renderGrid(movies, append) {
+    const grid = document.getElementById('movies-grid');
+    if (!append) { grid.innerHTML = ''; gridPage = 0; }
+    const slice = movies.slice(gridPage * PAGE_SIZE, (gridPage + 1) * PAGE_SIZE);
+    slice.forEach(m => {
+        const d = document.createElement('div');
+        d.className = 'poster-card';
+        d.setAttribute('data-category', m.category || '');
+        d.setAttribute('data-name', (m.name || '').toLowerCase());
+        d.innerHTML = `<div class="poster-img">${m.stream_icon ? `<img src="${m.stream_icon}" loading="lazy" onerror="this.style.display='none'">` : '🎬'}</div><div class="poster-name" title="${escHtml(m.name)}">${escHtml(m.name)}</div><div class="poster-meta">${escHtml(m.category||'')}</div>`;
+        d.onclick = () => openMovieModal(m.name, m.stream_id, m.stream_icon);
+        grid.appendChild(d);
+    });
+    document.getElementById('grid-load-more').style.display = (gridPage + 1) * PAGE_SIZE < movies.length ? '' : 'none';
+}
+
+function renderList(movies, append) {
+    const list = document.getElementById('movies-list-view');
+    if (!append) { list.innerHTML = ''; listPage = 0; }
+    const slice = movies.slice(listPage * PAGE_SIZE, (listPage + 1) * PAGE_SIZE);
+    slice.forEach(m => {
+        const d = document.createElement('div');
+        d.className = 'list-row';
+        d.innerHTML = `<div class="list-thumb">${m.stream_icon ? `<img src="${m.stream_icon}" loading="lazy" onerror="this.style.display='none'">` : '🎬'}</div><div><div class="list-name">${escHtml(m.name)}</div><div class="list-sub">${escHtml(m.category||'')}</div></div>`;
+        d.onclick = () => openMovieModal(m.name, m.stream_id, m.stream_icon);
+        list.appendChild(d);
+    });
+    document.getElementById('list-load-more').style.display = (listPage + 1) * PAGE_SIZE < movies.length ? '' : 'none';
+}
+
+function loadMoreGrid() { gridPage++; renderGrid(filteredMovies, true); }
+function loadMoreList() { listPage++; renderList(filteredMovies, true); }
+
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
 function setView(v) {
-    currentView = v;
-    localStorage.setItem('movies_view', v);
+    currentView = v; localStorage.setItem('movies_view', v);
     document.getElementById('view-grid').style.display = v==='grid'?'':'none';
     document.getElementById('view-list').style.display = v==='list'?'':'none';
     document.getElementById('btn-grid').className = v==='grid'?'vt-btn active':'vt-btn';
     document.getElementById('btn-list').className = v==='list'?'vt-btn active':'vt-btn';
 }
+
 function filterMovies() {
     const search = document.getElementById('search-bar').value.toLowerCase();
     const cat = document.getElementById('category-filter').value;
-    document.querySelectorAll('.poster-card, .list-row').forEach(item => {
-        const matchName = item.getAttribute('data-name').includes(search);
-        const matchCat = !cat || item.getAttribute('data-category') === cat;
-        item.style.display = matchName && matchCat ? '' : 'none';
+    filteredMovies = ALL_MOVIES.filter(m => {
+        const matchName = (m.name||'').toLowerCase().includes(search);
+        const matchCat = !cat || (m.category||'') === cat;
+        return matchName && matchCat;
     });
+    document.getElementById('count-bar').textContent = `${filteredMovies.length} movies`;
+    renderGrid(filteredMovies, false);
+    renderList(filteredMovies, false);
 }
-function hideFlash() {
-    document.querySelectorAll('.flash-message').forEach(m=>{
-        if(!m.classList.contains('static')){setTimeout(()=>{m.style.opacity='0';setTimeout(()=>m.remove(),600);},5000);}
-    });
-}
+
+function hideFlash(){document.querySelectorAll('.flash-message').forEach(m=>{if(!m.classList.contains('static')){setTimeout(()=>{m.style.opacity='0';setTimeout(()=>m.remove(),600);},5000);}});}
 function addMovieToServer(movieName, movieId) {
     fetch('{{ url_for("main_bp.add_movie_to_server") }}', {
         method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({movieName,movieId})
@@ -128,58 +152,44 @@ function renderModalInfo(data, title, type, modalLinks) {
     let descHtml = '';
     if (data.plot) {
         const short = data.plot.length>180?data.plot.substring(0,180)+'...':data.plot;
-        descHtml=`<div style="color:#777;line-height:1.5;border-top:1px solid #1e1e1e;padding-top:8px;margin-top:4px;font-size:13px;">`;
-        if(data.plot.length>180){
-            descHtml+=`<span id="desc-short">${short} <span onclick="document.getElementById('desc-short').style.display='none';document.getElementById('desc-full').style.display='block';" style="color:#4aadcf;cursor:pointer;font-size:11px;">more</span></span>`;
-            descHtml+=`<span id="desc-full" style="display:none;">${data.plot} <span onclick="document.getElementById('desc-full').style.display='none';document.getElementById('desc-short').style.display='block';" style="color:#4aadcf;cursor:pointer;font-size:11px;">less</span></span>`;
-        } else { descHtml+=short; }
-        descHtml+='</div>';
+        descHtml=`<div style="color:#777;line-height:1.5;border-top:1px solid #1e1e1e;padding-top:8px;margin-top:4px;font-size:13px;">${data.plot.length>180?`<span id="desc-short">${short} <span onclick="document.getElementById('desc-short').style.display='none';document.getElementById('desc-full').style.display='block';" style="color:#4aadcf;cursor:pointer;font-size:11px;">more</span></span><span id="desc-full" style="display:none;">${data.plot} <span onclick="document.getElementById('desc-full').style.display='none';document.getElementById('desc-short').style.display='block';" style="color:#4aadcf;cursor:pointer;font-size:11px;">less</span></span>`:short}</div>`;
     }
     modalLinks.innerHTML = metaHtml + btns + descHtml;
 }
 function checkJellyfin(name, type) {
     fetch(`{{ url_for('main_bp.check_jellyfin', type='movie', name='placeholder') }}`.replace('movie',type).replace('placeholder',encodeURIComponent(name)))
-        .then(r=>r.json()).then(data=>{
-            const el=document.getElementById('jf-status');
-            if(el){el.textContent=data.exists?'✅ In Jellyfin':'❌ Not in Jellyfin';el.style.color=data.exists?'#3a8a5a':'#a04040';}
-        }).catch(()=>{const el=document.getElementById('jf-status');if(el)el.style.display='none';});
+        .then(r=>r.json()).then(data=>{const el=document.getElementById('jf-status');if(el){el.textContent=data.exists?'✅ In Jellyfin':'❌ Not in Jellyfin';el.style.color=data.exists?'#3a8a5a':'#a04040';}}).catch(()=>{});
 }
 function openMovieModal(movieName, movieId, movieIcon) {
     const modal=document.getElementById('myModal');
-    const modalText=document.getElementById('modal-text');
-    const modalImage=document.getElementById('modal-image');
-    const modalLinks=document.getElementById('modal-links');
-    const confirmBtn=document.getElementById('confirmBtn');
-    modalText.textContent = `Add Movie '${movieName}'?`;
-    modalImage.innerHTML = movieIcon ? `<img src="${movieIcon}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">` : '';
-    modalLinks.innerHTML = `<span style="color:#444;font-size:12px;">Loading...</span>`;
-    modal.style.display = 'block';
+    document.getElementById('modal-text').textContent=`Add Movie '${movieName}'?`;
+    document.getElementById('modal-image').innerHTML=movieIcon?`<img src="${movieIcon}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">`:'';
+    document.getElementById('modal-links').innerHTML=`<span style="color:#444;font-size:12px;">Loading...</span>`;
+    modal.style.display='block';
     fetch(`{{ url_for('main_bp.get_vod_info', stream_id=0) }}`.replace('/0',`/${movieId}`))
-        .then(r=>r.json()).then(data=>{ renderModalInfo(data,movieName,'movie',modalLinks); checkJellyfin(movieName,'movie'); }).catch(()=>{modalLinks.innerHTML='';});
-    confirmBtn.onclick = function() { closeModal(); addMovieToServer(movieName,movieId); };
+        .then(r=>r.json()).then(data=>{renderModalInfo(data,movieName,'movie',document.getElementById('modal-links'));checkJellyfin(movieName,'movie');}).catch(()=>{document.getElementById('modal-links').innerHTML='';});
+    document.getElementById('confirmBtn').onclick=function(){closeModal();addMovieToServer(movieName,movieId);};
 }
+function closeModal(){document.getElementById('modal-image').innerHTML='';document.getElementById('modal-links').innerHTML='';document.getElementById('myModal').style.display='none';}
 document.addEventListener('DOMContentLoaded', function() {
+    filterMovies();
     setView(currentView);
     document.querySelectorAll('.wanted-movie-link').forEach(link=>{
         link.addEventListener('click', function() {
             const n=this.getAttribute('data-movie-name');
-            const modal=document.getElementById('myModal');
             document.getElementById('modal-text').textContent=`Remove '${n}' from watchlist?`;
-            document.getElementById('modal-image').innerHTML='';
-            document.getElementById('modal-links').innerHTML='';
-            modal.style.display='block';
+            document.getElementById('modal-image').innerHTML=''; document.getElementById('modal-links').innerHTML='';
+            document.getElementById('myModal').style.display='block';
             document.getElementById('confirmBtn').onclick=function(){closeModal();RemoveWantedMovie(n);};
         });
     });
-    function closeModal(){document.getElementById('modal-image').innerHTML='';document.getElementById('modal-links').innerHTML='';document.getElementById('myModal').style.display='none';}
     document.getElementById('cancelBtn').onclick=closeModal;
     document.querySelector('.close').onclick=closeModal;
     window.onclick=function(e){if(e.target===document.getElementById('myModal'))closeModal();};
-    document.getElementById('modal-image').addEventListener('click',function(e){
-        if(e.target.tagName==='IMG'){const lb=document.getElementById('lightbox');document.getElementById('lightbox-img').src=e.target.src;lb.style.display='flex';}
-    });
+    document.getElementById('modal-image').addEventListener('click',function(e){if(e.target.tagName==='IMG'){const lb=document.getElementById('lightbox');document.getElementById('lightbox-img').src=e.target.src;lb.style.display='flex';}});
     document.getElementById('lightbox').addEventListener('click',function(){this.style.display='none';});
     document.addEventListener('keydown',function(e){if(e.key==='Escape'){document.getElementById('lightbox').style.display='none';document.getElementById('myModal').style.display='none';}});
 });
 </script>
+
 {% endblock %}

@@ -15,26 +15,27 @@
 
 <div class="page-content">
     <div class="stat-row">
-        <div class="stat-card">
-            <div class="stat-label">Movies</div>
-            <div class="stat-value" id="total_movies">{{ total_movies }}</div>
+        <div class="stat-card" style="border-color:#1a3a5c; background:linear-gradient(135deg,#0e1e30,#151515);">
+            <div class="stat-label" style="color:#2a6a9a;">Movies</div>
+            <div class="stat-value" id="total_movies" style="color:#4aadcf;">{{ total_movies }}</div>
             <div class="stat-sub">in cache</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">TV Shows</div>
-            <div class="stat-value" id="total_series">{{ total_series }}</div>
+        <div class="stat-card" style="border-color:#1a3a2a; background:linear-gradient(135deg,#0e2018,#151515);">
+            <div class="stat-label" style="color:#2a6a4a;">TV Shows</div>
+            <div class="stat-value" id="total_series" style="color:#4acf8a;">{{ total_series }}</div>
             <div class="stat-sub">in cache</div>
         </div>
-        <div class="stat-card {% if exp_date_days_left is defined and exp_date_days_left <= 30 %}warn{% endif %}">
-            <div class="stat-label">Subscription</div>
-            <div class="stat-value" id="exp_date_short">
+        <div class="stat-card {% if exp_date_days_left is defined and exp_date_days_left <= 30 %}warn{% endif %}"
+            style="border-color:{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#4a3010{% else %}#2a2a1a{% endif %}; background:linear-gradient(135deg,{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#201808{% else %}#181810{% endif %},#151515);">
+            <div class="stat-label" style="color:{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#8a6020{% else %}#6a6030{% endif %};">Subscription</div>
+            <div class="stat-value" id="exp_date_short" style="color:{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#c8a030{% else %}#a0a060{% endif %};">
                 {% if exp_date_days_left is defined and exp_date_days_left <= 30 %}{{ exp_date_days_left }}d{% else %}Active{% endif %}
             </div>
             <div class="stat-sub" id="exp_date">{{ exp_date }}</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Uptime</div>
-            <div class="stat-value" id="uptime_short">—</div>
+        <div class="stat-card" style="border-color:#2a1a3a; background:linear-gradient(135deg,#180e20,#151515);">
+            <div class="stat-label" style="color:#5a3a7a;">Uptime</div>
+            <div class="stat-value" id="uptime_short" style="color:#9a70cf;">—</div>
             <div class="stat-sub" id="uptime">{{ uptime }}</div>
         </div>
     </div>
