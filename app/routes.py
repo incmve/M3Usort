@@ -270,7 +270,7 @@ def get_config_variable(config_path, variable_name):
         exec(config_content, {}, config_namespace)
         config_variable = config_namespace.get(variable_name)
     except Exception as e:
-        PrintLog(f"Error reading config variable '{variable_name}': {e}", "ERROR")
+        logging.error(f"Error reading config variable '{variable_name}': {e}")
     return config_variable
 
 def get_config_array(config_path, array_name):
@@ -282,7 +282,7 @@ def get_config_array(config_path, array_name):
         exec(config_content, {}, config_namespace)
         config_variable = config_namespace.get(array_name)
     except Exception as e:
-        PrintLog(f"Error reading config array '{array_name}': {e}", "ERROR")
+        logging.error(f"Error reading config array '{array_name}': {e}")
     return config_variable
 
 def update_config_variable(config_path, variable_name, new_value):
@@ -336,7 +336,7 @@ ENCRYPTED_FIELDS = ['url', 'jellyfin_api_key']
 ENCRYPTION_PREFIX = 'enc:'
 
 def _get_fernet():
-    secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY') or 'default-insecure-key'
+    secret_key = os.environ.get('SECRET_KEY') or get_config_variable(CONFIG_PATH, 'SECRET_KEY') or 'default-insecure-key'
     key = base64.urlsafe_b64encode(hashlib.sha256(secret_key.encode()).digest())
     return Fernet(key)
 
@@ -347,7 +347,7 @@ def encrypt_credential(value):
         f = _get_fernet()
         return ENCRYPTION_PREFIX + f.encrypt(value.encode()).decode()
     except Exception as e:
-        PrintLog(f"Encryption error: {e}", "ERROR")
+        logging.error(f"Encryption error: {e}")
         return value
 
 def decrypt_credential(value):
@@ -357,7 +357,7 @@ def decrypt_credential(value):
         f = _get_fernet()
         return f.decrypt(value[len(ENCRYPTION_PREFIX):].encode()).decode()
     except Exception as e:
-        PrintLog(f"Decryption error: {e}", "ERROR")
+        logging.error(f"Decryption error: {e}")
         return value
 
 def get_credential(key):
@@ -373,7 +373,7 @@ def migrate_credentials():
     for field in ENCRYPTED_FIELDS:
         value = get_config_variable(CONFIG_PATH, field)
         if value and not value.startswith(ENCRYPTION_PREFIX):
-            PrintLog(f"Encrypting credential field: {field}", "INFO")
+            logging.info(f"Encrypting credential field: {field}")
             set_credential(field, value)
 
 
@@ -390,8 +390,6 @@ def require_auth():
         return
     if request.path.startswith('/setup'):
         return
-
-    # Redirect to setup wizard if config doesn't exist
     if not os.path.exists(CONFIG_PATH):
         return redirect(url_for('setup'))
 
@@ -1475,7 +1473,7 @@ def restore_config():
     content = f.read().decode('utf-8')
 
     # Validate required keys exist
-    required_keys = ['url', 'output', 'admin_password', 'playlist_password', 'SECRET_KEY']
+    required_keys = ['url', 'output', 'admin_password', 'playlist_password']
     config_ns = {}
     try:
         exec(content, {}, config_ns)
@@ -1576,6 +1574,181 @@ wanted_movies = [
         return redirect(url_for('login'))
 
     return render_template('setup.html')
+
+
+@app.route('/setup_restore', methods=['POST'])
+def setup_restore():
+    if os.path.exists(CONFIG_PATH):
+        return redirect(url_for('login'))
+
+    if 'config_file' not in request.files:
+        flash("No file uploaded.", "danger")
+        return redirect(url_for('setup'))
+
+    f = request.files['config_file']
+    if not f.filename.endswith('.py'):
+        flash("Invalid file. Please upload a config.py file.", "danger")
+        return redirect(url_for('setup'))
+
+    content = f.read().decode('utf-8')
+
+    # Validate required keys
+    required_keys = ['url', 'output', 'admin_password', 'playlist_password']
+    config_ns = {}
+    try:
+        exec(content, {}, config_ns)
+    except Exception as e:
+        flash(f"Invalid config file: {e}", "danger")
+        return redirect(url_for('setup'))
+
+    missing = [k for k in required_keys if k not in config_ns]
+    if missing:
+        flash(f"Config file is missing required keys: {', '.join(missing)}", "danger")
+        return redirect(url_for('setup'))
+
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as cf:
+        cf.write(content)
+
+    # Encrypt any plaintext credentials from the restored config
+    migrate_credentials()
+
+    # Create files directory
+    files_dir = os.path.join(BASE_DIR, 'files')
+    os.makedirs(files_dir, exist_ok=True)
+
+    flash("Config restored successfully. Please log in.", "success")
+    return redirect(url_for('login'))
+
+
+@main_bp.route('/jellyfin_library')
+@admin_required
+def jellyfin_library():
+    jellyfin_url = get_config_variable(CONFIG_PATH, 'jellyfin_url') or ''
+    jellyfin_api_key = get_credential('jellyfin_api_key') or ''
+    movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir') or ''
+    series_dir = get_config_variable(CONFIG_PATH, 'series_dir') or ''
+
+    if not jellyfin_url or not jellyfin_api_key:
+        flash("Jellyfin is not configured. Please set the URL and API key in Settings.", "warning")
+        return render_template('jellyfin_library.html', items=[], users=[], error=True, jellyfin_url='', jellyfin_api_key='')
+
+    headers = {'X-Emby-Token': jellyfin_api_key, 'Content-Type': 'application/json'}
+    jellyfin_url = jellyfin_url.rstrip('/')
+
+    try:
+        # Get all users
+        users_resp = requests.get(f'{jellyfin_url}/Users', headers=headers, timeout=10)
+        users_resp.raise_for_status()
+        users = [{'id': u['Id'], 'name': u['Name']} for u in users_resp.json() if not u.get('Policy', {}).get('IsDisabled')]
+
+        # Get all movies from Jellyfin
+        movies_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
+            'IncludeItemTypes': 'Movie', 'Recursive': 'true',
+            'Fields': 'Path,Overview,ProductionYear,CommunityRating', 'Limit': 5000
+        }, timeout=30)
+        movies_resp.raise_for_status()
+        jf_movies = movies_resp.json().get('Items', [])
+
+        # Get all series from Jellyfin
+        series_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
+            'IncludeItemTypes': 'Series', 'Recursive': 'true',
+            'Fields': 'Path,Overview,ProductionYear,CommunityRating', 'Limit': 5000
+        }, timeout=30)
+        series_resp.raise_for_status()
+        jf_series = series_resp.json().get('Items', [])
+
+        # Get watched status per user for movies
+        watched = {}  # {item_id: [user_name, ...]}
+        for user in users:
+            watched_resp = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
+                'IncludeItemTypes': 'Movie,Series', 'Recursive': 'true',
+                'IsPlayed': 'true', 'Fields': 'Id', 'Limit': 5000
+            }, timeout=30)
+            watched_resp.raise_for_status()
+            for item in watched_resp.json().get('Items', []):
+                watched.setdefault(item['Id'], []).append(user['name'])
+
+        # Build item list
+        items = []
+        for movie in jf_movies:
+            path = movie.get('Path', '')
+            in_m3usort = path.startswith(movies_dir) if movies_dir else False
+            items.append({
+                'id': movie['Id'],
+                'name': movie['Name'],
+                'type': 'Movie',
+                'year': movie.get('ProductionYear', ''),
+                'rating': movie.get('CommunityRating', ''),
+                'overview': movie.get('Overview', ''),
+                'path': path,
+                'in_m3usort': in_m3usort,
+                'watched_by': watched.get(movie['Id'], []),
+                'all_users': [u['name'] for u in users],
+            })
+
+        for serie in jf_series:
+            path = serie.get('Path', '')
+            in_m3usort = path.startswith(series_dir) if series_dir else False
+            items.append({
+                'id': serie['Id'],
+                'name': serie['Name'],
+                'type': 'Series',
+                'year': serie.get('ProductionYear', ''),
+                'rating': serie.get('CommunityRating', ''),
+                'overview': serie.get('Overview', ''),
+                'path': path,
+                'in_m3usort': in_m3usort,
+                'watched_by': watched.get(serie['Id'], []),
+                'all_users': [u['name'] for u in users],
+            })
+
+        items.sort(key=lambda x: x['name'].lower())
+
+    except Exception as e:
+        flash(f"Error connecting to Jellyfin: {e}", "danger")
+        return render_template('jellyfin_library.html', items=[], users=[], error=True, jellyfin_url='', jellyfin_api_key='')
+
+    return render_template('jellyfin_library.html', items=items, users=users, error=False, jellyfin_url=jellyfin_url, jellyfin_api_key=jellyfin_api_key)
+
+
+@main_bp.route('/jellyfin_remove', methods=['POST'])
+@admin_required
+def jellyfin_remove():
+    data = request.get_json()
+    item_id = data.get('item_id')
+    item_path = data.get('item_path')
+    item_type = data.get('item_type')
+
+    jellyfin_url = (get_config_variable(CONFIG_PATH, 'jellyfin_url') or '').rstrip('/')
+    jellyfin_api_key = get_credential('jellyfin_api_key') or ''
+    headers = {'X-Emby-Token': jellyfin_api_key}
+
+    errors = []
+
+    # Delete from Jellyfin
+    try:
+        r = requests.delete(f'{jellyfin_url}/Items/{item_id}', headers=headers, timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        errors.append(f"Jellyfin delete failed: {e}")
+
+    # Delete strm file(s) from disk
+    try:
+        if item_path and os.path.exists(item_path):
+            if item_type == 'Movie':
+                # Remove the movie directory
+                shutil.rmtree(os.path.dirname(item_path), ignore_errors=True)
+            else:
+                # Remove the series directory
+                shutil.rmtree(item_path, ignore_errors=True)
+    except Exception as e:
+        errors.append(f"File delete failed: {e}")
+
+    if errors:
+        return jsonify({'success': False, 'error': '; '.join(errors)}), 500
+
+    return jsonify({'success': True})
 
 
 @main_bp.route('/groups')
@@ -1854,12 +2027,19 @@ def startup_instant():
         PrintLog("No config.py found — setup wizard will be shown.", "WARNING")
         return
 
-    current_secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
-    if current_secret_key == "ChangeMe!":
-        PrintLog("Updating SECRET_KEY . . .", "INFO")
-        new_secret_key = secrets.token_urlsafe(16)
-        update_config_variable(CONFIG_PATH, 'SECRET_KEY', new_secret_key)
-        app.config['SECRET_KEY'] = new_secret_key
+    # Set SECRET_KEY from env var if available, otherwise fall back to config
+    env_secret = os.environ.get('SECRET_KEY')
+    if env_secret:
+        app.config['SECRET_KEY'] = env_secret
+    else:
+        config_secret = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
+        if config_secret and config_secret != "ChangeMe!":
+            app.config['SECRET_KEY'] = config_secret
+        else:
+            new_secret_key = secrets.token_urlsafe(32)
+            update_config_variable(CONFIG_PATH, 'SECRET_KEY', new_secret_key)
+            app.config['SECRET_KEY'] = new_secret_key
+            PrintLog("Generated new SECRET_KEY and saved to config.", "INFO")
 
     # Migrate any plaintext credentials to encrypted
     migrate_credentials()
