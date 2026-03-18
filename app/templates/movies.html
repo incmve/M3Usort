@@ -53,23 +53,12 @@
 </div>
 
 <script>
-let ALL_MOVIES = [];
+const ALL_MOVIES = {{ movies | tojson }};
 const PAGE_SIZE = 120;
-let filteredMovies = [];
+let filteredMovies = ALL_MOVIES;
 let gridPage = 0;
 let listPage = 0;
 let currentView = localStorage.getItem('movies_view') || 'grid';
-
-// Fetch data after page load — page appears instantly, data loads in background
-fetch('{{ url_for("main_bp.api_movies") }}')
-    .then(r => r.json())
-    .then(data => {
-        ALL_MOVIES = data;
-        filteredMovies = data;
-        document.getElementById('count-bar').textContent = `${data.length} movies`;
-        renderCurrent();
-    })
-    .catch(e => { document.getElementById('count-bar').textContent = 'Error loading movies'; console.error(e); });
 
 function renderGrid(movies, append) {
     const grid = document.getElementById('movies-grid');
