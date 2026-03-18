@@ -128,7 +128,7 @@ def save_vod_cache():
         PrintLog(f"save_vod_cache: failed to parse URL: {e}", "ERROR")
         return
 
-    # ── Movies ──────────────────────────────────────────────────────────────
+    # ── Movies ───────────────────────────────────────────────────────────────
     try:
         cat_resp = requests.get(f"{base}&action=get_vod_categories", timeout=30)
         cat_resp.raise_for_status()
@@ -144,10 +144,42 @@ def save_vod_cache():
         for movie in movies_data:
             if not movie.get('category_name'):
                 movie['category_name'] = movie_cats.get(str(movie.get('category_id', '')), '')
+
+        # Enrich with per-movie info (tmdb_id, plot, rating) — load existing cache first to skip already-fetched items
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+        existing_info = {}
+        if os.path.exists(movies_cache_path):
+            try:
+                existing = json.load(open(movies_cache_path, encoding='utf-8'))
+                existing_info = {m['stream_id']: m for m in existing if m.get('tmdb_id') or m.get('plot')}
+            except Exception:
+                pass
+
+        enriched = 0
+        for movie in movies_data:
+            sid = movie.get('stream_id')
+            if sid in existing_info:
+                # Reuse already-fetched info
+                prev = existing_info[sid]
+                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
+                    if prev.get(field):
+                        movie[field] = prev[field]
+            elif not movie.get('tmdb_id') and not movie.get('plot'):
+                try:
+                    r = requests.get(f"{base}&action=get_vod_info&vod_id={sid}", timeout=5)
+                    if r.status_code == 200:
+                        info = r.json().get('info', {})
+                        movie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
+                        movie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
+                        movie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
+                        movie['rating']  = info.get('rating') or info.get('rating_5based') or ''
+                        enriched += 1
+                except Exception:
+                    pass
+
         with open(movies_cache_path, 'w', encoding='utf-8') as f:
             json.dump(movies_data, f)
-        PrintLog(f"Saved movies cache ({len(movies_data)} items)", "INFO")
+        PrintLog(f"Saved movies cache ({len(movies_data)} items, {enriched} newly enriched)", "INFO")
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to save movies cache: {e}", "ERROR")
 
@@ -1274,10 +1306,27 @@ def find_wanted_movies_string(movies_dir):
 
 @main_bp.route('/get_vod_info/<int:stream_id>')
 def get_vod_info(stream_id):
+    # Check movies cache first
+    try:
+        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+        if os.path.exists(movies_cache_path):
+            movies_data = json.load(open(movies_cache_path, encoding='utf-8'))
+            movie = next((m for m in movies_data if m.get('stream_id') == stream_id), None)
+            if movie and (movie.get('tmdb_id') or movie.get('plot')):
+                return jsonify({
+                    'tmdb_id': movie.get('tmdb_id') or '',
+                    'imdb_id': movie.get('imdb_id') or '',
+                    'rating':  movie.get('rating') or '',
+                    'plot':    movie.get('plot') or '',
+                })
+    except Exception:
+        pass
+
+    # Fall back to live API
     try:
         m3u_url = get_credential('url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_info&vod_id={stream_id}"
         response = requests.get(api_url, timeout=5)
@@ -1285,13 +1334,13 @@ def get_vod_info(stream_id):
         data = response.json()
         info = data.get('info', {})
         return jsonify({
-            'tmdb_id': info.get('tmdb_id') or info.get('tmdb'),
-            'imdb_id': info.get('imdb_id') or info.get('imdb'),
-            'rating': info.get('rating') or info.get('rating_5based'),
-            'plot': info.get('plot') or info.get('description') or info.get('overview') or '',
+            'tmdb_id': info.get('tmdb_id') or info.get('tmdb') or '',
+            'imdb_id': info.get('imdb_id') or info.get('imdb') or '',
+            'rating':  info.get('rating') or info.get('rating_5based') or '',
+            'plot':    info.get('plot') or info.get('description') or info.get('overview') or '',
         })
     except Exception as e:
-        return jsonify({'tmdb_id': None, 'imdb_id': None, 'rating': None, 'plot': '', 'error': str(e)})
+        return jsonify({'tmdb_id': '', 'imdb_id': '', 'rating': '', 'plot': '', 'error': str(e)})
 
 
 @main_bp.route('/get_series_info/<int:series_id>')
