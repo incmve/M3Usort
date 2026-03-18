@@ -267,11 +267,18 @@ function openItemModal(item) {
                     });
 
                     header.addEventListener('click', () => {
-                        const open = epList.style.display !== 'none';
-                        epList.style.display = open ? 'none' : '';
-                        header.querySelector('.season-arrow').classList.toggle('open', !open);
-                        // round bottom of header when open
-                        header.style.borderRadius = open ? '6px' : '6px 6px 0 0';
+                        const open = !epList.classList.contains('hidden');
+                        if (open) {
+                            epList.classList.add('hidden');
+                            epList.style.display = 'none';
+                            header.querySelector('.season-arrow').classList.remove('open');
+                            header.style.borderRadius = '6px';
+                        } else {
+                            epList.style.display = '';
+                            epList.classList.remove('hidden');
+                            header.querySelector('.season-arrow').classList.add('open');
+                            header.style.borderRadius = '6px 6px 0 0';
+                        }
                     });
 
                     wrap.appendChild(header);

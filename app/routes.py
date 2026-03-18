@@ -463,182 +463,193 @@ def get_time_diff(file_path):
 
 @main_bp.route('/update_home_data')
 def update_home_data():
+    current_time = datetime.now()
+
+    original_m3u_path = f'{BASE_DIR}/files/original.m3u'
+    original_m3u_age = get_time_diff(original_m3u_path)
+
+    output = get_config_variable(CONFIG_PATH, 'output') or 'sorted.m3u'
+    sorted_m3u_path = f'{BASE_DIR}/files/{output}'
+    sorted_m3u_age = get_time_diff(sorted_m3u_path)
+
+    next_m3u = "-"
     try:
-        current_time = datetime.now()
-
-        original_m3u_path = f'{BASE_DIR}/files/original.m3u'
-        original_m3u_age = get_time_diff(original_m3u_path)
-
-        output = get_config_variable(CONFIG_PATH, 'output')
-        sorted_m3u_path = f'{BASE_DIR}/files/{output}'
-        sorted_m3u_age = get_time_diff(sorted_m3u_path)
-
-        next_m3u = "-"
         job = scheduler.get_job('M3U Download scheduler')
         if job:
             now = datetime.now(timezone.utc)
-            next_run_time = job.next_run_time
-            remaining_time = next_run_time - now
+            remaining_time = job.next_run_time - now
             total_seconds = int(remaining_time.total_seconds())
             hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
+            minutes, _ = divmod(remainder, 60)
             next_m3u = f"{hours:02d}:{minutes:02d}"
+    except Exception:
+        pass
 
-        next_vod = "-"
+    next_vod = "-"
+    try:
         job = scheduler.get_job('VOD scheduler')
         if job:
             now = datetime.now(timezone.utc)
-            next_run_time = job.next_run_time
-            remaining_time = next_run_time - now
+            remaining_time = job.next_run_time - now
             total_seconds = int(remaining_time.total_seconds())
             hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
+            minutes, _ = divmod(remainder, 60)
             next_vod = f"{hours:02d}:{minutes:02d}"
+    except Exception:
+        pass
 
+    # Provider info — optional
+    status = exp_date_readable = is_trial = active_cons = max_connections = None
+    exp_date_days_left = 9999
+    try:
         m3u_url = get_credential('url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
-        username, password = extract_credentials_from_url(m3u_url)
-
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
-        response = requests.get(api_url)
-        user_info = response.json()['user_info']
-
-        exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
-        exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
-
-        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
-        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
-        total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
-        total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
-
-        uptime_duration = current_time - app.app_start_time
-        total_seconds = int(uptime_duration.total_seconds())
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-        internal_ip = get_internal_ip()
-        port_number = get_config_variable(CONFIG_PATH, 'port_number')
-        output = get_config_variable(CONFIG_PATH, 'output')
-
-        if UPDATE_AVAILABLE == 1:
-            version = f"{VERSION} - Please update to {UPDATE_VERSION}"
-        else:
-            version = VERSION
-
-        data = {
-            "update_available": UPDATE_AVAILABLE,
-            "next_m3u": next_m3u,
-            "version": version,
-            "next_vod": next_vod,
-            "original_m3u_age": original_m3u_age,
-            "sorted_m3u_age": sorted_m3u_age,
-            "uptime": uptime_str,
-            "output": output,
-            "internal_ip": internal_ip,
-            "port_number": port_number,
-            "status": user_info['status'],
-            "exp_date": exp_date_readable,
-            "exp_date_days_left": exp_date_days_left,
-            "active_cons": user_info['active_cons'],
-            "is_trial": user_info['is_trial'],
-            "max_connections": user_info['max_connections'],
-            "total_movies": total_movies,
-            "total_series": total_series,
-        }
-        return jsonify(data)
+        if m3u_url and '://' in m3u_url and '/get.php' in m3u_url:
+            scheme, rest = m3u_url.split('://', 1)
+            domain_with_port, _ = rest.split('/get.php', 1)
+            username, password = extract_credentials_from_url(m3u_url)
+            api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
+            response = requests.get(api_url, timeout=8)
+            user_info = response.json()['user_info']
+            exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
+            exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
+            status = user_info.get('status')
+            is_trial = user_info.get('is_trial')
+            active_cons = user_info.get('active_cons')
+            max_connections = user_info.get('max_connections')
     except Exception as e:
-        return jsonify(error=str(e))
+        logging.warning(f"update_home_data: provider API failed: {e}")
+
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
+    total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
+
+    uptime_duration = current_time - app.app_start_time
+    total_seconds = int(uptime_duration.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    internal_ip = get_internal_ip()
+    port_number = get_config_variable(CONFIG_PATH, 'port_number')
+
+    version = f"{VERSION} - Please update to {UPDATE_VERSION}" if UPDATE_AVAILABLE == 1 else VERSION
+
+    return jsonify(
+        update_available=UPDATE_AVAILABLE,
+        next_m3u=next_m3u,
+        version=version,
+        next_vod=next_vod,
+        original_m3u_age=original_m3u_age,
+        sorted_m3u_age=sorted_m3u_age,
+        uptime=uptime_str,
+        output=output,
+        internal_ip=internal_ip,
+        port_number=port_number,
+        status=status,
+        exp_date=exp_date_readable,
+        exp_date_days_left=exp_date_days_left,
+        active_cons=active_cons,
+        is_trial=is_trial,
+        max_connections=max_connections,
+        total_movies=total_movies,
+        total_series=total_series,
+    )
 
 
 @main_bp.route('/home')
 def home():
+    current_time = datetime.now()
+
+    original_m3u_path = f'{BASE_DIR}/files/original.m3u'
+    original_m3u_age = get_time_diff(original_m3u_path)
+
+    output = get_config_variable(CONFIG_PATH, 'output') or 'sorted.m3u'
+    sorted_m3u_path = f'{BASE_DIR}/files/{output}'
+    sorted_m3u_age = get_time_diff(sorted_m3u_path)
+
+    next_m3u = "-"
     try:
-        current_time = datetime.now()
-
-        original_m3u_path = f'{BASE_DIR}/files/original.m3u'
-        original_m3u_age = get_time_diff(original_m3u_path)
-
-        output = get_config_variable(CONFIG_PATH, 'output')
-        sorted_m3u_path = f'{BASE_DIR}/files/{output}'
-        sorted_m3u_age = get_time_diff(sorted_m3u_path)
-
-        next_m3u = "-"
         job = scheduler.get_job('M3U Download scheduler')
         if job:
             now = datetime.now(timezone.utc)
-            next_run_time = job.next_run_time
-            remaining_time = next_run_time - now
+            remaining_time = job.next_run_time - now
             total_seconds = int(remaining_time.total_seconds())
             hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
+            minutes, _ = divmod(remainder, 60)
             next_m3u = f"{hours:02d}:{minutes:02d}"
+    except Exception:
+        pass
 
-        next_vod = "-"
+    next_vod = "-"
+    try:
         job = scheduler.get_job('VOD scheduler')
         if job:
             now = datetime.now(timezone.utc)
-            next_run_time = job.next_run_time
-            remaining_time = next_run_time - now
+            remaining_time = job.next_run_time - now
             total_seconds = int(remaining_time.total_seconds())
             hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
+            minutes, _ = divmod(remainder, 60)
             next_vod = f"{hours:02d}:{minutes:02d}"
+    except Exception:
+        pass
 
+    # Provider info — optional, fails gracefully
+    status = exp_date_readable = is_trial = active_cons = max_connections = None
+    exp_date_days_left = 9999
+    try:
         m3u_url = get_credential('url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
-        username, password = extract_credentials_from_url(m3u_url)
-
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
-        response = requests.get(api_url)
-        user_info = response.json()['user_info']
-
-        exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
-        exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
-
-        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
-        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
-        total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
-        total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
-
-        uptime_duration = current_time - app.app_start_time
-        total_seconds = int(uptime_duration.total_seconds())
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-        internal_ip = get_internal_ip()
-        port_number = get_config_variable(CONFIG_PATH, 'port_number')
-        output = get_config_variable(CONFIG_PATH, 'output')
-
-        if UPDATE_AVAILABLE == 1:
-            version = f"{VERSION} - Please update to {UPDATE_VERSION}"
-        else:
-            version = VERSION
-
-        return render_template('home.html',
-                               version=version,
-                               update_available=UPDATE_AVAILABLE,
-                               next_m3u=next_m3u,
-                               next_vod=next_vod,
-                               original_m3u_age=original_m3u_age,
-                               sorted_m3u_age=sorted_m3u_age,
-                               uptime=uptime_str,
-                               internal_ip=internal_ip,
-                               port_number=port_number,
-                               output=output,
-                               status=user_info['status'],
-                               exp_date=exp_date_readable,
-                               exp_date_days_left=exp_date_days_left,
-                               is_trial=user_info['is_trial'],
-                               active_cons=user_info['active_cons'],
-                               max_connections=user_info['max_connections'],
-                               total_movies=total_movies,
-                               total_series=total_series)
+        if m3u_url and '://' in m3u_url and '/get.php' in m3u_url:
+            scheme, rest = m3u_url.split('://', 1)
+            domain_with_port, _ = rest.split('/get.php', 1)
+            username, password = extract_credentials_from_url(m3u_url)
+            api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
+            response = requests.get(api_url, timeout=8)
+            user_info = response.json()['user_info']
+            exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
+            exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
+            status = user_info.get('status')
+            is_trial = user_info.get('is_trial')
+            active_cons = user_info.get('active_cons')
+            max_connections = user_info.get('max_connections')
     except Exception as e:
-        return str(e)
+        logging.warning(f"Home: provider API failed: {e}")
+
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
+    total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
+
+    uptime_duration = current_time - app.app_start_time
+    total_seconds = int(uptime_duration.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    internal_ip = get_internal_ip()
+    port_number = get_config_variable(CONFIG_PATH, 'port_number')
+
+    version = f"{VERSION} - Please update to {UPDATE_VERSION}" if UPDATE_AVAILABLE == 1 else VERSION
+
+    return render_template('home.html',
+                           version=version,
+                           update_available=UPDATE_AVAILABLE,
+                           next_m3u=next_m3u,
+                           next_vod=next_vod,
+                           original_m3u_age=original_m3u_age,
+                           sorted_m3u_age=sorted_m3u_age,
+                           uptime=uptime_str,
+                           internal_ip=internal_ip,
+                           port_number=port_number,
+                           output=output,
+                           status=status,
+                           exp_date=exp_date_readable,
+                           exp_date_days_left=exp_date_days_left,
+                           is_trial=is_trial,
+                           active_cons=active_cons,
+                           max_connections=max_connections,
+                           total_movies=total_movies,
+                           total_series=total_series)
 
 
 @app.route('/logout')
@@ -873,7 +884,7 @@ def series():
         try:
             with open(series_cache_path, 'r', encoding='utf-8') as f:
                 series_data = json.load(f)
-            series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', ''), 'category': s.get('category_name', '')} for s in series_data]
+            series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', ''), 'category': s.get('category_name', ''), 'tmdb_id': s.get('tmdb_id') or s.get('tmdb') or '', 'imdb_id': s.get('imdb_id') or s.get('imdb') or '', 'plot': s.get('plot') or s.get('description') or s.get('overview') or '', 'rating': s.get('rating') or s.get('rating_5based') or ''} for s in series_data]
             categories = sorted(set(s['category'] for s in series if s['category']))
         except Exception as e:
             PrintLog(f"Error reading series cache: {e}", "ERROR")
@@ -897,7 +908,7 @@ def movies():
         try:
             with open(movies_cache_path, 'r', encoding='utf-8') as f:
                 movies_data = json.load(f)
-            movies = [{'name': m['name'], 'stream_id': m['stream_id'], 'stream_icon': m.get('stream_icon', ''), 'category': m.get('category_name', '')} for m in movies_data]
+            movies = [{'name': m['name'], 'stream_id': m['stream_id'], 'stream_icon': m.get('stream_icon', ''), 'category': m.get('category_name', ''), 'tmdb_id': m.get('tmdb_id') or m.get('tmdb') or '', 'imdb_id': m.get('imdb_id') or m.get('imdb') or '', 'plot': m.get('plot') or m.get('description') or m.get('overview') or '', 'rating': m.get('rating') or m.get('rating_5based') or ''} for m in movies_data]
             categories = sorted(set(m['category'] for m in movies if m['category']))
         except Exception as e:
             PrintLog(f"Error reading movies cache: {e}", "ERROR")

@@ -70,7 +70,7 @@ function renderGrid(movies, append) {
         d.setAttribute('data-category', m.category || '');
         d.setAttribute('data-name', (m.name || '').toLowerCase());
         d.innerHTML = `<div class="poster-img">${m.stream_icon ? `<img src="${m.stream_icon}" loading="lazy" onerror="this.style.display='none'">` : '🎬'}</div><div class="poster-name" title="${escHtml(m.name)}">${escHtml(m.name)}</div><div class="poster-meta">${escHtml(m.category||'')}</div>`;
-        d.onclick = () => openMovieModal(m.name, m.stream_id, m.stream_icon);
+        d.onclick = () => openMovieModal(m);
         grid.appendChild(d);
     });
     document.getElementById('grid-load-more').style.display = (gridPage + 1) * PAGE_SIZE < movies.length ? '' : 'none';
@@ -84,7 +84,7 @@ function renderList(movies, append) {
         const d = document.createElement('div');
         d.className = 'list-row';
         d.innerHTML = `<div class="list-thumb">${m.stream_icon ? `<img src="${m.stream_icon}" loading="lazy" onerror="this.style.display='none'">` : '🎬'}</div><div><div class="list-name">${escHtml(m.name)}</div><div class="list-sub">${escHtml(m.category||'')}</div></div>`;
-        d.onclick = () => openMovieModal(m.name, m.stream_id, m.stream_icon);
+        d.onclick = () => openMovieModal(m);
         list.appendChild(d);
     });
     document.getElementById('list-load-more').style.display = (listPage + 1) * PAGE_SIZE < movies.length ? '' : 'none';
@@ -149,15 +149,25 @@ function checkJellyfin(name, type) {
     fetch(`{{ url_for('main_bp.check_jellyfin', type='movie', name='placeholder') }}`.replace('movie',type).replace('placeholder',encodeURIComponent(name)))
         .then(r=>r.json()).then(data=>{const el=document.getElementById('jf-status');if(el){el.textContent=data.exists?'✅ In Jellyfin':'❌ Not in Jellyfin';el.style.color=data.exists?'#3a8a5a':'#a04040';}}).catch(()=>{});
 }
-function openMovieModal(movieName, movieId, movieIcon) {
+function openMovieModal(movie) {
     const modal=document.getElementById('myModal');
-    document.getElementById('modal-text').textContent=`Add Movie '${movieName}'?`;
-    document.getElementById('modal-image').innerHTML=movieIcon?`<img src="${movieIcon}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">`:'';
-    document.getElementById('modal-links').innerHTML=`<span style="color:#444;font-size:12px;">Loading...</span>`;
+    document.getElementById('modal-text').textContent=`Add Movie '${movie.name}'?`;
+    document.getElementById('modal-image').innerHTML=movie.stream_icon?`<img src="${movie.stream_icon}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">`:'';
+    const modalLinks = document.getElementById('modal-links');
+
+    // Render immediately from cached data
+    renderModalInfo({tmdb_id: movie.tmdb_id, imdb_id: movie.imdb_id, rating: movie.rating, plot: movie.plot}, movie.name, 'movie', modalLinks);
+    checkJellyfin(movie.name, 'movie');
     modal.style.display='block';
-    fetch(`{{ url_for('main_bp.get_vod_info', stream_id=0) }}`.replace('/0',`/${movieId}`))
-        .then(r=>r.json()).then(data=>{renderModalInfo(data,movieName,'movie',document.getElementById('modal-links'));checkJellyfin(movieName,'movie');}).catch(()=>{document.getElementById('modal-links').innerHTML='';});
-    document.getElementById('confirmBtn').onclick=function(){closeModal();addMovieToServer(movieName,movieId);};
+
+    // If cache has no plot/tmdb, try live API as fallback
+    if (!movie.plot && !movie.tmdb_id) {
+        fetch(`{{ url_for('main_bp.get_vod_info', stream_id=0) }}`.replace('/0',`/${movie.stream_id}`))
+            .then(r=>r.json()).then(data=>{
+                if (data.plot || data.tmdb_id) renderModalInfo(data, movie.name, 'movie', modalLinks);
+            }).catch(()=>{});
+    }
+    document.getElementById('confirmBtn').onclick=function(){closeModal();addMovieToServer(movie.name, movie.stream_id);};
 }
 function closeModal(){document.getElementById('modal-image').innerHTML='';document.getElementById('modal-links').innerHTML='';document.getElementById('myModal').style.display='none';}
 document.addEventListener('DOMContentLoaded', function() {

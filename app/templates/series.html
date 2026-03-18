@@ -23,37 +23,9 @@
                 </div>
             </div>
 
-            <div id="view-grid">
-                <div class="poster-grid">
-                {% for serie in series %}
-                <div class="poster-card" data-category="{{ serie.category }}" data-name="{{ serie.name|lower }}"
-                    onclick="openSerieModal('{{ serie.name|replace("'","\\'")|replace('"','&quot;') }}', '{{ serie.series_id }}', '{{ serie.series_cover }}')">
-                    <div class="poster-img">
-                        {% if serie.series_cover %}<img src="{{ serie.series_cover }}" onerror="this.style.display='none'" loading="lazy">{% else %}📺{% endif %}
-                    </div>
-                    <div class="poster-name" title="{{ serie.name }}">{{ serie.name }}</div>
-                    <div class="poster-meta">{{ serie.category }}</div>
-                </div>
-                {% endfor %}
-                </div>
-            </div>
-
-            <div id="view-list" style="display:none;">
-                <div class="list-view">
-                {% for serie in series %}
-                <div class="list-row" data-category="{{ serie.category }}" data-name="{{ serie.name|lower }}"
-                    onclick="openSerieModal('{{ serie.name|replace("'","\\'")|replace('"','&quot;') }}', '{{ serie.series_id }}', '{{ serie.series_cover }}')">
-                    <div class="list-thumb">
-                        {% if serie.series_cover %}<img src="{{ serie.series_cover }}" onerror="this.style.display='none'" loading="lazy">{% else %}📺{% endif %}
-                    </div>
-                    <div>
-                        <div class="list-name">{{ serie.name }}</div>
-                        <div class="list-sub">{{ serie.category }}</div>
-                    </div>
-                </div>
-                {% endfor %}
-                </div>
-            </div>
+            <div id="count-bar" style="font-size:12px; color:#444; margin-bottom:10px;"></div>
+            <div id="view-grid"><div class="poster-grid" id="series-grid"></div><div id="grid-load-more" style="text-align:center; padding:16px; display:none;"><button class="button" onclick="loadMoreGrid()">Load more</button></div></div>
+            <div id="view-list" style="display:none;"><div class="list-view" id="series-list-view"></div><div id="list-load-more" style="text-align:center; padding:16px; display:none;"><button class="button" onclick="loadMoreList()">Load more</button></div></div>
         </div>
 
         <div>
@@ -79,30 +51,67 @@
 </div>
 
 <script>
+const ALL_SERIES = {{ series | tojson }};
+const PAGE_SIZE = 120;
+let filteredSeries = ALL_SERIES;
+let gridPage = 0, listPage = 0;
 let currentView = localStorage.getItem('series_view') || 'grid';
+
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+function renderGrid(items, append) {
+    const grid = document.getElementById('series-grid');
+    if (!append) { grid.innerHTML = ''; gridPage = 0; }
+    items.slice(gridPage * PAGE_SIZE, (gridPage+1) * PAGE_SIZE).forEach(m => {
+        const d = document.createElement('div');
+        d.className = 'poster-card';
+        d.innerHTML = `<div class="poster-img">${m.series_cover?`<img src="${m.series_cover}" loading="lazy" onerror="this.style.display='none'">`:'📺'}</div><div class="poster-name" title="${escHtml(m.name)}">${escHtml(m.name)}</div><div class="poster-meta">${escHtml(m.category||'')}</div>`;
+        d.onclick = () => openSerieModal(m);
+        grid.appendChild(d);
+    });
+    document.getElementById('grid-load-more').style.display = (gridPage+1)*PAGE_SIZE < items.length ? '' : 'none';
+}
+function renderList(items, append) {
+    const list = document.getElementById('series-list-view');
+    if (!append) { list.innerHTML = ''; listPage = 0; }
+    items.slice(listPage * PAGE_SIZE, (listPage+1) * PAGE_SIZE).forEach(m => {
+        const d = document.createElement('div');
+        d.className = 'list-row';
+        d.innerHTML = `<div class="list-thumb">${m.series_cover?`<img src="${m.series_cover}" loading="lazy" onerror="this.style.display='none'">`:'📺'}</div><div><div class="list-name">${escHtml(m.name)}</div><div class="list-sub">${escHtml(m.category||'')}</div></div>`;
+        d.onclick = () => openSerieModal(m);
+        list.appendChild(d);
+    });
+    document.getElementById('list-load-more').style.display = (listPage+1)*PAGE_SIZE < items.length ? '' : 'none';
+}
+function loadMoreGrid() { gridPage++; renderGrid(filteredSeries, true); }
+function loadMoreList() { listPage++; renderList(filteredSeries, true); }
+
 function setView(v) {
     currentView = v; localStorage.setItem('series_view', v);
-    document.getElementById('view-grid').style.display=v==='grid'?'':'none';
-    document.getElementById('view-list').style.display=v==='list'?'':'none';
-    document.getElementById('btn-grid').className=v==='grid'?'vt-btn active':'vt-btn';
-    document.getElementById('btn-list').className=v==='list'?'vt-btn active':'vt-btn';
+    document.getElementById('view-grid').style.display = v==='grid'?'':'none';
+    document.getElementById('view-list').style.display = v==='list'?'':'none';
+    document.getElementById('btn-grid').className = v==='grid'?'vt-btn active':'vt-btn';
+    document.getElementById('btn-list').className = v==='list'?'vt-btn active':'vt-btn';
 }
 function filterSeries() {
-    const search=document.getElementById('search-bar').value.toLowerCase();
-    const cat=document.getElementById('category-filter').value;
-    document.querySelectorAll('.poster-card, .list-row').forEach(item=>{
-        const matchName=item.getAttribute('data-name').includes(search);
-        const matchCat=!cat||item.getAttribute('data-category')===cat;
-        item.style.display=matchName&&matchCat?'':'none';
+    const search = document.getElementById('search-bar').value.toLowerCase();
+    const cat = document.getElementById('category-filter').value;
+    filteredSeries = ALL_SERIES.filter(m => {
+        return (m.name||'').toLowerCase().includes(search) && (!cat || (m.category||'')===cat);
     });
+    document.getElementById('count-bar').textContent = `${filteredSeries.length} series`;
+    renderGrid(filteredSeries, false);
+    renderList(filteredSeries, false);
 }
 function hideFlash(){document.querySelectorAll('.flash-message').forEach(m=>{if(!m.classList.contains('static')){setTimeout(()=>{m.style.opacity='0';setTimeout(()=>m.remove(),600);},5000);}});}
 function addSerieToServer(serieName,serieId){
     fetch('{{ url_for("main_bp.add_series_to_server") }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serieName,serieId})})
-    .then(r=>r.json()).then(data=>{const c=document.querySelector('.flash-wrap');if(c){const d=document.createElement('div');d.textContent=data.message;d.className='flash-message info';c.appendChild(d);hideFlash();}}).catch(e=>console.error(e));
+    .then(r=>r.json()).then(data=>{const c=document.querySelector('.flash-wrap');if(c){const d=document.createElement('div');d.textContent=data.message;d.className='flash-message info';c.appendChild(d);hideFlash();}});
 }
-function RemoveWantedSerie(serieName){fetch('{{ url_for("main_bp.remove_wanted_serie") }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serieName})}).then(()=>location.reload());}
-function renderModalInfo(data,title,type,modalLinks){
+function RemoveWantedSerie(serieName){
+    fetch('{{ url_for("main_bp.remove_wanted_serie") }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serieName})}).then(()=>location.reload());
+}
+function renderModalInfo(data,title,modalLinks){
     let m='<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px;">';
     if(data.rating) m+=`<span style="color:#c8a030;font-weight:600;">★ ${parseFloat(data.rating).toFixed(1)}</span>`;
     m+=`<span id="jf-status" style="font-size:12px;color:#444;">⏳ Checking Jellyfin...</span></div>`;
@@ -118,29 +127,39 @@ function checkJellyfin(name,type){
     fetch(`{{ url_for('main_bp.check_jellyfin', type='movie', name='placeholder') }}`.replace('movie',type).replace('placeholder',encodeURIComponent(name)))
     .then(r=>r.json()).then(data=>{const el=document.getElementById('jf-status');if(el){el.textContent=data.exists?'✅ In Jellyfin':'❌ Not in Jellyfin';el.style.color=data.exists?'#3a8a5a':'#a04040';}}).catch(()=>{});
 }
-function openSerieModal(serieName,serieId,serieCover){
+function openSerieModal(serie){
     const modal=document.getElementById('myModal');
-    document.getElementById('modal-text').textContent=`Add Series '${serieName}'?`;
-    document.getElementById('modal-image').innerHTML=serieCover?`<img src="${serieCover}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">`:'';
-    document.getElementById('modal-links').innerHTML=`<span style="color:#444;font-size:12px;">Loading...</span>`;
+    document.getElementById('modal-text').textContent=`Add Series '${serie.name}'?`;
+    document.getElementById('modal-image').innerHTML=serie.series_cover?`<img src="${serie.series_cover}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">`:'';
+    const modalLinks=document.getElementById('modal-links');
+
+    // Render immediately from cached data
+    renderModalInfo({tmdb_id: serie.tmdb_id, imdb_id: serie.imdb_id, rating: serie.rating, plot: serie.plot}, serie.name, modalLinks);
+    checkJellyfin(serie.name,'serie');
     modal.style.display='block';
-    fetch(`{{ url_for('main_bp.get_series_info_meta', series_id=0) }}`.replace('/0',`/${serieId}`))
-    .then(r=>r.json()).then(data=>{renderModalInfo(data,serieName,'serie',document.getElementById('modal-links'));checkJellyfin(serieName,'serie');}).catch(()=>{document.getElementById('modal-links').innerHTML='';});
-    document.getElementById('confirmBtn').onclick=function(){closeModal();addSerieToServer(serieName,serieId);};
+
+    // Fallback to live API if cache has nothing
+    if (!serie.plot && !serie.tmdb_id) {
+        fetch(`{{ url_for('main_bp.get_series_info_meta', series_id=0) }}`.replace('/0',`/${serie.series_id}`))
+        .then(r=>r.json()).then(data=>{
+            if(data.plot||data.tmdb_id) renderModalInfo(data,serie.name,modalLinks);
+        }).catch(()=>{});
+    }
+    document.getElementById('confirmBtn').onclick=function(){closeModal();addSerieToServer(serie.name,serie.series_id);};
 }
+function closeModal(){document.getElementById('modal-image').innerHTML='';document.getElementById('modal-links').innerHTML='';document.getElementById('myModal').style.display='none';}
 document.addEventListener('DOMContentLoaded',function(){
+    filterSeries();
     setView(currentView);
     document.querySelectorAll('.wanted-serie-link').forEach(link=>{
         link.addEventListener('click',function(){
             const n=this.getAttribute('data-serie-name');
-            const modal=document.getElementById('myModal');
             document.getElementById('modal-text').textContent=`Remove '${n}' from watchlist?`;
             document.getElementById('modal-image').innerHTML=''; document.getElementById('modal-links').innerHTML='';
-            modal.style.display='block';
+            document.getElementById('myModal').style.display='block';
             document.getElementById('confirmBtn').onclick=function(){closeModal();RemoveWantedSerie(n);};
         });
     });
-    function closeModal(){document.getElementById('modal-image').innerHTML='';document.getElementById('modal-links').innerHTML='';document.getElementById('myModal').style.display='none';}
     document.getElementById('cancelBtn').onclick=closeModal;
     document.querySelector('.close').onclick=closeModal;
     window.onclick=function(e){if(e.target===document.getElementById('myModal'))closeModal();};
@@ -149,4 +168,5 @@ document.addEventListener('DOMContentLoaded',function(){
     document.addEventListener('keydown',function(e){if(e.key==='Escape'){document.getElementById('lightbox').style.display='none';document.getElementById('myModal').style.display='none';}});
 });
 </script>
+
 {% endblock %}
