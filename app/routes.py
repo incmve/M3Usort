@@ -336,8 +336,19 @@ ENCRYPTED_FIELDS = ['url', 'jellyfin_api_key']
 ENCRYPTION_PREFIX = 'enc:'
 
 def _get_fernet():
-    secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY') or 'default-insecure-key'
-    key = base64.urlsafe_b64encode(hashlib.sha256(secret_key.encode()).digest())
+    # 🔐 FIX: restore beta behavior (ENV first)
+    secret_key = os.environ.get('SECRET_KEY')
+
+    if not secret_key:
+        secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
+
+    if not secret_key:
+        secret_key = 'default-insecure-key'
+
+    key = base64.urlsafe_b64encode(
+        hashlib.sha256(secret_key.encode()).digest()
+    )
+
     return Fernet(key)
 
 def encrypt_credential(value):
