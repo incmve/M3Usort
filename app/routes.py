@@ -1767,16 +1767,32 @@ def jellyfin_library():
         jf_series = series_resp.json().get('Items', [])
 
         # Watch status per user
+        # Movies: use IsPlayed on Movie items
+        # Series: use HasAnyEpisodeWatched to show if user has watched anything (not requiring all episodes)
         watched = {}
         for user in users:
             try:
+                # Movies watched
                 w_resp = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
-                    'IncludeItemTypes': 'Movie,Series', 'Recursive': 'true',
+                    'IncludeItemTypes': 'Movie', 'Recursive': 'true',
                     'IsPlayed': 'true', 'Fields': 'Id', 'Limit': 5000
                 }, timeout=20)
                 w_resp.raise_for_status()
                 for item in w_resp.json().get('Items', []):
                     watched.setdefault(item['Id'], []).append(user['name'])
+            except Exception:
+                pass
+            try:
+                # Series: fetch episodes with play count > 0, collect unique SeriesId values
+                ep_resp = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
+                    'IncludeItemTypes': 'Episode', 'Recursive': 'true',
+                    'IsPlayed': 'true', 'Fields': 'SeriesId', 'Limit': 5000
+                }, timeout=20)
+                ep_resp.raise_for_status()
+                for ep in ep_resp.json().get('Items', []):
+                    series_id = ep.get('SeriesId')
+                    if series_id and user['name'] not in watched.get(series_id, []):
+                        watched.setdefault(series_id, []).append(user['name'])
             except Exception:
                 pass
 
@@ -1802,13 +1818,8 @@ def jellyfin_library():
 
         for serie in jf_series:
             path = serie.get('Path', '')
-            # Series: Jellyfin Path points to the series folder — check if any .strm file exists inside
-            in_m3usort = False
-            if path and os.path.isdir(path):
-                for root, dirs, files in os.walk(path):
-                    if any(f.endswith('.strm') for f in files):
-                        in_m3usort = True
-                        break
+            # Series: path is the series folder — check if it lives inside series_dir
+            in_m3usort = bool(series_dir and path.startswith(series_dir))
             items.append({
                 'id': serie['Id'],
                 'name': serie['Name'],
