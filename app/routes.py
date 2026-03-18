@@ -1631,18 +1631,12 @@ def jellyfin_library():
 
     if not jellyfin_url or not jellyfin_api_key:
         flash("Jellyfin is not configured. Please set the URL and API key in Settings.", "warning")
-        return render_template('jellyfin_library.html', items=[], users=[], error=True, jellyfin_url='', jellyfin_api_key='')
+        return render_template('jellyfin_library.html', items=[], error=True, jellyfin_url='', jellyfin_api_key='')
 
     headers = {'X-Emby-Token': jellyfin_api_key, 'Content-Type': 'application/json'}
     jellyfin_url = jellyfin_url.rstrip('/')
 
     try:
-        # Get all users
-        users_resp = requests.get(f'{jellyfin_url}/Users', headers=headers, timeout=10)
-        users_resp.raise_for_status()
-        users = [{'id': u['Id'], 'name': u['Name']} for u in users_resp.json() if not u.get('Policy', {}).get('IsDisabled')]
-
-        # Get all movies from Jellyfin
         movies_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
             'IncludeItemTypes': 'Movie', 'Recursive': 'true',
             'Fields': 'Path,Overview,ProductionYear,CommunityRating', 'Limit': 5000
@@ -1650,7 +1644,6 @@ def jellyfin_library():
         movies_resp.raise_for_status()
         jf_movies = movies_resp.json().get('Items', [])
 
-        # Get all series from Jellyfin
         series_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
             'IncludeItemTypes': 'Series', 'Recursive': 'true',
             'Fields': 'Path,Overview,ProductionYear,CommunityRating', 'Limit': 5000
@@ -1658,18 +1651,6 @@ def jellyfin_library():
         series_resp.raise_for_status()
         jf_series = series_resp.json().get('Items', [])
 
-        # Get watched status per user for movies
-        watched = {}  # {item_id: [user_name, ...]}
-        for user in users:
-            watched_resp = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
-                'IncludeItemTypes': 'Movie,Series', 'Recursive': 'true',
-                'IsPlayed': 'true', 'Fields': 'Id', 'Limit': 5000
-            }, timeout=30)
-            watched_resp.raise_for_status()
-            for item in watched_resp.json().get('Items', []):
-                watched.setdefault(item['Id'], []).append(user['name'])
-
-        # Build item list
         items = []
         for movie in jf_movies:
             path = movie.get('Path', '')
@@ -1683,8 +1664,6 @@ def jellyfin_library():
                 'overview': movie.get('Overview', ''),
                 'path': path,
                 'in_m3usort': in_m3usort,
-                'watched_by': watched.get(movie['Id'], []),
-                'all_users': [u['name'] for u in users],
             })
 
         for serie in jf_series:
@@ -1699,17 +1678,54 @@ def jellyfin_library():
                 'overview': serie.get('Overview', ''),
                 'path': path,
                 'in_m3usort': in_m3usort,
-                'watched_by': watched.get(serie['Id'], []),
-                'all_users': [u['name'] for u in users],
             })
 
         items.sort(key=lambda x: x['name'].lower())
 
     except Exception as e:
         flash(f"Error connecting to Jellyfin: {e}", "danger")
-        return render_template('jellyfin_library.html', items=[], users=[], error=True, jellyfin_url='', jellyfin_api_key='')
+        return render_template('jellyfin_library.html', items=[], error=True, jellyfin_url='', jellyfin_api_key='')
 
-    return render_template('jellyfin_library.html', items=items, users=users, error=False, jellyfin_url=jellyfin_url, jellyfin_api_key=jellyfin_api_key)
+    return render_template('jellyfin_library.html', items=items, error=False, jellyfin_url=jellyfin_url, jellyfin_api_key=jellyfin_api_key)
+
+
+@main_bp.route('/jellyfin_seasons/<string:item_id>')
+@admin_required
+def jellyfin_seasons(item_id):
+    """Return seasons and episodes for a series item."""
+    jellyfin_url = (get_config_variable(CONFIG_PATH, 'jellyfin_url') or '').rstrip('/')
+    jellyfin_api_key = get_credential('jellyfin_api_key') or ''
+    headers = {'X-Emby-Token': jellyfin_api_key}
+
+    try:
+        seasons_resp = requests.get(f'{jellyfin_url}/Shows/{item_id}/Seasons', headers=headers,
+                                    params={'Fields': 'Path'}, timeout=15)
+        seasons_resp.raise_for_status()
+        seasons_raw = seasons_resp.json().get('Items', [])
+
+        seasons = []
+        for s in seasons_raw:
+            eps_resp = requests.get(f'{jellyfin_url}/Shows/{item_id}/Episodes', headers=headers,
+                                    params={'SeasonId': s['Id'], 'Fields': 'Path,Overview', 'Limit': 500}, timeout=15)
+            eps_resp.raise_for_status()
+            episodes = [{
+                'id': ep['Id'],
+                'name': ep.get('Name', ''),
+                'index': ep.get('IndexNumber', ''),
+                'path': ep.get('Path', ''),
+                'overview': ep.get('Overview', ''),
+            } for ep in eps_resp.json().get('Items', [])]
+            seasons.append({
+                'id': s['Id'],
+                'name': s.get('Name', f"Season {s.get('IndexNumber','')}"),
+                'index': s.get('IndexNumber', 0),
+                'episode_count': len(episodes),
+                'episodes': episodes,
+            })
+
+        return jsonify({'success': True, 'seasons': seasons})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @main_bp.route('/jellyfin_remove', methods=['POST'])
