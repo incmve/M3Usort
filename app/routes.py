@@ -1689,44 +1689,73 @@ def jellyfin_library():
     return render_template('jellyfin_library.html', items=items, error=False, jellyfin_url=jellyfin_url, jellyfin_api_key=jellyfin_api_key)
 
 
+_seasons_cache = {}  # {item_id: (timestamp, data)}
+_SEASONS_CACHE_TTL = 300  # 5 minutes
+
 @main_bp.route('/jellyfin_seasons/<string:item_id>')
 @admin_required
 def jellyfin_seasons(item_id):
-    """Return seasons and episodes for a series item."""
+    """Return seasons and episodes for a series item, with short-lived cache."""
+    import time
+    now = time.time()
+
+    # Return cached result if still fresh
+    if item_id in _seasons_cache:
+        ts, cached = _seasons_cache[item_id]
+        if now - ts < _SEASONS_CACHE_TTL:
+            return jsonify(cached)
+
     jellyfin_url = (get_config_variable(CONFIG_PATH, 'jellyfin_url') or '').rstrip('/')
     jellyfin_api_key = get_credential('jellyfin_api_key') or ''
     headers = {'X-Emby-Token': jellyfin_api_key}
 
     try:
+        # Fetch seasons
         seasons_resp = requests.get(f'{jellyfin_url}/Shows/{item_id}/Seasons', headers=headers,
-                                    params={'Fields': 'Path'}, timeout=15)
+                                    params={'Fields': 'Path,IndexNumber'}, timeout=15)
         seasons_resp.raise_for_status()
         seasons_raw = seasons_resp.json().get('Items', [])
 
+        # Fetch ALL episodes in one request using SeriesId
+        eps_resp = requests.get(f'{jellyfin_url}/Shows/{item_id}/Episodes', headers=headers,
+                                params={'Fields': 'Path,Overview,IndexNumber,ParentIndexNumber',
+                                        'Limit': 2000}, timeout=20)
+        eps_resp.raise_for_status()
+        all_episodes = eps_resp.json().get('Items', [])
+
+        # Group episodes by season id
+        # Jellyfin episodes include SeasonId directly
+        eps_by_season = {}
+        for ep in all_episodes:
+            sid = ep.get('SeasonId') or ep.get('ParentId', '')
+            if sid:
+                eps_by_season.setdefault(sid, []).append({
+                    'id': ep['Id'],
+                    'name': ep.get('Name', ''),
+                    'index': ep.get('IndexNumber', ''),
+                    'path': ep.get('Path', ''),
+                })
+
         seasons = []
         for s in seasons_raw:
-            eps_resp = requests.get(f'{jellyfin_url}/Shows/{item_id}/Episodes', headers=headers,
-                                    params={'SeasonId': s['Id'], 'Fields': 'Path,Overview', 'Limit': 500}, timeout=15)
-            eps_resp.raise_for_status()
-            episodes = [{
-                'id': ep['Id'],
-                'name': ep.get('Name', ''),
-                'index': ep.get('IndexNumber', ''),
-                'path': ep.get('Path', ''),
-                'overview': ep.get('Overview', ''),
-            } for ep in eps_resp.json().get('Items', [])]
+            sid = s['Id']
+            episodes = eps_by_season.get(sid, [])
+            # Sort by episode index
+            episodes.sort(key=lambda e: (e['index'] if isinstance(e['index'], int) else 9999))
             seasons.append({
-                'id': s['Id'],
-                'name': s.get('Name', f"Season {s.get('IndexNumber','')}"),
+                'id': sid,
+                'name': s.get('Name') or f"Season {s.get('IndexNumber', '')}",
                 'index': s.get('IndexNumber', 0),
                 'episode_count': len(episodes),
                 'episodes': episodes,
             })
 
-        return jsonify({'success': True, 'seasons': seasons})
+        result = {'success': True, 'seasons': seasons}
+        _seasons_cache[item_id] = (now, result)
+        return jsonify(result)
+
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @main_bp.route('/jellyfin_remove', methods=['POST'])
 @admin_required
@@ -1753,13 +1782,14 @@ def jellyfin_remove():
     try:
         if item_path and os.path.exists(item_path):
             if item_type == 'Movie':
-                # Remove the movie directory
                 shutil.rmtree(os.path.dirname(item_path), ignore_errors=True)
             else:
-                # Remove the series directory
                 shutil.rmtree(item_path, ignore_errors=True)
     except Exception as e:
         errors.append(f"File delete failed: {e}")
+
+    # Invalidate seasons cache for this item
+    _seasons_cache.pop(item_id, None)
 
     if errors:
         return jsonify({'success': False, 'error': '; '.join(errors)}), 500
