@@ -1810,9 +1810,22 @@ def jellyfin_library():
                 'all_users': all_user_names,
             })
 
+        # For series, fetch one episode to check file extension (.strm = M3Usort, .mkv etc = Other)
+        series_is_strm = {}
+        for serie in jf_series:
+            try:
+                ep_resp = requests.get(f'{jellyfin_url}/Shows/{serie["Id"]}/Episodes', headers=headers,
+                                       params={'Fields': 'Path', 'Limit': 1}, timeout=8)
+                if ep_resp.status_code == 200:
+                    eps = ep_resp.json().get('Items', [])
+                    if eps:
+                        series_is_strm[serie['Id']] = eps[0].get('Path', '').endswith('.strm')
+            except Exception:
+                pass
+
         for serie in jf_series:
             path = serie.get('Path', '')
-            in_m3usort = bool(series_dir and path.startswith(series_dir))
+            in_m3usort = series_is_strm.get(serie['Id'], False)
             items.append({
                 'id': serie['Id'],
                 'name': serie['Name'],
