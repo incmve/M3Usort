@@ -117,46 +117,62 @@ def save_vod_cache():
     """Fetch and save full movies and series data from provider to local JSON cache files."""
     try:
         m3u_url = get_credential('url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
+        if not m3u_url or '://' not in m3u_url or '/get.php' not in m3u_url:
+            PrintLog("save_vod_cache: no valid M3U URL configured", "ERROR")
+            return
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
+        base = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}"
+    except Exception as e:
+        PrintLog(f"save_vod_cache: failed to parse URL: {e}", "ERROR")
+        return
 
-        # Fetch movie categories
-        cat_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_categories"
-        movie_cats = {str(c['category_id']): c['category_name'] for c in requests.get(cat_url).json()}
+    # ── Movies ──────────────────────────────────────────────────────────────
+    try:
+        cat_resp = requests.get(f"{base}&action=get_vod_categories", timeout=30)
+        cat_resp.raise_for_status()
+        movie_cats = {str(c['category_id']): c['category_name'] for c in cat_resp.json()}
+    except Exception as e:
+        PrintLog(f"save_vod_cache: failed to fetch movie categories: {e}", "WARNING")
+        movie_cats = {}
 
-        # Save movies cache with category_name resolved
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams"
-        response = requests.get(api_url)
-        response.raise_for_status()
-        movies_data = response.json()
+    try:
+        resp = requests.get(f"{base}&action=get_vod_streams", timeout=60)
+        resp.raise_for_status()
+        movies_data = resp.json()
         for movie in movies_data:
             if not movie.get('category_name'):
                 movie['category_name'] = movie_cats.get(str(movie.get('category_id', '')), '')
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
         with open(movies_cache_path, 'w', encoding='utf-8') as f:
             json.dump(movies_data, f)
-        PrintLog("Saved movies cache", "INFO")
+        PrintLog(f"Saved movies cache ({len(movies_data)} items)", "INFO")
+    except Exception as e:
+        PrintLog(f"save_vod_cache: failed to save movies cache: {e}", "ERROR")
 
-        # Fetch series categories
-        cat_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series_categories"
-        series_cats = {str(c['category_id']): c['category_name'] for c in requests.get(cat_url).json()}
+    # ── Series ───────────────────────────────────────────────────────────────
+    try:
+        cat_resp = requests.get(f"{base}&action=get_series_categories", timeout=30)
+        cat_resp.raise_for_status()
+        series_cats = {str(c['category_id']): c['category_name'] for c in cat_resp.json()}
+    except Exception as e:
+        PrintLog(f"save_vod_cache: failed to fetch series categories: {e}", "WARNING")
+        series_cats = {}
 
-        # Save series cache with category_name resolved
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series"
-        response = requests.get(api_url)
-        response.raise_for_status()
-        series_data = response.json()
+    try:
+        resp = requests.get(f"{base}&action=get_series", timeout=60)
+        resp.raise_for_status()
+        series_data = resp.json()
         for serie in series_data:
             if not serie.get('category_name'):
                 serie['category_name'] = series_cats.get(str(serie.get('category_id', '')), '')
         series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
         with open(series_cache_path, 'w', encoding='utf-8') as f:
             json.dump(series_data, f)
-        PrintLog("Saved series cache", "INFO")
-
+        PrintLog(f"Saved series cache ({len(series_data)} items)", "INFO")
     except Exception as e:
-        PrintLog(f"Error saving VOD cache: {e}", "ERROR")
+        PrintLog(f"save_vod_cache: failed to save series cache: {e}", "ERROR")
 
 def refresh_jellyfin():
     if get_config_variable(CONFIG_PATH, 'jellyfin_enabled') != "1":
@@ -237,6 +253,16 @@ def update_series_directory(series_dir):
             else:
                 PrintLog(f"No matching series found for directory: {dir_name}", "WARNING")
 
+def normalize_movie_name(name):
+    """Strip year, quality tags, and normalize for matching."""
+    # Remove quality/format suffixes (4K, HDR, BluRay, etc.)
+    name = re.sub(r'\b(4K|HDR|SDR|UHD|BluRay|BDRip|BRRip|WEB-?DL|WEBRip|DVDRip|REMUX|HEVC|x264|x265|H\.?264|H\.?265|DTS|AAC|Atmos)\b.*$', '', name, flags=re.IGNORECASE)
+    # Remove trailing year in parens
+    name = re.sub(r'\s*\(\d{4}\)\s*$', '', name)
+    # Normalize whitespace and case
+    return name.strip().lower()
+
+
 def update_movies_directory(movies_dir):
     movies_list = GetMoviesList()
     overwrite_movies = int(get_config_variable(CONFIG_PATH, 'overwrite_movies'))
@@ -246,12 +272,25 @@ def update_movies_directory(movies_dir):
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
+    # Build normalized lookup: normalized_name -> movie object
+    normalized_cache = {}
+    for movie in movies_list:
+        key = normalize_movie_name(movie['name'])
+        if key not in normalized_cache:
+            normalized_cache[key] = movie
+
     for root, dirs, files in os.walk(movies_dir):
         for dir_name in dirs:
-            matching_movie = next((movies for movies in movies_list if movies['name'] == dir_name), None)
-            
+            # Try exact match first
+            matching_movie = next((m for m in movies_list if m['name'] == dir_name), None)
+
+            # Fall back to normalized match
+            if not matching_movie:
+                norm_dir = normalize_movie_name(dir_name)
+                matching_movie = normalized_cache.get(norm_dir)
+
             if matching_movie:
-                strm_file_path = os.path.join(movies_dir, f"{matching_movie['name']}", f"{matching_movie['name']}.strm")
+                strm_file_path = os.path.join(movies_dir, dir_name, f"{dir_name}.strm")
                 if not os.path.exists(strm_file_path) or overwrite_movies == 1:
                     PrintLog(f"Adding new file: {strm_file_path}", "NOTICE")
                     strm_content = f"{base_url}/movie/{username}/{password}/{matching_movie['stream_id']}.mkv"
@@ -660,19 +699,30 @@ def logout():
 
 @app.route('/GetMoviesList')
 def GetMoviesList():
-    movies = []
-    m3u_url = get_credential('url')
-    
-    scheme, rest = m3u_url.split('://')
-    domain_with_port, _ = rest.split('/get.php')
-    username, password = extract_credentials_from_url(m3u_url)
-    api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
+    """Return movies list — reads from local cache, falls back to live API if cache missing."""
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    if os.path.exists(movies_cache_path):
+        try:
+            with open(movies_cache_path, 'r', encoding='utf-8') as f:
+                movies_data = json.load(f)
+            return [{'name': m['name'], 'stream_id': m['stream_id']} for m in movies_data]
+        except Exception as e:
+            PrintLog(f"GetMoviesList: failed to read cache: {e}", "ERROR")
 
+    # Cache missing — fall back to live API
+    movies = []
     try:
-        response = requests.get(api_url)
+        m3u_url = get_credential('url')
+        if not m3u_url or '://' not in m3u_url or '/get.php' not in m3u_url:
+            return movies
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
+        username, password = extract_credentials_from_url(m3u_url)
+        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
+        response = requests.get(api_url, timeout=30)
         response.raise_for_status()
         movies_data = response.json()
-        movies = [{'name': movie['name'], 'stream_id': movie['stream_id']} for movie in movies_data]
+        movies = [{'name': m['name'], 'stream_id': m['stream_id']} for m in movies_data]
     except Exception as e:
         PrintLog(f"Error fetching movies list: {e}", "ERROR")
     return movies
