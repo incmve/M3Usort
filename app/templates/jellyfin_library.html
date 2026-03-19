@@ -6,6 +6,7 @@
     <div class="topbar-right">
         {% if not error %}
         <span class="topbar-pill ok">● Connected</span>
+        <a href="{{ url_for('main_bp.jellyfin_library_refresh') }}" class="topbar-btn">↻ Refresh</a>
         {% endif %}
     </div>
 </div>

@@ -3,8 +3,8 @@
 <div class="topbar">
     <span class="topbar-title">Movies</span>
     <div class="topbar-right">
-        <span class="topbar-pill" id="total-count">{{ total }} titles</span>
-        {% if cache_age %}<span class="topbar-pill">Cache {{ cache_age }} ago</span>{% endif %}
+        <span class="topbar-pill" id="total-count" style="color:#7ec8f0; border-color:#1a3a5a; background:#0c1e30;"></span>
+        {% if cache_age %}<span class="topbar-pill" style="color:#5abf7e; border-color:#1a4a30; background:#0a2018;">Cache {{ cache_age }} ago</span>{% endif %}
         <a href="{{ url_for('main_bp.refresh_vod_cache') }}" class="topbar-btn">↻ Refresh</a>
     </div>
 </div>
@@ -112,6 +112,8 @@ function filterMovies() {
         return matchName && matchCat;
     });
     document.getElementById('count-bar').textContent = `${filteredMovies.length} movies`;
+    const tc = document.getElementById('total-count');
+    if (tc) tc.textContent = `${ALL_MOVIES.length} movies`;
     renderGrid(filteredMovies, false);
     renderList(filteredMovies, false);
 }

@@ -1810,18 +1810,36 @@ def jellyfin_library():
                 'all_users': all_user_names,
             })
 
-        # For series, fetch one episode to check file extension (.strm = M3Usort, .mkv etc = Other)
-        series_is_strm = {}
-        for serie in jf_series:
-            try:
-                ep_resp = requests.get(f'{jellyfin_url}/Shows/{serie["Id"]}/Episodes', headers=headers,
-                                       params={'Fields': 'Path', 'Limit': 1}, timeout=8)
-                if ep_resp.status_code == 200:
-                    eps = ep_resp.json().get('Items', [])
-                    if eps:
-                        series_is_strm[serie['Id']] = eps[0].get('Path', '').endswith('.strm')
-            except Exception:
-                pass
+        # For series, fetch one episode per series to check file extension (.strm = M3Usort)
+        # Use thread pool for parallel requests — much faster than sequential
+        import time as _time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        _cache_key = jellyfin_url
+        _now = _time.time()
+        if _cache_key in _jf_library_cache:
+            _ts, series_is_strm = _jf_library_cache[_cache_key]
+            if _now - _ts > _JF_LIBRARY_CACHE_TTL:
+                series_is_strm = None  # expired
+        else:
+            series_is_strm = None
+
+        if series_is_strm is None:
+            series_is_strm = {}
+            def _check_strm(serie):
+                try:
+                    r = requests.get(f'{jellyfin_url}/Shows/{serie["Id"]}/Episodes', headers=headers,
+                                     params={'Fields': 'Path', 'Limit': 1}, timeout=8)
+                    if r.status_code == 200:
+                        eps = r.json().get('Items', [])
+                        if eps:
+                            return serie['Id'], eps[0].get('Path', '').endswith('.strm')
+                except Exception:
+                    pass
+                return serie['Id'], False
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                for sid, is_strm in pool.map(_check_strm, jf_series):
+                    series_is_strm[sid] = is_strm
+            _jf_library_cache[_cache_key] = (_now, series_is_strm)
 
         for serie in jf_series:
             path = serie.get('Path', '')
@@ -1848,8 +1866,18 @@ def jellyfin_library():
     return render_template('jellyfin_library.html', items=items, error=False, jellyfin_url=jellyfin_url, jellyfin_api_key=jellyfin_api_key)
 
 
+@main_bp.route('/jellyfin_library/refresh')
+@admin_required
+def jellyfin_library_refresh():
+    _jf_library_cache.clear()
+    _seasons_cache.clear()
+    return redirect(url_for('main_bp.jellyfin_library'))
+
+
 _seasons_cache = {}  # {item_id: (timestamp, data)}
 _SEASONS_CACHE_TTL = 300  # 5 minutes
+_jf_library_cache = {}   # {key: (timestamp, items)}
+_JF_LIBRARY_CACHE_TTL = 300  # 5 minutes
 
 @main_bp.route('/jellyfin_seasons/<string:item_id>')
 @admin_required
@@ -1949,6 +1977,7 @@ def jellyfin_remove():
 
     # Invalidate seasons cache for this item
     _seasons_cache.pop(item_id, None)
+    _jf_library_cache.clear()
 
     if errors:
         return jsonify({'success': False, 'error': '; '.join(errors)}), 500

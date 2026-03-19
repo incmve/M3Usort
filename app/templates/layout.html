@@ -18,6 +18,10 @@
 <body>
 
 <div class="app-shell">
+    <button class="hamburger" id="hamburger" aria-label="Menu">
+        <span></span><span></span><span></span>
+    </button>
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
     {% include 'nav.html' %}
 
     <div class="page-wrapper">
@@ -61,5 +65,18 @@
 
 {% block scripts %}{% endblock %}
 <script src="{{ url_for('static', filename='extra.js') }}"></script>
+<script>
+(function() {
+    const btn = document.getElementById('hamburger');
+    const overlay = document.getElementById('sidebar-overlay');
+    const sidebar = document.querySelector('.sidebar');
+    function open() { sidebar.classList.add('open'); overlay.classList.add('open'); }
+    function close() { sidebar.classList.remove('open'); overlay.classList.remove('open'); }
+    btn.addEventListener('click', () => sidebar.classList.contains('open') ? close() : open());
+    overlay.addEventListener('click', close);
+    // Close on nav item click (mobile)
+    sidebar.querySelectorAll('.sidebar-item').forEach(el => el.addEventListener('click', close));
+})();
+</script>
 </body>
 </html>
