@@ -43,12 +43,14 @@
         <a href="{{ url_for('main_bp.series') }}" class="sidebar-item {% if request.endpoint == 'main_bp.series' %}active{% endif %}">
             <span class="si-icon">📺</span> Series
         </a>
+        {% if is_admin %}
         <a href="{{ url_for('main_bp.jellyfin_library') }}" class="sidebar-item {% if request.endpoint == 'main_bp.jellyfin_library' %}active{% endif %}">
             <span class="si-icon">♦</span> Jellyfin
         </a>
         <a href="#" id="download-link" class="sidebar-item">
             <span class="si-icon">↓</span> Start download
         </a>
+        {% endif %}
     </div>
 
     {% if is_admin %}
