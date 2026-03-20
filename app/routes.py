@@ -2150,6 +2150,83 @@ def json_flash(message, message_type):
     }
     return json.dumps(data)
 
+
+
+@main_bp.route('/files')
+@admin_required
+def file_browser():
+    movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir') or ''
+    series_dir = get_config_variable(CONFIG_PATH, 'series_dir') or ''
+    return render_template('file_browser.html', movies_dir=movies_dir, series_dir=series_dir)
+
+
+@main_bp.route('/files/list')
+@admin_required
+def file_browser_list():
+    """Return directory contents as JSON. Restricted to allowed roots."""
+    movies_dir = (get_config_variable(CONFIG_PATH, 'movies_dir') or '').rstrip('/')
+    series_dir = (get_config_variable(CONFIG_PATH, 'series_dir') or '').rstrip('/')
+    allowed_roots = [r for r in [movies_dir, series_dir] if r]
+
+    path = request.args.get('path', '').rstrip('/')
+    if not path:
+        # Return the root dirs themselves
+        roots = []
+        for r in allowed_roots:
+            roots.append({'name': r.split('/')[-1], 'path': r, 'type': 'dir', 'full_path': r})
+        return jsonify({'items': roots, 'path': ''})
+
+    # Security: must be under an allowed root
+    abs_path = os.path.realpath(path)
+    if not any(abs_path.startswith(os.path.realpath(r)) for r in allowed_roots):
+        return jsonify({'error': 'Access denied'}), 403
+
+    if not os.path.isdir(abs_path):
+        return jsonify({'error': 'Not a directory'}), 400
+
+    items = []
+    try:
+        for entry in sorted(os.scandir(abs_path), key=lambda e: (not e.is_dir(), e.name.lower())):
+            stat = entry.stat()
+            item = {
+                'name': entry.name,
+                'path': entry.path,
+                'type': 'dir' if entry.is_dir() else 'file',
+                'size': stat.st_size if entry.is_file() else None,
+                'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M'),
+            }
+            if entry.is_file():
+                item['ext'] = entry.name.rsplit('.', 1)[-1].lower() if '.' in entry.name else ''
+            items.append(item)
+    except PermissionError:
+        return jsonify({'error': 'Permission denied'}), 403
+
+    return jsonify({'items': items, 'path': abs_path})
+
+
+@main_bp.route('/files/delete', methods=['POST'])
+@admin_required
+def file_browser_delete():
+    movies_dir = (get_config_variable(CONFIG_PATH, 'movies_dir') or '').rstrip('/')
+    series_dir = (get_config_variable(CONFIG_PATH, 'series_dir') or '').rstrip('/')
+    allowed_roots = [r for r in [movies_dir, series_dir] if r]
+
+    data = request.get_json()
+    path = data.get('path', '')
+    abs_path = os.path.realpath(path)
+
+    if not any(abs_path.startswith(os.path.realpath(r)) for r in allowed_roots):
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+
+    try:
+        if os.path.isdir(abs_path):
+            shutil.rmtree(abs_path)
+        else:
+            os.remove(abs_path)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @main_bp.route('/log')
 def log():
     hide_webserver_logs = get_config_variable(CONFIG_PATH, 'hide_webserver_logs')
