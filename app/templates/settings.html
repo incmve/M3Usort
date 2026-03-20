@@ -55,6 +55,17 @@
                 <div><label>{{ form.jellyfin_url.label }}</label>{{ form.jellyfin_url(class_="filter-input", style="width:100%", placeholder="http://jellyfin:8096") }}</div>
                 <div><label>{{ form.jellyfin_api_key.label }}</label>{{ form.jellyfin_api_key(class_="filter-input", style="width:100%", placeholder="API key") }}</div>
             </div>
+        </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">TMDB</div>
+            <div class="settings-section-body">
+                <div style="font-size:12px; color:#555; margin-bottom:12px;">
+                    Used to find direct movie/series links and resolve missing posters.
+                    Get a free API key at <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:#4aadcf;">themoviedb.org</a>.
+                </div>
+                <div><label>{{ form.tmdb_api_key.label }}</label>{{ form.tmdb_api_key(class_="filter-input", style="width:100%", placeholder="TMDB API key (v3 auth)") }}</div>
+            </div>
             </div>
         </div>
         <button type="submit" name="submit" class="button button-primary">Save Settings</button>

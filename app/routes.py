@@ -206,10 +206,45 @@ def save_vod_cache():
         for serie in series_data:
             if not serie.get('category_name'):
                 serie['category_name'] = series_cats.get(str(serie.get('category_id', '')), '')
+
+        # Enrich with per-series info (tmdb_id, plot, rating, fresh cover)
         series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+        existing_info = {}
+        if os.path.exists(series_cache_path):
+            try:
+                existing = json.load(open(series_cache_path, encoding='utf-8'))
+                existing_info = {s['series_id']: s for s in existing if s.get('tmdb_id') or s.get('plot')}
+            except Exception:
+                pass
+
+        enriched = 0
+        for serie in series_data:
+            sid = serie.get('series_id')
+            if sid in existing_info:
+                prev = existing_info[sid]
+                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating', 'cover'):
+                    if prev.get(field):
+                        serie[field] = prev[field]
+            elif not serie.get('tmdb_id') and not serie.get('plot'):
+                try:
+                    r = requests.get(f"{base}&action=get_series_info&series_id={sid}", timeout=5)
+                    if r.status_code == 200:
+                        info = r.json().get('info', {})
+                        serie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
+                        serie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
+                        serie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
+                        serie['rating']  = info.get('rating') or info.get('rating_5based') or ''
+                        # Use fresher cover from info if available
+                        fresh_cover = info.get('cover') or info.get('cover_big') or ''
+                        if fresh_cover:
+                            serie['cover'] = fresh_cover
+                        enriched += 1
+                except Exception:
+                    pass
+
         with open(series_cache_path, 'w', encoding='utf-8') as f:
             json.dump(series_data, f)
-        PrintLog(f"Saved series cache ({len(series_data)} items)", "INFO")
+        PrintLog(f"Saved series cache ({len(series_data)} items, {enriched} newly enriched)", "INFO")
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to save series cache: {e}", "ERROR")
 
@@ -410,7 +445,7 @@ def extract_credentials_from_url(m3u_url):
 
 # ─── Credential encryption ───────────────────────────────────────────────────
 
-ENCRYPTED_FIELDS = ['url', 'jellyfin_api_key']
+ENCRYPTED_FIELDS = ['url', 'jellyfin_api_key', 'tmdb_api_key']
 ENCRYPTION_PREFIX = 'enc:'
 
 def _get_fernet():
@@ -1311,25 +1346,51 @@ def find_wanted_movies_string(movies_dir):
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
 
 
+
+def _tmdb_lookup(name, media_type, api_key):
+    """Look up tmdb_id and poster via TMDB search API. media_type: 'movie' or 'tv'"""
+    if not api_key or not name:
+        return None, None
+    try:
+        # Strip year from name for better matching
+        clean = re.sub(r'\s*[\(\-]\s*\d{4}\s*[\)\-]?\s*$', '', name).strip()
+        r = requests.get(
+            f'https://api.themoviedb.org/3/search/{media_type}',
+            params={'api_key': api_key, 'query': clean, 'language': 'en-US'},
+            timeout=5
+        )
+        if r.status_code == 200:
+            results = r.json().get('results', [])
+            if results:
+                tmdb_id = results[0].get('id')
+                poster = results[0].get('poster_path')
+                poster_url = f'https://image.tmdb.org/t/p/w500{poster}' if poster else None
+                return str(tmdb_id), poster_url
+    except Exception:
+        pass
+    return None, None
+
 @main_bp.route('/get_vod_info/<int:stream_id>')
 def get_vod_info(stream_id):
     # Check movies cache first
+    tmdb_id = imdb_id = rating = plot = name = ''
     try:
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
         if os.path.exists(movies_cache_path):
             movies_data = json.load(open(movies_cache_path, encoding='utf-8'))
             movie = next((m for m in movies_data if m.get('stream_id') == stream_id), None)
-            if movie and (movie.get('tmdb_id') or movie.get('plot')):
-                return jsonify({
-                    'tmdb_id': movie.get('tmdb_id') or '',
-                    'imdb_id': movie.get('imdb_id') or '',
-                    'rating':  movie.get('rating') or '',
-                    'plot':    movie.get('plot') or '',
-                })
+            if movie:
+                name = movie.get('name', '')
+                tmdb_id = movie.get('tmdb_id') or ''
+                imdb_id = movie.get('imdb_id') or ''
+                rating  = movie.get('rating') or ''
+                plot    = movie.get('plot') or ''
+                if tmdb_id or plot:
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
     except Exception:
         pass
 
-    # Fall back to live API
+    # Fall back to live provider API
     try:
         m3u_url = get_credential('url')
         scheme, rest = m3u_url.split('://', 1)
@@ -1338,38 +1399,72 @@ def get_vod_info(stream_id):
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_info&vod_id={stream_id}"
         response = requests.get(api_url, timeout=5)
         response.raise_for_status()
-        data = response.json()
-        info = data.get('info', {})
-        return jsonify({
-            'tmdb_id': info.get('tmdb_id') or info.get('tmdb') or '',
-            'imdb_id': info.get('imdb_id') or info.get('imdb') or '',
-            'rating':  info.get('rating') or info.get('rating_5based') or '',
-            'plot':    info.get('plot') or info.get('description') or info.get('overview') or '',
-        })
-    except Exception as e:
-        return jsonify({'tmdb_id': '', 'imdb_id': '', 'rating': '', 'plot': '', 'error': str(e)})
+        info = response.json().get('info', {})
+        tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
+        imdb_id = info.get('imdb_id') or info.get('imdb') or imdb_id
+        rating  = info.get('rating') or info.get('rating_5based') or rating
+        plot    = info.get('plot') or info.get('description') or info.get('overview') or plot
+        if not name:
+            name = info.get('name', '')
+    except Exception:
+        pass
+
+    # If still no tmdb_id, try TMDB search by name
+    if not tmdb_id and name:
+        tmdb_api_key = get_credential('tmdb_api_key') or ''
+        tmdb_id, _ = _tmdb_lookup(name, 'movie', tmdb_api_key)
+        tmdb_id = tmdb_id or ''
+
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
 
 
 @main_bp.route('/get_series_info/<int:series_id>')
 def get_series_info_meta(series_id):
+    tmdb_id = imdb_id = rating = plot = name = ''
+
+    # Check series cache first
+    try:
+        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+        if os.path.exists(series_cache_path):
+            series_data = json.load(open(series_cache_path, encoding='utf-8'))
+            serie = next((s for s in series_data if s.get('series_id') == series_id), None)
+            if serie:
+                name    = serie.get('name', '')
+                tmdb_id = serie.get('tmdb_id') or ''
+                imdb_id = serie.get('imdb_id') or ''
+                rating  = serie.get('rating') or ''
+                plot    = serie.get('plot') or ''
+                if tmdb_id or plot:
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+    except Exception:
+        pass
+
+    # Fall back to live provider API
     try:
         m3u_url = get_credential('url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
         response = requests.get(api_url, timeout=5)
         response.raise_for_status()
-        data = response.json()
-        info = data.get('info', {})
-        return jsonify({
-            'tmdb_id': info.get('tmdb_id') or info.get('tmdb'),
-            'imdb_id': info.get('imdb_id') or info.get('imdb'),
-            'rating': info.get('rating') or info.get('rating_5based'),
-            'plot': info.get('plot') or info.get('description') or info.get('overview') or '',
-        })
-    except Exception as e:
-        return jsonify({'tmdb_id': None, 'imdb_id': None, 'rating': None, 'plot': '', 'error': str(e)})
+        info = response.json().get('info', {})
+        tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
+        imdb_id = info.get('imdb_id') or info.get('imdb') or imdb_id
+        rating  = info.get('rating') or info.get('rating_5based') or rating
+        plot    = info.get('plot') or info.get('description') or info.get('overview') or plot
+        if not name:
+            name = info.get('name', '')
+    except Exception:
+        pass
+
+    # If still no tmdb_id, search TMDB by name
+    if not tmdb_id and name:
+        tmdb_api_key = get_credential('tmdb_api_key') or ''
+        tmdb_id, _ = _tmdb_lookup(name, 'tv', tmdb_api_key)
+        tmdb_id = tmdb_id or ''
+
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
 
 
 @main_bp.route('/check_jellyfin/<string:type>/<path:name>')
@@ -1513,6 +1608,7 @@ def settings():
         update_config_variable(CONFIG_PATH, 'jellyfin_enabled', form.jellyfin_enabled.data)
         update_config_variable(CONFIG_PATH, 'jellyfin_url', form.jellyfin_url.data)
         set_credential('jellyfin_api_key', form.jellyfin_api_key.data)
+        set_credential('tmdb_api_key', form.tmdb_api_key.data)
         update_config_variable(CONFIG_PATH, 'debug', form.debug.data)
 
         job = scheduler.get_job('M3U Download scheduler')
@@ -1559,6 +1655,7 @@ def settings():
         form.jellyfin_enabled.data = get_config_variable(CONFIG_PATH, 'jellyfin_enabled') or "0"
         form.jellyfin_url.data = get_config_variable(CONFIG_PATH, 'jellyfin_url')
         form.jellyfin_api_key.data = get_credential('jellyfin_api_key')
+        form.tmdb_api_key.data = get_credential('tmdb_api_key')
         form.debug.data = get_config_variable(CONFIG_PATH, 'debug') or "no"
 
     return render_template('settings.html', form=form)
