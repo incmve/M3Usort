@@ -94,10 +94,12 @@ function setView(v) {
     document.getElementById('btn-list').className = v==='list'?'vt-btn active':'vt-btn';
 }
 function filterSeries() {
-    const search = document.getElementById('search-bar').value.toLowerCase();
+    const words = document.getElementById('search-bar').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
     const cat = document.getElementById('category-filter').value;
     filteredSeries = ALL_SERIES.filter(m => {
-        return (m.name||'').toLowerCase().includes(search) && (!cat || (m.category||'')===cat);
+        const name = (m.name||'').toLowerCase();
+        const matchName = words.length === 0 || words.every(w => name.includes(w));
+        return matchName && (!cat || (m.category||'')===cat);
     });
     document.getElementById('count-bar').textContent = `${filteredSeries.length} series`;
     renderGrid(filteredSeries, false);

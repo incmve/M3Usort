@@ -104,10 +104,11 @@ function setView(v) {
 }
 
 function filterMovies() {
-    const search = document.getElementById('search-bar').value.toLowerCase();
+    const words = document.getElementById('search-bar').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
     const cat = document.getElementById('category-filter').value;
     filteredMovies = ALL_MOVIES.filter(m => {
-        const matchName = (m.name||'').toLowerCase().includes(search);
+        const name = (m.name||'').toLowerCase();
+        const matchName = words.length === 0 || words.every(w => name.includes(w));
         const matchCat = !cat || (m.category||'') === cat;
         return matchName && matchCat;
     });

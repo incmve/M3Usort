@@ -19,7 +19,11 @@
             </div>
             {% if new_movies %}
             {% for movie in new_movies %}
-            <div class="ntw-item new-item" onclick="openNtwModal('{{ movie.name }}', '{{ movie.stream_id }}', '{{ movie.stream_icon }}', 'movie')">
+            <div class="ntw-item new-item"
+                data-name="{{ movie.name | e }}"
+                data-id="{{ movie.stream_id }}"
+                data-icon="{{ movie.stream_icon | e }}"
+                data-type="movie">
                 <div class="ntw-thumb">
                     {% if movie.stream_icon %}<img src="{{ movie.stream_icon }}" onerror="this.style.display='none'">{% else %}🎬{% endif %}
                 </div>
@@ -41,7 +45,11 @@
             </div>
             {% if new_series %}
             {% for serie in new_series %}
-            <div class="ntw-item new-item" onclick="openNtwModal('{{ serie.name }}', '{{ serie.series_id }}', '{{ serie.series_cover }}', 'serie')">
+            <div class="ntw-item new-item"
+                data-name="{{ serie.name | e }}"
+                data-id="{{ serie.series_id }}"
+                data-icon="{{ serie.series_cover | e }}"
+                data-type="serie">
                 <div class="ntw-thumb">
                     {% if serie.series_cover %}<img src="{{ serie.series_cover }}" onerror="this.style.display='none'">{% else %}📺{% endif %}
                 </div>
@@ -138,6 +146,16 @@ function openNtwModal(name, id, icon, type) {
     window.onclick = function(e) { if(e.target===modal) closeModal(); };
 }
 document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.ntw-item').forEach(function(item) {
+        item.addEventListener('click', function() {
+            openNtwModal(
+                this.dataset.name,
+                this.dataset.id,
+                this.dataset.icon,
+                this.dataset.type
+            );
+        });
+    });
     document.getElementById('modal-image').addEventListener('click', function(e) {
         if(e.target.tagName==='IMG') { const lb=document.getElementById('lightbox'); document.getElementById('lightbox-img').src=e.target.src; lb.style.display='flex'; }
     });
