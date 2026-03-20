@@ -51,34 +51,6 @@
             <span class="si-icon">↓</span> Start download
         </a>
         {% endif %}
-</div>
-
-<script>
-(function() {
-    var dl = document.getElementById('download-link');
-    if (!dl) return;
-    dl.addEventListener('click', function(e) {
-        e.preventDefault();
-        dl.style.opacity = '0.5';
-        dl.style.pointerEvents = 'none';
-        fetch('/download', {method: 'GET'})
-            .then(r => r.json())
-            .then(data => {
-                dl.style.opacity = '';
-                dl.style.pointerEvents = '';
-                const c = document.querySelector('.flash-wrap');
-                if (c) {
-                    const d = document.createElement('div');
-                    d.textContent = data.message || 'Download finished';
-                    d.className = 'flash-message success';
-                    c.appendChild(d);
-                    setTimeout(() => { d.style.opacity='0'; setTimeout(()=>d.remove(), 600); }, 5000);
-                }
-            })
-            .catch(() => { dl.style.opacity = ''; dl.style.pointerEvents = ''; });
-    });
-})();
-</script>
     </div>
 
     {% if is_admin %}
@@ -116,3 +88,30 @@
         </a>
     </div>
 </nav>
+
+<script>
+(function() {
+    var dl = document.getElementById('download-link');
+    if (!dl) return;
+    dl.addEventListener('click', function(e) {
+        e.preventDefault();
+        dl.style.opacity = '0.5';
+        dl.style.pointerEvents = 'none';
+        fetch('/download', {method: 'GET'})
+            .then(r => r.json())
+            .then(data => {
+                dl.style.opacity = '';
+                dl.style.pointerEvents = '';
+                const c = document.querySelector('.flash-wrap');
+                if (c) {
+                    const d = document.createElement('div');
+                    d.textContent = data.message || 'Download finished';
+                    d.className = 'flash-message success';
+                    c.appendChild(d);
+                    setTimeout(() => { d.style.opacity='0'; setTimeout(()=>d.remove(), 600); }, 5000);
+                }
+            })
+            .catch(() => { dl.style.opacity = ''; dl.style.pointerEvents = ''; });
+    });
+})();
+</script>
