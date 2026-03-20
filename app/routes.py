@@ -1274,9 +1274,21 @@ def find_wanted_movies_fuzzy(movies_dir):
         highest_similarity = 0
         most_recent_year = 0
 
+        # Normalize: lowercase, strip punctuation for word matching
+        wanted_clean = re.sub(r'[^\w\s]', ' ', wanted.lower())
+        wanted_words = set(wanted_clean.split())
+
         for movie in movies_list:
             movie_name_stripped, year = strip_year(movie['name'])
-            similarity = fuzz.token_set_ratio(wanted, movie_name_stripped)
+            movie_clean = re.sub(r'[^\w\s]', ' ', movie_name_stripped.lower())
+            movie_words = set(movie_clean.split())
+
+            # All words in the search must appear in the movie name
+            if not wanted_words.issubset(movie_words):
+                continue
+
+            # Use ratio (not token_set) to avoid over-matching substrings
+            similarity = fuzz.token_sort_ratio(wanted, movie_name_stripped)
 
             if similarity >= similarity_threshold:
                 is_new_best = (similarity > highest_similarity or
@@ -1299,9 +1311,9 @@ def find_wanted_movies_fuzzy(movies_dir):
                 PrintLog(f"Created .strm file for {best_match['name']}", "NOTICE")
                 wanted_movies.remove(wanted)
             else:
-                PrintLog("No match found", "WARNING")
+                PrintLog(f"No match found for '{wanted}'", "WARNING")
         else:
-            PrintLog("No match found", "WARNING")
+            PrintLog(f"No match found for '{wanted}'", "WARNING")
 
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
 
@@ -2367,9 +2379,17 @@ def is_cache_valid():
     return datetime.now() - GROUPS_CACHE['last_updated'] < timedelta(seconds=CACHE_DURATION)
 
 def fetch_channel_groups(m3u_path):
-    """Fetch channel groups using the ipytv library."""
-    original_playlist = playlist.loadf(m3u_path)
-    group_titles = set(channel.attributes.get('group-title', 'No Group Title') for channel in original_playlist)
+    """Fetch channel groups by scanning M3U directly — much faster than ipytv for large files."""
+    group_titles = set()
+    try:
+        with open(m3u_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if line.startswith('#EXTINF'):
+                    m = re.search(r'group-title="([^"]*)"', line)
+                    if m:
+                        group_titles.add(m.group(1) or 'No Group Title')
+    except Exception as e:
+        PrintLog(f"Error reading M3U groups: {e}", "ERROR")
     return sorted(group_titles)
 
 def init():
