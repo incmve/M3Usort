@@ -1385,7 +1385,7 @@ def get_vod_info(stream_id):
                 imdb_id = movie.get('imdb_id') or ''
                 rating  = movie.get('rating') or ''
                 plot    = movie.get('plot') or ''
-                if tmdb_id or plot:
+                if tmdb_id:
                     return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
     except Exception:
         pass
@@ -1434,7 +1434,7 @@ def get_series_info_meta(series_id):
                 imdb_id = serie.get('imdb_id') or ''
                 rating  = serie.get('rating') or ''
                 plot    = serie.get('plot') or ''
-                if tmdb_id or plot:
+                if tmdb_id:
                     return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
     except Exception:
         pass
