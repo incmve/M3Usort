@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 
 main_bp = Blueprint('main_bp', __name__)
 
+@main_bp.app_template_filter('timestamp_to_date')
+def timestamp_to_date(ts):
+    try:
+        return datetime.utcfromtimestamp(int(ts)).strftime('%b %d')
+    except Exception:
+        return ''
+
 # Initialize and configure APScheduler
 scheduler = APScheduler()
 scheduler.init_app(app)

@@ -5,7 +5,7 @@
     <span class="topbar-sep">·</span>
     <span class="topbar-sub">{{ today }}</span>
     <div class="topbar-right">
-        {% if cache_age %}<span class="topbar-pill">Cache {{ cache_age }} ago</span>{% endif %}
+        {% if cache_age %}<span class="topbar-pill" style="color:#5abf7e; border-color:#1a4a30; background:#0a2018;">Cache {{ cache_age }} ago</span>{% endif %}
         <a href="{{ url_for('main_bp.refresh_vod_cache') }}" class="topbar-btn">↻ Refresh</a>
     </div>
 </div>
@@ -23,10 +23,11 @@
                 <div class="ntw-thumb">
                     {% if movie.stream_icon %}<img src="{{ movie.stream_icon }}" onerror="this.style.display='none'">{% else %}🎬{% endif %}
                 </div>
-                <div>
+                <div style="flex:1; min-width:0;">
                     <div class="ntw-name">{{ movie.name }}</div>
                     <div class="ntw-meta">Movie</div>
                 </div>
+                {% if movie.added %}<span class="ntw-date">{{ movie.added | int | timestamp_to_date }}</span>{% endif %}
             </div>
             {% endfor %}
             {% else %}
@@ -44,10 +45,11 @@
                 <div class="ntw-thumb">
                     {% if serie.series_cover %}<img src="{{ serie.series_cover }}" onerror="this.style.display='none'">{% else %}📺{% endif %}
                 </div>
-                <div>
+                <div style="flex:1; min-width:0;">
                     <div class="ntw-name">{{ serie.name }}</div>
                     <div class="ntw-meta">Series</div>
                 </div>
+                {% if serie.added %}<span class="ntw-date">{{ serie.added | int | timestamp_to_date }}</span>{% endif %}
             </div>
             {% endfor %}
             {% else %}
