@@ -58,8 +58,8 @@
                 data-item='{{ item | tojson }}'
                 onclick="openItemModal(JSON.parse(this.getAttribute('data-item')))">
                 <td class="jf-name">{{ item.name }}</td>
-                <td class="jf-meta">{{ item.type }}</td>
-                <td class="jf-meta">{{ item.year }}</td>
+                <td class="jf-meta"><span class="jf-badge {{ 'movie' if item.type == 'Movie' else 'series' }}">{{ item.type }}</span></td>
+                <td class="jf-meta"><span class="jf-badge year">{{ item.year }}</span></td>
                 <td class="jf-meta">
                     {% if item.in_m3usort %}
                         <span class="jf-badge m3u">M3Usort</span>
@@ -152,10 +152,13 @@
 .jf-row { border-bottom:1px solid #1a1a1a; cursor:pointer; transition:background .1s; }
 .jf-row:hover { background:#161616; }
 .jf-name { padding:12px 12px; font-size:13px; color:#d0d0d0; font-weight:500; }
-.jf-meta { padding:12px 12px; font-size:12px; color:#555; }
-.jf-badge { font-size:10px; padding:2px 8px; border-radius:20px; font-weight:600; letter-spacing:.04em; }
-.jf-badge.m3u { background:#0d2535; color:#4aadcf; border:1px solid #1a3a5a; }
-.jf-badge.other { background:#181818; color:#444; border:1px solid #222; }
+.jf-meta { padding:10px 12px; }
+.jf-badge { font-size:10px; padding:2px 8px; border-radius:20px; font-weight:600; letter-spacing:.04em; white-space:nowrap; }
+.jf-badge.m3u   { background:#0d2535; color:#4aadcf; border:1px solid #1a3a5a; }
+.jf-badge.other { background:#252525; color:#666;    border:1px solid #333; }
+.jf-badge.movie  { background:#1a2535; color:#6aadff; border:1px solid #2a4a7a; }
+.jf-badge.series { background:#1a2a1a; color:#6ad48a; border:1px solid #2a5a3a; }
+.jf-badge.year   { background:#2a2a35; color:#9ba3af; border:1px solid #43454d; }
 .jf-remove-btn { background:transparent; border:1px solid #5c1a1a; color:#a04040; border-radius:6px; padding:4px 10px; font-size:11px; font-weight:600; cursor:pointer; letter-spacing:.04em; text-transform:uppercase; transition:background .1s, color .1s; white-space:nowrap; }
 .jf-remove-btn:hover { background:#5c1a1a; color:#ef9090; }
 .jm-section-label { font-size:10px; color:#3a5a6a; letter-spacing:.1em; text-transform:uppercase; font-weight:700; margin-bottom:6px; }
