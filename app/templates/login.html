@@ -1,14 +1,14 @@
 {% extends 'layout.html' %}
 {% block content %}
 <div style="display:flex; align-items:center; justify-content:center; min-height:80vh;">
-    <div style="background:#141414; border:1px solid #1e1e1e; border-radius:10px; padding:32px; width:320px;">
+    <div style="background:#7a1515; border:1px solid #9a2020; border-radius:10px; padding:32px; width:320px;">
         <h4 style="margin-bottom:4px;">M3Usort</h4>
-        <p style="color:#444; font-size:13px; margin-bottom:24px;">IPTV Manager</p>
+        <p style="color:#daa; font-size:13px; margin-bottom:24px;">IPTV Manager</p>
         <form action="{{ url_for('login') }}" method="post">
             <label>Password</label>
             <input type="password" name="password" autofocus class="filter-input" style="width:100%; margin-bottom:14px;" placeholder="Enter password">
             <button type="submit" class="button button-primary" style="width:100%; margin-bottom:10px;">Login</button>
-            <button type="submit" name="guest" value="1" style="width:100%; background:transparent; border:1px solid #1e1e1e; color:#444; border-radius:6px; padding:7px; font-size:12px; cursor:pointer; letter-spacing:.04em; text-transform:uppercase;">Continue as Guest</button>
+            <button type="submit" name="guest" value="1" style="width:100%; background:transparent; border:1px solid #c05050; color:#f0d0d0; border-radius:6px; padding:7px; font-size:12px; cursor:pointer; letter-spacing:.04em; text-transform:uppercase;">Continue as Guest</button>
         </form>
     </div>
 </div>
