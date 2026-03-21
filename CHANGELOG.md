@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.02
+- Updated theme to lighter charcoal palette for better readability
+- Login card redesigned with red background and improved contrast
+- Added restore from backup section to setup page
+
 ## 0.2.01
 - Added categories
 - Movies and TV shows no longer call the API but use local cache.
