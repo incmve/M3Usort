@@ -1,16 +1,14 @@
 # Changelog
 
-## 0.2.02
-- Updated theme to lighter charcoal palette for better readability
-- Login card redesigned with red background and improved contrast
-- Added restore from backup section to setup page
-
-## 0.2.01
+## 2.0.0
 - BREAKING: `admin_password` and `playlist_password` are no longer set in `config.sample`. New installs will have these configured via the setup wizard. Existing users should remove these keys from their `config.py` as they will now be managed by the application. `SECRET_KEY` has been moved to `docker-compose.yml` as an environment variable.
 - Added categories
 - Movies and TV shows no longer call the API but use local cache.
 - Option to manually refresh cache.
 - Made the image a little smaller
+- Updated theme to lighter charcoal palette for better readability
+- Login card redesigned with red background and improved contrast
+- Added restore from backup section to setup page
 
 ## 0.2.00
 - Removed fork connection with the original G https://github.com/koffienl/M3Usort
