@@ -1,7 +1,7 @@
 # Changelog
 
 ## 2.0.0
-- BREAKING: `admin_password` and `playlist_password` are no longer set in `config.sample`. New installs will have these configured via the setup wizard. Existing users should remove these keys from their `config.py` as they will now be managed by the application. `SECRET_KEY` has been moved to `docker-compose.yml` as an environment variable.
+- BREAKING: `admin_password`, `playlist_password`, and `SECRET_KEY` are no longer set in `config.sample`. Fresh installs are now configured via the setup wizard. Existing installs are unaffected.
 - Added categories
 - Movies and TV shows no longer call the API but use local cache.
 - Option to manually refresh cache.
