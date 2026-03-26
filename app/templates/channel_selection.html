@@ -1,85 +1,35 @@
 {% extends 'layout.html' %}
-
 {% block content %}
-
-<style>
-    .group-li {
-        display: flex;
-        align-items: center;
-        /* This ensures the label is centered with the checkbox */
-        margin-bottom: 10px;
-        /* Adjust as needed for space between list items */
-    }
-
-
-    input[type="checkbox"] {
-        margin-right: 10px;
-        /* Adjust as needed for space between checkbox and label */
-    }
-
-    #groups-list {
-        max-height: 30vh;
-        overflow-y: auto;
-        margin: 0;
-        padding: 0;
-        list-style-type: none;
-    }
-</style>
-
-<div class="container">
-    <h4>Add channel groups to custom group</h4>
-    <div class="row">
-        <div class="twelve columns">
-
-
-            <!-- Content -->
-            <form method="POST" action="{{ url_for('main_bp.save_channel_selection') }}">
-                <input class="button-primary" type="submit" value="Save" style="margin-top: 1rem;">
-
-                <div id="main">
-                    <div class="search-container">
-                        <input type="text" class="u-full-width" id="search-bar" placeholder="Search channel groups..."
-                            onkeyup="searchGroups()">
-                    </div>
-
-                    <ul id="groups-list">
-                        {% if groups %}
-                        {% for group in groups %}
-                        <li class="group-li">
-                            <input type="checkbox"
-                                id="{{ group | replace(' ', '_') | replace('(', '') | replace(')', '') | replace('/', '_') }}"
-                                name="selected_groups[]" value="{{ group }}" {% if group in desired_group_titles %}
-                                checked {% endif %}>
-                            <label
-                                for="{{ group | replace(' ', '_') | replace('(', '') | replace(')', '') | replace('/', '_') }}">{{
-                                group }}</label>
-                        </li>
-                        {% endfor %}
-                        {% else %}
-                        <p>No channel groups found.</p>
-                        {% endif %}
-                    </ul>
-                </div>
-            </form>
+<div class="topbar"><span class="topbar-title">Add Channel Groups</span></div>
+<div class="page-content">
+    <form method="POST" action="{{ url_for('main_bp.save_channel_selection') }}">
+        <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px;">
+            <input type="text" class="filter-input" id="search-bar" placeholder="Search channel groups..." onkeyup="searchGroups()" style="flex:1;">
+            <button type="submit" class="button button-primary">Save</button>
         </div>
-    </div>
+        <div class="info-block">
+            <ul id="groups-list" style="margin:0; padding:0; list-style:none;">
+                {% if groups %}
+                {% for group in groups %}
+                <li class="group-li">
+                    <input type="checkbox" id="{{ group|replace(' ','_')|replace('(','') |replace(')','') |replace('/','_') }}"
+                        name="selected_groups[]" value="{{ group }}" {% if group in desired_group_titles %}checked{% endif %}>
+                    <label for="{{ group|replace(' ','_')|replace('(','') |replace(')','') |replace('/','_') }}" style="margin:0; font-weight:400; color:#b0b0b0; font-size:13px; cursor:pointer;">{{ group }}</label>
+                </li>
+                {% endfor %}
+                {% else %}
+                <li style="padding:14px; color:#444; font-size:13px;">No channel groups found.</li>
+                {% endif %}
+            </ul>
+        </div>
+    </form>
 </div>
-
 <script>
-    function searchGroups() {
-        let input = document.getElementById('search-bar').value.toLowerCase();
-        let groupItems = document.querySelectorAll('#groups-list li');
-
-        for (let i = 0; i < groupItems.length; i++) {
-            let groupName = groupItems[i].textContent || groupItems[i].innerText;
-            if (groupName.toLowerCase().indexOf(input) > -1) {
-                groupItems[i].style.display = "";
-            } else {
-                groupItems[i].style.display = "none";
-            }
-        }
-    }
+function searchGroups() {
+    const input = document.getElementById('search-bar').value.toLowerCase();
+    document.querySelectorAll('#groups-list li').forEach(li => {
+        li.style.display = (li.textContent||li.innerText).toLowerCase().includes(input) ? '' : 'none';
+    });
+}
 </script>
-
-
 {% endblock %}

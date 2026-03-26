@@ -1,231 +1,146 @@
-{% extends 'layout.html' %} {% block content %}
+{% extends 'layout.html' %}
 
-<style>
-  a.update {
-    color: #15ff00;
-  }
+{% block content %}
+<div class="topbar">
+    <span class="topbar-title">Dashboard</span>
+    <div class="topbar-right">
+        {% if exp_date_days_left is defined and exp_date_days_left <= 30 %}
+        <span class="topbar-pill warn">⚠ {{ exp_date_days_left }} days left</span>
+        {% endif %}
+        {% if jellyfin_enabled == '1' %}
+        <span class="topbar-pill ok">● Jellyfin</span>
+        {% endif %}
+    </div>
+</div>
 
-  .info-table {
-    width: 100%;
-  }
-
-  /*
-  .info-table th {
-    width: 40%;
-    text-align: left;
-  }
-*/
-  .info-table td {
-    /* width: 50%;*/
-    text-align: right;
-    padding: 10px;
-  }
-  
-  .collapsible-header {
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .hidden {
-    display: none;
-  }
-
-  @keyframes blink {
-    50% { opacity: 0.2; }
-  }
-</style>
-
-<div class="container">
-  <h4>Dashboard</h4>
-  <div class="row">
-    <div class="six columns">
-
-      <div class="collapsible-header" onclick="toggleVisibility('server-info', this)">
-        <b>Server Information</b> <span>&#9660;</span>
-      </div>
-      <div id="server-info">
-        <table class="info-table">
-          <tr>
-            <th>&nbsp;</th>
-            <td></td>
-          </tr>
-
-          <tr>
-            <th>M3U url:</th>
-            <td>
-              http://{{ internal_ip }}:{{ port_number }}/m3u/{{ output
-              }}?password=your-playlist-password
-            </td>
-          </tr>
-          <tr>
-            <th>Original M3U url:</th>
-            <td>
-              http://{{ internal_ip }}:{{ port_number
-              }}/m3u/original.m3u?password=your-playlist-password
-            </td>
-          </tr>
-          <tr>
-            <th>original.m3u age:</th>
-            <td id="original_m3u_age">{{ original_m3u_age }}</td>
-          </tr>
-          <tr>
-            <th>{{ output }} age:</th>
-            <td id="sorted_m3u_age">{{ sorted_m3u_age }}</td>
-          </tr>
-          <tr>
-            <th>Next M3u download:</th>
-            <td id="next-m3u">{{ next_m3u }}</td>
-          </tr>
-          <tr>
-            <th>Next VOD download:</th>
-            <td id="next-vod">{{ next_vod }}</td>
-          </tr>
-          <tr>
-            <th>Version:</th>
-            {% if update_available %}
-            <td id="version"><a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank"
-                class="update">{{ version }}</a></td>
-            {% else %}
-            <td id="version">{{ version }}</td>
-            {% endif %}
-          </tr>
-          <tr>
-            <th>Uptime:</th>
-            <td id="uptime">{{ uptime }}</td>
-          </tr>
-        </table>
-      </div>
+<div class="page-content">
+    <div class="stat-row">
+        <div class="stat-card" style="border-color:#1a3a5c; background:linear-gradient(135deg,#0e1e30,#151515);">
+            <div class="stat-label" style="color:#2a6a9a;">Movies</div>
+            <div class="stat-value" id="total_movies" style="color:#4aadcf;">{{ total_movies }}</div>
+            <div class="stat-sub">in cache</div>
+        </div>
+        <div class="stat-card" style="border-color:#1a3a2a; background:linear-gradient(135deg,#0e2018,#151515);">
+            <div class="stat-label" style="color:#2a6a4a;">TV Shows</div>
+            <div class="stat-value" id="total_series" style="color:#4acf8a;">{{ total_series }}</div>
+            <div class="stat-sub">in cache</div>
+        </div>
+        <div class="stat-card {% if exp_date_days_left is defined and exp_date_days_left <= 30 %}warn{% endif %}"
+            style="border-color:{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#4a3010{% else %}#2a2a1a{% endif %}; background:linear-gradient(135deg,{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#201808{% else %}#181810{% endif %},#151515);">
+            <div class="stat-label" style="color:{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#8a6020{% else %}#6a6030{% endif %};">Subscription</div>
+            <div class="stat-value" id="exp_date_short" style="color:{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#c8a030{% else %}#a0a060{% endif %};">
+                {% if exp_date_days_left is defined and exp_date_days_left <= 30 %}{{ exp_date_days_left }}d{% else %}Active{% endif %}
+            </div>
+            <div class="stat-sub" id="exp_date">{{ exp_date }}</div>
+        </div>
+        <div class="stat-card" style="border-color:#2a1a3a; background:linear-gradient(135deg,#180e20,#151515);">
+            <div class="stat-label" style="color:#5a3a7a;">Uptime</div>
+            <div class="stat-value" id="uptime" style="color:#9a70cf; font-size:18px;">{{ uptime }}</div>
+        </div>
     </div>
 
-    <div class="six columns">
-      <div class="collapsible-header" onclick="toggleVisibility('account-info', this)">
-        <b>Account Information</b> <span>&#9660;</span>
-      </div>
-      <div id="account-info">
-        <table class="info-table">
-          <tr>
-            <th>&nbsp;</th>
-            <td></td>
-          </tr>
-          <tr>
-            <th>Status:</th>
-            <td id="status">{{ status }}</td>
-          </tr>
-          <tr>
-            <th>Expiration Date:</th>
-            <td id="exp_date" {% if exp_date_days_left <= 30 %}style="color: #ff4444; font-weight: bold; animation: blink 1.5s step-start infinite;"{% endif %}>
-              {{ exp_date }}{% if exp_date_days_left <= 30 %} ({{ exp_date_days_left }} days left){% endif %}
-            </td>
-          </tr>
-          <tr>
-            <th>Active Connections:</th>
-            <td id="active_cons">{{ active_cons }}</td>
-          </tr>
-          <tr>
-            <th>Max Connections:</th>
-            <td id="max_connections">{{ max_connections }}</td>
-          </tr>
-          <tr>
-            <th>Trial Account:</th>
-            <td id="is_trial">{{ 'Yes' if is_trial == '1' else 'No' }}</td>
-          </tr>
-        </table>
-      </div>
-
-      <div style="margin-top: 1.5rem;">
-        <div class="collapsible-header" onclick="toggleVisibility('vod-stats', this)">
-          <b>VOD Statistics</b> <span>&#9660;</span>
+    <div class="info-block">
+        <div class="info-block-header">Server</div>
+        <div class="info-row">
+            <span class="info-label">M3U URL</span>
+            <span class="info-value link">http://{{ internal_ip }}:{{ port_number }}/m3u/{{ output }}?password=your-playlist-password</span>
         </div>
-        <div id="vod-stats">
-          <table class="info-table">
-            <tr>
-              <th>&nbsp;</th>
-              <td></td>
-            </tr>
-            <tr>
-              <th>Total Movies:</th>
-              <td id="total_movies">{{ total_movies }}</td>
-            </tr>
-            <tr>
-              <th>Total TV Shows:</th>
-              <td id="total_series">{{ total_series }}</td>
-            </tr>
-          </table>
+        <div class="info-row">
+            <span class="info-label">Original M3U URL</span>
+            <span class="info-value link">http://{{ internal_ip }}:{{ port_number }}/m3u/original.m3u?password=your-playlist-password</span>
         </div>
-      </div>
+        <div class="info-row">
+            <span class="info-label">original.m3u age</span>
+            <span class="info-value" id="original_m3u_age">{{ original_m3u_age }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">{{ output }} age</span>
+            <span class="info-value" id="sorted_m3u_age">{{ sorted_m3u_age }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Next M3U download</span>
+            <span class="info-value" id="next-m3u">{{ next_m3u }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Next VOD download</span>
+            <span class="info-value" id="next-vod">{{ next_vod }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Version</span>
+            <span class="info-value" id="version">
+                {% if update_available %}
+                <a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" style="color:#3a8a5a;">{{ version }}</a>
+                {% else %}{{ version }}{% endif %}
+            </span>
+        </div>
     </div>
-  </div>
+
+    <div class="info-block">
+        <div class="info-block-header">Account</div>
+        <div class="info-row">
+            <span class="info-label">Status</span>
+            <span class="info-value ok" id="status">{{ status }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Expiration</span>
+            <span class="info-value {% if exp_date_days_left is defined and exp_date_days_left <= 30 %}warn{% endif %}" id="exp_date_full">
+                {{ exp_date }}{% if exp_date_days_left is defined and exp_date_days_left <= 30 %} ({{ exp_date_days_left }} days left){% endif %}
+            </span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Active Connections</span>
+            <span class="info-value" id="active_cons">{{ active_cons }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Max Connections</span>
+            <span class="info-value" id="max_connections">{{ max_connections }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Trial Account</span>
+            <span class="info-value" id="is_trial">{{ 'Yes' if is_trial == '1' else 'No' }}</span>
+        </div>
+    </div>
 </div>
 
 <script>
-  document.addEventListener("DOMContentLoaded", function () {
+document.addEventListener("DOMContentLoaded", function() {
     function fetchData() {
-      fetch("/update_home_data")
-        .then((response) => response.json())
-        .then((data) => {
-          document.getElementById("next-m3u").textContent = data.next_m3u;
-          document.getElementById("next-vod").textContent = data.next_vod;
-          document.getElementById("uptime").textContent = data.uptime;
-          document.getElementById("original_m3u_age").textContent = data.original_m3u_age;
-          document.getElementById("sorted_m3u_age").textContent = data.sorted_m3u_age;
-          document.getElementById("status").textContent = data.status;
-          
-          const expEl = document.getElementById("exp_date");
-          if (data.exp_date_days_left <= 30) {
-            expEl.textContent = `${data.exp_date} (${data.exp_date_days_left} days left)`;
-            expEl.style.color = '#ff4444';
-            expEl.style.fontWeight = 'bold';
-            expEl.style.animation = 'blink 1.5s step-start infinite';
-          } else {
-            expEl.textContent = data.exp_date;
-            expEl.style.color = '';
-            expEl.style.fontWeight = '';
-            expEl.style.animation = '';
-          }
-
-          document.getElementById("active_cons").textContent = data.active_cons;
-          if (data.is_trial == 0) {
-            document.getElementById("is_trial").textContent = "No";
-          } else if (data.is_trial == 1) {
-            document.getElementById("is_trial").textContent = "yes";
-          }
-          document.getElementById("status").textContent = data.status;
-          document.getElementById("max_connections").textContent = data.max_connections;
-          document.getElementById("total_movies").textContent = data.total_movies;
-          document.getElementById("total_series").textContent = data.total_series;
-
-          if (data.update_available == 0) {
-            document.getElementById("version").textContent = data.version;
-          } else if (data.update_available == 1) {
-            document.getElementById("version").innerHTML = `<a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" class="update">${data.version}</a>`;
-          }
-        })
-        .catch((error) => console.error("Error fetching data: ", error));
+        fetch("/update_home_data")
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById("next-m3u").textContent = data.next_m3u;
+                document.getElementById("next-vod").textContent = data.next_vod;
+                document.getElementById("uptime").textContent = data.uptime;
+                document.getElementById("original_m3u_age").textContent = data.original_m3u_age;
+                document.getElementById("sorted_m3u_age").textContent = data.sorted_m3u_age;
+                document.getElementById("status").textContent = data.status;
+                document.getElementById("active_cons").textContent = data.active_cons;
+                document.getElementById("max_connections").textContent = data.max_connections;
+                document.getElementById("total_movies").textContent = data.total_movies;
+                document.getElementById("total_series").textContent = data.total_series;
+                if (data.is_trial == 0) document.getElementById("is_trial").textContent = "No";
+                else if (data.is_trial == 1) document.getElementById("is_trial").textContent = "Yes";
+                const expEl = document.getElementById("exp_date_full");
+                if (data.exp_date_days_left <= 30) {
+                    expEl.textContent = `${data.exp_date} (${data.exp_date_days_left} days left)`;
+                    expEl.className = 'info-value warn';
+                    document.getElementById("exp_date_short").textContent = data.exp_date_days_left + 'd';
+                } else {
+                    expEl.textContent = data.exp_date;
+                    expEl.className = 'info-value';
+                    document.getElementById("exp_date_short").textContent = 'Active';
+                }
+                document.getElementById("exp_date").textContent = data.exp_date;
+                if (data.update_available == 1) {
+                    document.getElementById("version").innerHTML = `<a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" style="color:#3a8a5a;">${data.version}</a>`;
+                } else {
+                    document.getElementById("version").textContent = data.version;
+                }
+            })
+            .catch(e => console.error(e));
     }
-
-    fetchData(); // Fetch immediately on load
+    fetchData();
     setInterval(fetchData, 60000);
-  });
-
-  function toggleVisibility(id, header) {
-    var element = document.getElementById(id);
-    var arrow = header.getElementsByTagName("span")[0];
-    if (element.style.display === "none") {
-      element.style.display = "";
-      arrow.innerHTML = "&#9660;"; // Down arrow when expanded
-    } else {
-      element.style.display = "none";
-      arrow.innerHTML = "&#9650;"; // Up arrow when collapsed
-    }
-  }
-
-  // Initialize sections to be open
-  window.onload = function () {
-    document.getElementById("server-info").style.display = "";
-    document.getElementById("account-info").style.display = "";
-    document.getElementById("vod-stats").style.display = "";
-  };
+});
 </script>
 {% endblock %}

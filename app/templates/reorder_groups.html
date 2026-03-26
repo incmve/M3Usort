@@ -1,85 +1,48 @@
 {% extends 'layout.html' %}
-
 {% block content %}
-
-<div class="container">
-    <h4>Reorder Channel Groups</h4>
-    <div class="row">
-        <div class="twelve columns">
-            <form method="POST" action="{{ url_for('main_bp.save_reordered_groups') }}">
-                <input class="button-primary" type="submit" value="Save" style="margin-top: 1rem;">
-
-                <input type="hidden" id="group_order" name="group_order">
-
-                <ul id="sortable" class="list-group">
-                    {% for group in desired_group_titles %}
-                    <li class="list-group-item draggable-item" draggable="true" data-group="{{ group }}">
-                        <span class="drag-handle">&#x2630;</span>
-                        {{ group }}
-                        <a href="#" class="delete-btn" onclick="deleteItem(this)">&#10060;</a> <!-- Delete Button -->
-                    </li>
-                    {% endfor %}
-                </ul>
-
-            </form>
-
+<div class="topbar"><span class="topbar-title">Sort Groups</span></div>
+<div class="page-content">
+    <form method="POST" action="{{ url_for('main_bp.save_reordered_groups') }}">
+        <div style="margin-bottom:16px;">
+            <button type="submit" class="button button-primary">Save Order</button>
         </div>
-    </div>
+        <input type="hidden" id="group_order" name="group_order">
+        <ul id="sortable" style="margin:0; padding:0; list-style:none;">
+            {% for group in desired_group_titles %}
+            <li class="draggable-item" draggable="true" data-group="{{ group }}">
+                <span class="drag-handle">&#x2630;</span>
+                {{ group }}
+                <a href="#" class="delete-btn" onclick="deleteItem(this)">✕</a>
+            </li>
+            {% endfor %}
+        </ul>
+    </form>
 </div>
-
 <script>
-    let ul = document.getElementById('sortable');
-
-    // This makes updateOrderInput globally accessible
-    window.updateOrderInput = function () {
-        let order = [];
-        ul.querySelectorAll('.list-group-item').forEach(item => {
-            order.push(item.getAttribute('data-group'));
+let ul = document.getElementById('sortable');
+window.updateOrderInput = function() {
+    let order = [];
+    ul.querySelectorAll('.draggable-item').forEach(item => order.push(item.getAttribute('data-group')));
+    document.getElementById('group_order').value = JSON.stringify(order);
+}
+document.addEventListener('DOMContentLoaded', function() {
+    let dragging = null;
+    ul.querySelectorAll('.draggable-item').forEach(item => {
+        item.addEventListener('dragstart', e => { dragging = item; });
+        item.addEventListener('dragover', e => {
+            e.preventDefault();
+            const closest = [...ul.querySelectorAll('.draggable-item')].reduce((c, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = e.clientY - box.top - box.height/2;
+                if (offset < 0 && offset > c.offset) return {offset, element: child};
+                return c;
+            }, {offset: Number.NEGATIVE_INFINITY}).element;
+            if (closest && dragging !== closest) { ul.insertBefore(dragging, closest.nextSibling); updateOrderInput(); }
         });
-        document.getElementById('group_order').value = JSON.stringify(order);
-    }
-
-    document.addEventListener('DOMContentLoaded', function () {
-        let draggingElement = null;
-
-        ul.querySelectorAll('.list-group-item').forEach(item => {
-            item.addEventListener('dragstart', (event) => {
-                draggingElement = item;
-            });
-
-            item.addEventListener('dragover', (event) => {
-                event.preventDefault(); // Necessary to allow dropping
-                const closest = [...ul.querySelectorAll('.list-group-item')].reduce((closest, child) => {
-                    const box = child.getBoundingClientRect();
-                    const offset = event.clientY - box.top - box.height / 2;
-                    if (offset < 0 && offset > closest.offset) {
-                        return { offset: offset, element: child };
-                    } else {
-                        return closest;
-                    }
-                }, { offset: Number.NEGATIVE_INFINITY }).element;
-
-                if (closest && draggingElement !== closest) {
-                    ul.insertBefore(draggingElement, closest.nextSibling);
-                    updateOrderInput();
-                }
-            });
-
-            item.addEventListener('dragend', () => {
-                updateOrderInput();
-            });
-        });
-
-        // Call updateOrderInput initially to ensure the order is correct on page load
-        updateOrderInput();
+        item.addEventListener('dragend', () => updateOrderInput());
     });
-
-    // Making deleteItem globally accessible
-    window.deleteItem = function (element) {
-        // Remove the list item
-        element.closest('.list-group-item').remove();
-        // Update the order in the hidden input (since an item was removed)
-        updateOrderInput();
-    }
+    updateOrderInput();
+});
+window.deleteItem = function(el) { el.closest('.draggable-item').remove(); updateOrderInput(); }
 </script>
 {% endblock %}

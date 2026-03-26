@@ -25,6 +25,8 @@ from packaging import version
 import hashlib
 import difflib
 import shutil
+from cryptography.fernet import Fernet
+import base64
 
 from fuzzywuzzy import process, fuzz
 
@@ -33,6 +35,13 @@ logging.getLogger('ipytv').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 main_bp = Blueprint('main_bp', __name__)
+
+@main_bp.app_template_filter('timestamp_to_date')
+def timestamp_to_date(ts):
+    try:
+        return datetime.utcfromtimestamp(int(ts)).strftime('%b %d')
+    except Exception:
+        return ''
 
 # Initialize and configure APScheduler
 scheduler = APScheduler()
@@ -114,53 +123,136 @@ def scheduled_system_tasks():
 def save_vod_cache():
     """Fetch and save full movies and series data from provider to local JSON cache files."""
     try:
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
+        m3u_url = get_credential('url')
+        if not m3u_url or '://' not in m3u_url or '/get.php' not in m3u_url:
+            PrintLog("save_vod_cache: no valid M3U URL configured", "ERROR")
+            return
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
+        base = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}"
+    except Exception as e:
+        PrintLog(f"save_vod_cache: failed to parse URL: {e}", "ERROR")
+        return
 
-        # Fetch movie categories
-        cat_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_categories"
-        movie_cats = {str(c['category_id']): c['category_name'] for c in requests.get(cat_url).json()}
+    # ── Movies ───────────────────────────────────────────────────────────────
+    try:
+        cat_resp = requests.get(f"{base}&action=get_vod_categories", timeout=30)
+        cat_resp.raise_for_status()
+        movie_cats = {str(c['category_id']): c['category_name'] for c in cat_resp.json()}
+    except Exception as e:
+        PrintLog(f"save_vod_cache: failed to fetch movie categories: {e}", "WARNING")
+        movie_cats = {}
 
-        # Save movies cache with category_name resolved
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams"
-        response = requests.get(api_url)
-        response.raise_for_status()
-        movies_data = response.json()
+    try:
+        resp = requests.get(f"{base}&action=get_vod_streams", timeout=60)
+        resp.raise_for_status()
+        movies_data = resp.json()
         for movie in movies_data:
             if not movie.get('category_name'):
                 movie['category_name'] = movie_cats.get(str(movie.get('category_id', '')), '')
+
+        # Enrich with per-movie info (tmdb_id, plot, rating) — load existing cache first to skip already-fetched items
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+        existing_info = {}
+        if os.path.exists(movies_cache_path):
+            try:
+                existing = json.load(open(movies_cache_path, encoding='utf-8'))
+                existing_info = {m['stream_id']: m for m in existing if m.get('tmdb_id') or m.get('plot')}
+            except Exception:
+                pass
+
+        enriched = 0
+        for movie in movies_data:
+            sid = movie.get('stream_id')
+            if sid in existing_info:
+                # Reuse already-fetched info
+                prev = existing_info[sid]
+                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
+                    if prev.get(field):
+                        movie[field] = prev[field]
+            elif not movie.get('tmdb_id') and not movie.get('plot'):
+                try:
+                    r = requests.get(f"{base}&action=get_vod_info&vod_id={sid}", timeout=5)
+                    if r.status_code == 200:
+                        info = r.json().get('info', {})
+                        movie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
+                        movie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
+                        movie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
+                        movie['rating']  = info.get('rating') or info.get('rating_5based') or ''
+                        enriched += 1
+                except Exception:
+                    pass
+
         with open(movies_cache_path, 'w', encoding='utf-8') as f:
             json.dump(movies_data, f)
-        PrintLog("Saved movies cache", "INFO")
+        PrintLog(f"Saved movies cache ({len(movies_data)} items, {enriched} newly enriched)", "INFO")
+    except Exception as e:
+        PrintLog(f"save_vod_cache: failed to save movies cache: {e}", "ERROR")
 
-        # Fetch series categories
-        cat_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series_categories"
-        series_cats = {str(c['category_id']): c['category_name'] for c in requests.get(cat_url).json()}
+    # ── Series ───────────────────────────────────────────────────────────────
+    try:
+        cat_resp = requests.get(f"{base}&action=get_series_categories", timeout=30)
+        cat_resp.raise_for_status()
+        series_cats = {str(c['category_id']): c['category_name'] for c in cat_resp.json()}
+    except Exception as e:
+        PrintLog(f"save_vod_cache: failed to fetch series categories: {e}", "WARNING")
+        series_cats = {}
 
-        # Save series cache with category_name resolved
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series"
-        response = requests.get(api_url)
-        response.raise_for_status()
-        series_data = response.json()
+    try:
+        resp = requests.get(f"{base}&action=get_series", timeout=60)
+        resp.raise_for_status()
+        series_data = resp.json()
         for serie in series_data:
             if not serie.get('category_name'):
                 serie['category_name'] = series_cats.get(str(serie.get('category_id', '')), '')
+
+        # Enrich with per-series info (tmdb_id, plot, rating, fresh cover)
         series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+        existing_info = {}
+        if os.path.exists(series_cache_path):
+            try:
+                existing = json.load(open(series_cache_path, encoding='utf-8'))
+                existing_info = {s['series_id']: s for s in existing if s.get('tmdb_id') or s.get('plot')}
+            except Exception:
+                pass
+
+        enriched = 0
+        for serie in series_data:
+            sid = serie.get('series_id')
+            if sid in existing_info:
+                prev = existing_info[sid]
+                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating', 'cover'):
+                    if prev.get(field):
+                        serie[field] = prev[field]
+            elif not serie.get('tmdb_id') and not serie.get('plot'):
+                try:
+                    r = requests.get(f"{base}&action=get_series_info&series_id={sid}", timeout=5)
+                    if r.status_code == 200:
+                        info = r.json().get('info', {})
+                        serie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
+                        serie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
+                        serie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
+                        serie['rating']  = info.get('rating') or info.get('rating_5based') or ''
+                        # Use fresher cover from info if available
+                        fresh_cover = info.get('cover') or info.get('cover_big') or ''
+                        if fresh_cover:
+                            serie['cover'] = fresh_cover
+                        enriched += 1
+                except Exception:
+                    pass
+
         with open(series_cache_path, 'w', encoding='utf-8') as f:
             json.dump(series_data, f)
-        PrintLog("Saved series cache", "INFO")
-
+        PrintLog(f"Saved series cache ({len(series_data)} items, {enriched} newly enriched)", "INFO")
     except Exception as e:
-        PrintLog(f"Error saving VOD cache: {e}", "ERROR")
+        PrintLog(f"save_vod_cache: failed to save series cache: {e}", "ERROR")
 
 def refresh_jellyfin():
     if get_config_variable(CONFIG_PATH, 'jellyfin_enabled') != "1":
         return
     jellyfin_url = get_config_variable(CONFIG_PATH, 'jellyfin_url')
-    jellyfin_api_key = get_config_variable(CONFIG_PATH, 'jellyfin_api_key')
+    jellyfin_api_key = get_credential('jellyfin_api_key')
     if jellyfin_url and jellyfin_api_key:
         try:
             requests.post(f"{jellyfin_url}/Library/Refresh",
@@ -182,7 +274,7 @@ def scheduled_vod_download():
     refresh_jellyfin()
 
 def scheduled_renew_m3u():
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     original_m3u_path = f'{BASE_DIR}/files/original.m3u'
     download_m3u(m3u_url, original_m3u_path)
     PrintLog(f"Downloaded the M3U file to: {original_m3u_path}", "INFO")
@@ -235,21 +327,44 @@ def update_series_directory(series_dir):
             else:
                 PrintLog(f"No matching series found for directory: {dir_name}", "WARNING")
 
+def normalize_movie_name(name):
+    """Strip year, quality tags, and normalize for matching."""
+    # Remove quality/format suffixes (4K, HDR, BluRay, etc.)
+    name = re.sub(r'\b(4K|HDR|SDR|UHD|BluRay|BDRip|BRRip|WEB-?DL|WEBRip|DVDRip|REMUX|HEVC|x264|x265|H\.?264|H\.?265|DTS|AAC|Atmos)\b.*$', '', name, flags=re.IGNORECASE)
+    # Remove trailing year in parens
+    name = re.sub(r'\s*\(\d{4}\)\s*$', '', name)
+    # Normalize whitespace and case
+    return name.strip().lower()
+
+
 def update_movies_directory(movies_dir):
     movies_list = GetMoviesList()
     overwrite_movies = int(get_config_variable(CONFIG_PATH, 'overwrite_movies'))
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
+    # Build normalized lookup: normalized_name -> movie object
+    normalized_cache = {}
+    for movie in movies_list:
+        key = normalize_movie_name(movie['name'])
+        if key not in normalized_cache:
+            normalized_cache[key] = movie
+
     for root, dirs, files in os.walk(movies_dir):
         for dir_name in dirs:
-            matching_movie = next((movies for movies in movies_list if movies['name'] == dir_name), None)
-            
+            # Try exact match first
+            matching_movie = next((m for m in movies_list if m['name'] == dir_name), None)
+
+            # Fall back to normalized match
+            if not matching_movie:
+                norm_dir = normalize_movie_name(dir_name)
+                matching_movie = normalized_cache.get(norm_dir)
+
             if matching_movie:
-                strm_file_path = os.path.join(movies_dir, f"{matching_movie['name']}", f"{matching_movie['name']}.strm")
+                strm_file_path = os.path.join(movies_dir, dir_name, f"{dir_name}.strm")
                 if not os.path.exists(strm_file_path) or overwrite_movies == 1:
                     PrintLog(f"Adding new file: {strm_file_path}", "NOTICE")
                     strm_content = f"{base_url}/movie/{username}/{password}/{matching_movie['stream_id']}.mkv"
@@ -260,29 +375,27 @@ def update_movies_directory(movies_dir):
 
 
 def get_config_variable(config_path, variable_name):
+    config_variable = None
     try:
         with open(CONFIG_PATH, 'r') as file:
             config_content = file.read()
         config_namespace = {}
         exec(config_content, {}, config_namespace)
         config_variable = config_namespace.get(variable_name)
-
     except Exception as e:
-        flash(f"An error occurred: {e}", "danger")
-
+        logging.error(f"Error reading config variable '{variable_name}': {e}")
     return config_variable
 
 def get_config_array(config_path, array_name):
+    config_variable = None
     try:
         with open(CONFIG_PATH, 'r') as file:
             config_content = file.read()
         config_namespace = {}
         exec(config_content, {}, config_namespace)
         config_variable = config_namespace.get(array_name)
-
     except Exception as e:
-        flash(f"An error occurred: {e}", "danger")
-
+        logging.error(f"Error reading config array '{array_name}': {e}")
     return config_variable
 
 def update_config_variable(config_path, variable_name, new_value):
@@ -330,8 +443,56 @@ def extract_credentials_from_url(m3u_url):
     return None, None
 
 
+# ─── Credential encryption ───────────────────────────────────────────────────
+
+ENCRYPTED_FIELDS = ['url', 'jellyfin_api_key', 'tmdb_api_key']
+ENCRYPTION_PREFIX = 'enc:'
+
+def _get_fernet():
+    secret_key = os.environ.get('SECRET_KEY') or get_config_variable(CONFIG_PATH, 'SECRET_KEY') or 'default-insecure-key'
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret_key.encode()).digest())
+    return Fernet(key)
+
+def encrypt_credential(value):
+    if not value:
+        return value
+    try:
+        f = _get_fernet()
+        return ENCRYPTION_PREFIX + f.encrypt(value.encode()).decode()
+    except Exception as e:
+        logging.error(f"Encryption error: {e}")
+        return value
+
+def decrypt_credential(value):
+    if not value or not value.startswith(ENCRYPTION_PREFIX):
+        return value
+    try:
+        f = _get_fernet()
+        return f.decrypt(value[len(ENCRYPTION_PREFIX):].encode()).decode()
+    except Exception as e:
+        logging.error(f"Decryption error: {e}")
+        return value
+
+def get_credential(key):
+    value = get_config_variable(CONFIG_PATH, key)
+    return decrypt_credential(value)
+
+def set_credential(key, value):
+    encrypted = encrypt_credential(value)
+    update_config_variable(CONFIG_PATH, key, encrypted)
+
+def migrate_credentials():
+    """One-time migration: encrypt any plaintext credential fields."""
+    for field in ENCRYPTED_FIELDS:
+        value = get_config_variable(CONFIG_PATH, field)
+        if value and not value.startswith(ENCRYPTION_PREFIX):
+            logging.info(f"Encrypting credential field: {field}")
+            set_credential(field, value)
+
+
 @app.before_request
 def require_auth():
+    # Always allow static files, healthcheck, m3u, and setup
     if request.path.startswith('/m3u'):
         return
     if request.path.startswith('/get.php'):
@@ -340,6 +501,10 @@ def require_auth():
         return
     if request.path.startswith('/healthcheck'):
         return
+    if request.path.startswith('/setup'):
+        return
+    if not os.path.exists(CONFIG_PATH):
+        return redirect(url_for('setup'))
 
     if not request.path.startswith('/static') and not request.path.startswith('/update_home_data') and not request.method == 'POST':
         if BASE_DIR.endswith('_dev'):
@@ -411,182 +576,193 @@ def get_time_diff(file_path):
 
 @main_bp.route('/update_home_data')
 def update_home_data():
+    current_time = datetime.now()
+
+    original_m3u_path = f'{BASE_DIR}/files/original.m3u'
+    original_m3u_age = get_time_diff(original_m3u_path)
+
+    output = get_config_variable(CONFIG_PATH, 'output') or 'sorted.m3u'
+    sorted_m3u_path = f'{BASE_DIR}/files/{output}'
+    sorted_m3u_age = get_time_diff(sorted_m3u_path)
+
+    next_m3u = "-"
     try:
-        current_time = datetime.now()
-
-        original_m3u_path = f'{BASE_DIR}/files/original.m3u'
-        original_m3u_age = get_time_diff(original_m3u_path)
-
-        output = get_config_variable(CONFIG_PATH, 'output')
-        sorted_m3u_path = f'{BASE_DIR}/files/{output}'
-        sorted_m3u_age = get_time_diff(sorted_m3u_path)
-
-        next_m3u = "-"
         job = scheduler.get_job('M3U Download scheduler')
         if job:
             now = datetime.now(timezone.utc)
-            next_run_time = job.next_run_time
-            remaining_time = next_run_time - now
+            remaining_time = job.next_run_time - now
             total_seconds = int(remaining_time.total_seconds())
             hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
+            minutes, _ = divmod(remainder, 60)
             next_m3u = f"{hours:02d}:{minutes:02d}"
+    except Exception:
+        pass
 
-        next_vod = "-"
+    next_vod = "-"
+    try:
         job = scheduler.get_job('VOD scheduler')
         if job:
             now = datetime.now(timezone.utc)
-            next_run_time = job.next_run_time
-            remaining_time = next_run_time - now
+            remaining_time = job.next_run_time - now
             total_seconds = int(remaining_time.total_seconds())
             hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
+            minutes, _ = divmod(remainder, 60)
             next_vod = f"{hours:02d}:{minutes:02d}"
+    except Exception:
+        pass
 
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
-        username, password = extract_credentials_from_url(m3u_url)
-
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
-        response = requests.get(api_url)
-        user_info = response.json()['user_info']
-
-        exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
-        exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
-
-        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
-        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
-        total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
-        total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
-
-        uptime_duration = current_time - app.app_start_time
-        total_seconds = int(uptime_duration.total_seconds())
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-        internal_ip = get_internal_ip()
-        port_number = get_config_variable(CONFIG_PATH, 'port_number')
-        output = get_config_variable(CONFIG_PATH, 'output')
-
-        if UPDATE_AVAILABLE == 1:
-            version = f"{VERSION} - Please update to {UPDATE_VERSION}"
-        else:
-            version = VERSION
-
-        data = {
-            "update_available": UPDATE_AVAILABLE,
-            "next_m3u": next_m3u,
-            "version": version,
-            "next_vod": next_vod,
-            "original_m3u_age": original_m3u_age,
-            "sorted_m3u_age": sorted_m3u_age,
-            "uptime": uptime_str,
-            "output": output,
-            "internal_ip": internal_ip,
-            "port_number": port_number,
-            "status": user_info['status'],
-            "exp_date": exp_date_readable,
-            "exp_date_days_left": exp_date_days_left,
-            "active_cons": user_info['active_cons'],
-            "is_trial": user_info['is_trial'],
-            "max_connections": user_info['max_connections'],
-            "total_movies": total_movies,
-            "total_series": total_series,
-        }
-        return jsonify(data)
+    # Provider info — optional
+    status = exp_date_readable = is_trial = active_cons = max_connections = None
+    exp_date_days_left = 9999
+    try:
+        m3u_url = get_credential('url')
+        if m3u_url and '://' in m3u_url and '/get.php' in m3u_url:
+            scheme, rest = m3u_url.split('://', 1)
+            domain_with_port, _ = rest.split('/get.php', 1)
+            username, password = extract_credentials_from_url(m3u_url)
+            api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
+            response = requests.get(api_url, timeout=8)
+            user_info = response.json()['user_info']
+            exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
+            exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
+            status = user_info.get('status')
+            is_trial = user_info.get('is_trial')
+            active_cons = user_info.get('active_cons')
+            max_connections = user_info.get('max_connections')
     except Exception as e:
-        return jsonify(error=str(e))
+        logging.warning(f"update_home_data: provider API failed: {e}")
+
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
+    total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
+
+    uptime_duration = current_time - app.app_start_time
+    total_seconds = int(uptime_duration.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    internal_ip = get_internal_ip()
+    port_number = get_config_variable(CONFIG_PATH, 'port_number')
+
+    version = f"{VERSION} - Please update to {UPDATE_VERSION}" if UPDATE_AVAILABLE == 1 else VERSION
+
+    return jsonify(
+        update_available=UPDATE_AVAILABLE,
+        next_m3u=next_m3u,
+        version=version,
+        next_vod=next_vod,
+        original_m3u_age=original_m3u_age,
+        sorted_m3u_age=sorted_m3u_age,
+        uptime=uptime_str,
+        output=output,
+        internal_ip=internal_ip,
+        port_number=port_number,
+        status=status,
+        exp_date=exp_date_readable,
+        exp_date_days_left=exp_date_days_left,
+        active_cons=active_cons,
+        is_trial=is_trial,
+        max_connections=max_connections,
+        total_movies=total_movies,
+        total_series=total_series,
+    )
 
 
 @main_bp.route('/home')
 def home():
+    current_time = datetime.now()
+
+    original_m3u_path = f'{BASE_DIR}/files/original.m3u'
+    original_m3u_age = get_time_diff(original_m3u_path)
+
+    output = get_config_variable(CONFIG_PATH, 'output') or 'sorted.m3u'
+    sorted_m3u_path = f'{BASE_DIR}/files/{output}'
+    sorted_m3u_age = get_time_diff(sorted_m3u_path)
+
+    next_m3u = "-"
     try:
-        current_time = datetime.now()
-
-        original_m3u_path = f'{BASE_DIR}/files/original.m3u'
-        original_m3u_age = get_time_diff(original_m3u_path)
-
-        output = get_config_variable(CONFIG_PATH, 'output')
-        sorted_m3u_path = f'{BASE_DIR}/files/{output}'
-        sorted_m3u_age = get_time_diff(sorted_m3u_path)
-
-        next_m3u = "-"
         job = scheduler.get_job('M3U Download scheduler')
         if job:
             now = datetime.now(timezone.utc)
-            next_run_time = job.next_run_time
-            remaining_time = next_run_time - now
+            remaining_time = job.next_run_time - now
             total_seconds = int(remaining_time.total_seconds())
             hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
+            minutes, _ = divmod(remainder, 60)
             next_m3u = f"{hours:02d}:{minutes:02d}"
+    except Exception:
+        pass
 
-        next_vod = "-"
+    next_vod = "-"
+    try:
         job = scheduler.get_job('VOD scheduler')
         if job:
             now = datetime.now(timezone.utc)
-            next_run_time = job.next_run_time
-            remaining_time = next_run_time - now
+            remaining_time = job.next_run_time - now
             total_seconds = int(remaining_time.total_seconds())
             hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
+            minutes, _ = divmod(remainder, 60)
             next_vod = f"{hours:02d}:{minutes:02d}"
+    except Exception:
+        pass
 
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
-        username, password = extract_credentials_from_url(m3u_url)
-
-        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
-        response = requests.get(api_url)
-        user_info = response.json()['user_info']
-
-        exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
-        exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
-
-        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
-        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
-        total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
-        total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
-
-        uptime_duration = current_time - app.app_start_time
-        total_seconds = int(uptime_duration.total_seconds())
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-        internal_ip = get_internal_ip()
-        port_number = get_config_variable(CONFIG_PATH, 'port_number')
-        output = get_config_variable(CONFIG_PATH, 'output')
-
-        if UPDATE_AVAILABLE == 1:
-            version = f"{VERSION} - Please update to {UPDATE_VERSION}"
-        else:
-            version = VERSION
-
-        return render_template('home.html',
-                               version=version,
-                               update_available=UPDATE_AVAILABLE,
-                               next_m3u=next_m3u,
-                               next_vod=next_vod,
-                               original_m3u_age=original_m3u_age,
-                               sorted_m3u_age=sorted_m3u_age,
-                               uptime=uptime_str,
-                               internal_ip=internal_ip,
-                               port_number=port_number,
-                               output=output,
-                               status=user_info['status'],
-                               exp_date=exp_date_readable,
-                               exp_date_days_left=exp_date_days_left,
-                               is_trial=user_info['is_trial'],
-                               active_cons=user_info['active_cons'],
-                               max_connections=user_info['max_connections'],
-                               total_movies=total_movies,
-                               total_series=total_series)
+    # Provider info — optional, fails gracefully
+    status = exp_date_readable = is_trial = active_cons = max_connections = None
+    exp_date_days_left = 9999
+    try:
+        m3u_url = get_credential('url')
+        if m3u_url and '://' in m3u_url and '/get.php' in m3u_url:
+            scheme, rest = m3u_url.split('://', 1)
+            domain_with_port, _ = rest.split('/get.php', 1)
+            username, password = extract_credentials_from_url(m3u_url)
+            api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
+            response = requests.get(api_url, timeout=8)
+            user_info = response.json()['user_info']
+            exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
+            exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
+            status = user_info.get('status')
+            is_trial = user_info.get('is_trial')
+            active_cons = user_info.get('active_cons')
+            max_connections = user_info.get('max_connections')
     except Exception as e:
-        return str(e)
+        logging.warning(f"Home: provider API failed: {e}")
+
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
+    total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
+
+    uptime_duration = current_time - app.app_start_time
+    total_seconds = int(uptime_duration.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    internal_ip = get_internal_ip()
+    port_number = get_config_variable(CONFIG_PATH, 'port_number')
+
+    version = f"{VERSION} - Please update to {UPDATE_VERSION}" if UPDATE_AVAILABLE == 1 else VERSION
+
+    return render_template('home.html',
+                           version=version,
+                           update_available=UPDATE_AVAILABLE,
+                           next_m3u=next_m3u,
+                           next_vod=next_vod,
+                           original_m3u_age=original_m3u_age,
+                           sorted_m3u_age=sorted_m3u_age,
+                           uptime=uptime_str,
+                           internal_ip=internal_ip,
+                           port_number=port_number,
+                           output=output,
+                           status=status,
+                           exp_date=exp_date_readable,
+                           exp_date_days_left=exp_date_days_left,
+                           is_trial=is_trial,
+                           active_cons=active_cons,
+                           max_connections=max_connections,
+                           total_movies=total_movies,
+                           total_series=total_series)
 
 
 @app.route('/logout')
@@ -597,26 +773,37 @@ def logout():
 
 @app.route('/GetMoviesList')
 def GetMoviesList():
-    movies = []
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
-    
-    scheme, rest = m3u_url.split('://')
-    domain_with_port, _ = rest.split('/get.php')
-    username, password = extract_credentials_from_url(m3u_url)
-    api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
+    """Return movies list — reads from local cache, falls back to live API if cache missing."""
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    if os.path.exists(movies_cache_path):
+        try:
+            with open(movies_cache_path, 'r', encoding='utf-8') as f:
+                movies_data = json.load(f)
+            return [{'name': m['name'], 'stream_id': m['stream_id']} for m in movies_data]
+        except Exception as e:
+            PrintLog(f"GetMoviesList: failed to read cache: {e}", "ERROR")
 
+    # Cache missing — fall back to live API
+    movies = []
     try:
-        response = requests.get(api_url)
+        m3u_url = get_credential('url')
+        if not m3u_url or '://' not in m3u_url or '/get.php' not in m3u_url:
+            return movies
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
+        username, password = extract_credentials_from_url(m3u_url)
+        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
+        response = requests.get(api_url, timeout=30)
         response.raise_for_status()
         movies_data = response.json()
-        movies = [{'name': movie['name'], 'stream_id': movie['stream_id']} for movie in movies_data]
+        movies = [{'name': m['name'], 'stream_id': m['stream_id']} for m in movies_data]
     except Exception as e:
         PrintLog(f"Error fetching movies list: {e}", "ERROR")
     return movies
 
 @app.route('/GetSeriesList')
 def GetSeriesList():
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     scheme, rest = m3u_url.split('://')
     domain_with_port, _ = rest.split('/get.php')
     username, password = extract_credentials_from_url(m3u_url)
@@ -634,7 +821,7 @@ def GetSeriesList():
 
 def DownloadSeries(series_id):
     series_dir = get_config_variable(CONFIG_PATH, 'series_dir')
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series'))
 
@@ -821,7 +1008,7 @@ def series():
         try:
             with open(series_cache_path, 'r', encoding='utf-8') as f:
                 series_data = json.load(f)
-            series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', ''), 'category': s.get('category_name', '')} for s in series_data]
+            series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', ''), 'category': s.get('category_name', ''), 'tmdb_id': s.get('tmdb_id') or s.get('tmdb') or '', 'imdb_id': s.get('imdb_id') or s.get('imdb') or '', 'plot': s.get('plot') or s.get('description') or s.get('overview') or '', 'rating': s.get('rating') or s.get('rating_5based') or ''} for s in series_data]
             categories = sorted(set(s['category'] for s in series if s['category']))
         except Exception as e:
             PrintLog(f"Error reading series cache: {e}", "ERROR")
@@ -845,7 +1032,7 @@ def movies():
         try:
             with open(movies_cache_path, 'r', encoding='utf-8') as f:
                 movies_data = json.load(f)
-            movies = [{'name': m['name'], 'stream_id': m['stream_id'], 'stream_icon': m.get('stream_icon', ''), 'category': m.get('category_name', '')} for m in movies_data]
+            movies = [{'name': m['name'], 'stream_id': m['stream_id'], 'stream_icon': m.get('stream_icon', ''), 'category': m.get('category_name', ''), 'tmdb_id': m.get('tmdb_id') or m.get('tmdb') or '', 'imdb_id': m.get('imdb_id') or m.get('imdb') or '', 'plot': m.get('plot') or m.get('description') or m.get('overview') or '', 'rating': m.get('rating') or m.get('rating_5based') or ''} for m in movies_data]
             categories = sorted(set(m['category'] for m in movies if m['category']))
         except Exception as e:
             PrintLog(f"Error reading movies cache: {e}", "ERROR")
@@ -1008,7 +1195,7 @@ def find_wanted_series_fuzzy(series_dir):
     if wanted_series is None:
         wanted_series = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -1048,7 +1235,7 @@ def find_wanted_series_string(series_dir):
     if wanted_series == None:
         wanted_series = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -1074,7 +1261,7 @@ def find_wanted_movies_fuzzy(movies_dir):
     if wanted_movies is None:
         wanted_movies = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -1087,9 +1274,21 @@ def find_wanted_movies_fuzzy(movies_dir):
         highest_similarity = 0
         most_recent_year = 0
 
+        # Normalize: lowercase, strip punctuation for word matching
+        wanted_clean = re.sub(r'[^\w\s]', ' ', wanted.lower())
+        wanted_words = set(wanted_clean.split())
+
         for movie in movies_list:
             movie_name_stripped, year = strip_year(movie['name'])
-            similarity = fuzz.token_set_ratio(wanted, movie_name_stripped)
+            movie_clean = re.sub(r'[^\w\s]', ' ', movie_name_stripped.lower())
+            movie_words = set(movie_clean.split())
+
+            # All words in the search must appear in the movie name
+            if not wanted_words.issubset(movie_words):
+                continue
+
+            # Use ratio (not token_set) to avoid over-matching substrings
+            similarity = fuzz.token_sort_ratio(wanted, movie_name_stripped)
 
             if similarity >= similarity_threshold:
                 is_new_best = (similarity > highest_similarity or
@@ -1112,9 +1311,9 @@ def find_wanted_movies_fuzzy(movies_dir):
                 PrintLog(f"Created .strm file for {best_match['name']}", "NOTICE")
                 wanted_movies.remove(wanted)
             else:
-                PrintLog("No match found", "WARNING")
+                PrintLog(f"No match found for '{wanted}'", "WARNING")
         else:
-            PrintLog("No match found", "WARNING")
+            PrintLog(f"No match found for '{wanted}'", "WARNING")
 
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
 
@@ -1125,7 +1324,7 @@ def find_wanted_movies_string(movies_dir):
     if wanted_movies == None:
         wanted_movies = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     parsed_url = urlparse(m3u_url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -1159,48 +1358,125 @@ def find_wanted_movies_string(movies_dir):
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
 
 
+
+def _tmdb_lookup(name, media_type, api_key):
+    """Look up tmdb_id and poster via TMDB search API. media_type: 'movie' or 'tv'"""
+    if not api_key or not name:
+        return None, None
+    try:
+        # Strip year from name for better matching
+        clean = re.sub(r'\s*[\(\-]\s*\d{4}\s*[\)\-]?\s*$', '', name).strip()
+        r = requests.get(
+            f'https://api.themoviedb.org/3/search/{media_type}',
+            params={'api_key': api_key, 'query': clean, 'language': 'en-US'},
+            timeout=5
+        )
+        if r.status_code == 200:
+            results = r.json().get('results', [])
+            if results:
+                tmdb_id = results[0].get('id')
+                poster = results[0].get('poster_path')
+                poster_url = f'https://image.tmdb.org/t/p/w500{poster}' if poster else None
+                return str(tmdb_id), poster_url
+    except Exception:
+        pass
+    return None, None
+
 @main_bp.route('/get_vod_info/<int:stream_id>')
 def get_vod_info(stream_id):
+    # Check movies cache first
+    tmdb_id = imdb_id = rating = plot = name = ''
     try:
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
+        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+        if os.path.exists(movies_cache_path):
+            movies_data = json.load(open(movies_cache_path, encoding='utf-8'))
+            movie = next((m for m in movies_data if m.get('stream_id') == stream_id), None)
+            if movie:
+                name = movie.get('name', '')
+                tmdb_id = movie.get('tmdb_id') or ''
+                imdb_id = movie.get('imdb_id') or ''
+                rating  = movie.get('rating') or ''
+                plot    = movie.get('plot') or ''
+                if tmdb_id:
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+    except Exception:
+        pass
+
+    # Fall back to live provider API
+    try:
+        m3u_url = get_credential('url')
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_info&vod_id={stream_id}"
         response = requests.get(api_url, timeout=5)
         response.raise_for_status()
-        data = response.json()
-        info = data.get('info', {})
-        return jsonify({
-            'tmdb_id': info.get('tmdb_id') or info.get('tmdb'),
-            'imdb_id': info.get('imdb_id') or info.get('imdb'),
-            'rating': info.get('rating') or info.get('rating_5based'),
-            'plot': info.get('plot') or info.get('description') or info.get('overview') or '',
-        })
-    except Exception as e:
-        return jsonify({'tmdb_id': None, 'imdb_id': None, 'rating': None, 'plot': '', 'error': str(e)})
+        info = response.json().get('info', {})
+        tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
+        imdb_id = info.get('imdb_id') or info.get('imdb') or imdb_id
+        rating  = info.get('rating') or info.get('rating_5based') or rating
+        plot    = info.get('plot') or info.get('description') or info.get('overview') or plot
+        if not name:
+            name = info.get('name', '')
+    except Exception:
+        pass
+
+    # If still no tmdb_id, try TMDB search by name
+    if not tmdb_id and name:
+        tmdb_api_key = get_credential('tmdb_api_key') or ''
+        tmdb_id, _ = _tmdb_lookup(name, 'movie', tmdb_api_key)
+        tmdb_id = tmdb_id or ''
+
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
 
 
 @main_bp.route('/get_series_info/<int:series_id>')
 def get_series_info_meta(series_id):
+    tmdb_id = imdb_id = rating = plot = name = ''
+
+    # Check series cache first
     try:
-        m3u_url = get_config_variable(CONFIG_PATH, 'url')
-        scheme, rest = m3u_url.split('://')
-        domain_with_port, _ = rest.split('/get.php')
+        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+        if os.path.exists(series_cache_path):
+            series_data = json.load(open(series_cache_path, encoding='utf-8'))
+            serie = next((s for s in series_data if s.get('series_id') == series_id), None)
+            if serie:
+                name    = serie.get('name', '')
+                tmdb_id = serie.get('tmdb_id') or ''
+                imdb_id = serie.get('imdb_id') or ''
+                rating  = serie.get('rating') or ''
+                plot    = serie.get('plot') or ''
+                if tmdb_id:
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+    except Exception:
+        pass
+
+    # Fall back to live provider API
+    try:
+        m3u_url = get_credential('url')
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
         response = requests.get(api_url, timeout=5)
         response.raise_for_status()
-        data = response.json()
-        info = data.get('info', {})
-        return jsonify({
-            'tmdb_id': info.get('tmdb_id') or info.get('tmdb'),
-            'imdb_id': info.get('imdb_id') or info.get('imdb'),
-            'rating': info.get('rating') or info.get('rating_5based'),
-            'plot': info.get('plot') or info.get('description') or info.get('overview') or '',
-        })
-    except Exception as e:
-        return jsonify({'tmdb_id': None, 'imdb_id': None, 'rating': None, 'plot': '', 'error': str(e)})
+        info = response.json().get('info', {})
+        tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
+        imdb_id = info.get('imdb_id') or info.get('imdb') or imdb_id
+        rating  = info.get('rating') or info.get('rating_5based') or rating
+        plot    = info.get('plot') or info.get('description') or info.get('overview') or plot
+        if not name:
+            name = info.get('name', '')
+    except Exception:
+        pass
+
+    # If still no tmdb_id, search TMDB by name
+    if not tmdb_id and name:
+        tmdb_api_key = get_credential('tmdb_api_key') or ''
+        tmdb_id, _ = _tmdb_lookup(name, 'tv', tmdb_api_key)
+        tmdb_id = tmdb_id or ''
+
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
 
 
 @main_bp.route('/check_jellyfin/<string:type>/<path:name>')
@@ -1223,7 +1499,7 @@ def add_movie_to_server():
     movie_name = data['movieName']
     movie_id = data['movieId']
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir')
 
     username, password = extract_credentials_from_url(m3u_url)
@@ -1274,7 +1550,7 @@ def save_channel_selection():
 def get_channels_for_selected_groups(selected_groups):
     all_channels = []
 
-    m3u_url = get_config_variable(CONFIG_PATH, 'url')
+    m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
     if not username or not password:
         raise ValueError("Username or password could not be extracted from the M3U URL.")
@@ -1324,12 +1600,12 @@ def settings():
     
     if request.method == 'POST' and form.validate():
 
-        current_url = get_config_variable(CONFIG_PATH, 'url')
+        current_url = get_credential('url')
         if form.url.data != current_url:
             original_m3u_path = f'{BASE_DIR}/files/original.m3u'
             download_m3u(form.url.data, original_m3u_path)
 
-        update_config_variable(CONFIG_PATH, 'url', form.url.data)
+        set_credential('url', form.url.data)
         update_config_variable(CONFIG_PATH, 'output', form.output.data)
         update_config_variable(CONFIG_PATH, 'maxage_before_download', form.maxage.data)
         update_config_variable(CONFIG_PATH, 'new_group_title', form.new_group_title.data)
@@ -1343,14 +1619,15 @@ def settings():
         update_config_variable(CONFIG_PATH, 'match_type', form.match_type.data)
         update_config_variable(CONFIG_PATH, 'jellyfin_enabled', form.jellyfin_enabled.data)
         update_config_variable(CONFIG_PATH, 'jellyfin_url', form.jellyfin_url.data)
-        update_config_variable(CONFIG_PATH, 'jellyfin_api_key', form.jellyfin_api_key.data)
+        set_credential('jellyfin_api_key', form.jellyfin_api_key.data)
+        set_credential('tmdb_api_key', form.tmdb_api_key.data)
+        update_config_variable(CONFIG_PATH, 'debug', form.debug.data)
 
         job = scheduler.get_job('M3U Download scheduler')
         if job:
             if str(job.trigger.interval) != str(f"{form.maxage.data}:00:00"):
                 scheduler.remove_job(id='M3U Download scheduler')
-                debug = get_config_variable(CONFIG_PATH, 'debug')
-                if debug == "yes":
+                if form.debug.data == "yes":
                     scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', minutes=form.maxage.data)
                 else:
                     scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=form.maxage.data)
@@ -1362,22 +1639,20 @@ def settings():
                 scheduler.remove_job(id='VOD scheduler')
 
         if form.enable_scheduler.data == "1":
-            form.scan_interval.data = form.scan_interval.data
             if job:
                 if str(job.trigger.interval) != str(f"{form.scan_interval.data}:00:00"):
                     scheduler.remove_job(id='VOD scheduler')
                     PrintLog("Enable scheduled task", "INFO")
-            
-                    debug = get_config_variable(CONFIG_PATH, 'debug')
-                    if debug == "yes":
+                    if form.debug.data == "yes":
                         scheduler.add_job(id='VOD scheduler', func=scheduled_vod_download, trigger='interval', minutes=form.scan_interval.data)
                     else:
                         scheduler.add_job(id='VOD scheduler', func=scheduled_vod_download, trigger='interval', hours=form.scan_interval.data)
 
+        flash("Settings saved successfully.", "success")
         return redirect(url_for('main_bp.settings'))
 
     else:
-        form.url.data = get_config_variable(CONFIG_PATH, 'url')
+        form.url.data = get_credential('url')
         form.output.data = get_config_variable(CONFIG_PATH, 'output')
         form.maxage.data = get_config_variable(CONFIG_PATH, 'maxage_before_download')
         form.new_group_title.data = get_config_variable(CONFIG_PATH, 'new_group_title')
@@ -1391,9 +1666,439 @@ def settings():
         form.match_type.data = get_config_variable(CONFIG_PATH, 'match_type')
         form.jellyfin_enabled.data = get_config_variable(CONFIG_PATH, 'jellyfin_enabled') or "0"
         form.jellyfin_url.data = get_config_variable(CONFIG_PATH, 'jellyfin_url')
-        form.jellyfin_api_key.data = get_config_variable(CONFIG_PATH, 'jellyfin_api_key')
+        form.jellyfin_api_key.data = get_credential('jellyfin_api_key')
+        form.tmdb_api_key.data = get_credential('tmdb_api_key')
+        form.debug.data = get_config_variable(CONFIG_PATH, 'debug') or "no"
 
     return render_template('settings.html', form=form)
+
+
+@main_bp.route('/backup_config')
+@admin_required
+def backup_config():
+    return send_from_directory(
+        os.path.dirname(CONFIG_PATH),
+        os.path.basename(CONFIG_PATH),
+        as_attachment=True,
+        download_name='config.py'
+    )
+
+
+@main_bp.route('/restore_config', methods=['POST'])
+@admin_required
+def restore_config():
+    if 'config_file' not in request.files:
+        flash("No file uploaded.", "danger")
+        return redirect(url_for('main_bp.settings'))
+
+    f = request.files['config_file']
+    if not f.filename.endswith('.py'):
+        flash("Invalid file. Please upload a config.py file.", "danger")
+        return redirect(url_for('main_bp.settings'))
+
+    content = f.read().decode('utf-8')
+
+    # Validate required keys exist
+    required_keys = ['url', 'output', 'admin_password', 'playlist_password']
+    config_ns = {}
+    try:
+        exec(content, {}, config_ns)
+    except Exception as e:
+        flash(f"Invalid config file: {e}", "danger")
+        return redirect(url_for('main_bp.settings'))
+
+    missing = [k for k in required_keys if k not in config_ns]
+    if missing:
+        flash(f"Config file is missing required keys: {', '.join(missing)}", "danger")
+        return redirect(url_for('main_bp.settings'))
+
+    # Backup current config before overwriting
+    shutil.copy(CONFIG_PATH, CONFIG_PATH + '.bak')
+
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as cf:
+        cf.write(content)
+
+    # Re-encrypt credentials if they came in plaintext
+    migrate_credentials()
+
+    flash("Config restored successfully. Previous config saved as config.py.bak", "success")
+    return redirect(url_for('main_bp.settings'))
+
+
+@app.route('/setup', methods=['GET', 'POST'])
+def setup():
+    if os.path.exists(CONFIG_PATH):
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        provider_url = request.form.get('provider_url', '').strip()
+        admin_password = request.form.get('admin_password', '').strip()
+        playlist_password = request.form.get('playlist_password', '').strip()
+        movies_dir = request.form.get('movies_dir', '/data/media/movies').strip()
+        series_dir = request.form.get('series_dir', '/data/media/tv').strip()
+
+        if not provider_url or not admin_password or not playlist_password:
+            flash("Provider URL, admin password and playlist password are required.", "danger")
+            return render_template('setup.html')
+
+        # Generate SECRET_KEY
+        secret_key = secrets.token_urlsafe(32)
+
+        # Hash passwords
+        hashed_admin = generate_password_hash(admin_password)
+        hashed_playlist = generate_password_hash(playlist_password)
+
+        # Write config.py from template
+        config_content = f'''# Configuration variables
+url = ""
+output = "sorted.m3u"
+base_dir = "/data/M3Usort"
+maxage_before_download = "4"
+movies_dir = "{movies_dir}"
+series_dir = "{series_dir}"
+admin_password = "{hashed_admin}"
+playlist_password = "{hashed_playlist}"
+port_number = "5050"
+enable_scheduler = "1"
+overwrite_series = "0"
+overwrite_movies = "0"
+scan_interval = "4"
+SECRET_KEY = "{secret_key}"
+debug = "no"
+hide_webserver_logs = "1"
+match_type = "1"
+jellyfin_enabled = "0"
+jellyfin_url = ""
+jellyfin_api_key = ""
+new_group_title = "Custom"
+
+# List of channel groups to whitelist
+desired_group_titles = [
+]
+
+# List of specific target channel names, in the desired order
+target_channel_names = [
+]
+
+wanted_series = [
+]
+wanted_movies = [
+]
+'''
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as cf:
+            cf.write(config_content)
+
+        # Encrypt the provider URL
+        set_credential('url', provider_url)
+
+        # Create files directory
+        files_dir = os.path.join(BASE_DIR, 'files')
+        os.makedirs(files_dir, exist_ok=True)
+
+        flash("Setup complete! Please log in.", "success")
+        return redirect(url_for('login'))
+
+    return render_template('setup.html')
+
+
+@app.route('/setup_restore', methods=['POST'])
+def setup_restore():
+    if os.path.exists(CONFIG_PATH):
+        return redirect(url_for('login'))
+
+    if 'config_file' not in request.files:
+        flash("No file uploaded.", "danger")
+        return redirect(url_for('setup'))
+
+    f = request.files['config_file']
+    if not f.filename.endswith('.py'):
+        flash("Invalid file. Please upload a config.py file.", "danger")
+        return redirect(url_for('setup'))
+
+    content = f.read().decode('utf-8')
+
+    # Validate required keys
+    required_keys = ['url', 'output', 'admin_password', 'playlist_password']
+    config_ns = {}
+    try:
+        exec(content, {}, config_ns)
+    except Exception as e:
+        flash(f"Invalid config file: {e}", "danger")
+        return redirect(url_for('setup'))
+
+    missing = [k for k in required_keys if k not in config_ns]
+    if missing:
+        flash(f"Config file is missing required keys: {', '.join(missing)}", "danger")
+        return redirect(url_for('setup'))
+
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as cf:
+        cf.write(content)
+
+    # Encrypt any plaintext credentials from the restored config
+    migrate_credentials()
+
+    # Create files directory
+    files_dir = os.path.join(BASE_DIR, 'files')
+    os.makedirs(files_dir, exist_ok=True)
+
+    flash("Config restored successfully. Please log in.", "success")
+    return redirect(url_for('login'))
+
+
+@main_bp.route('/jellyfin_library')
+@admin_required
+def jellyfin_library():
+    jellyfin_url = get_config_variable(CONFIG_PATH, 'jellyfin_url') or ''
+    jellyfin_api_key = get_credential('jellyfin_api_key') or ''
+    movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir') or ''
+    series_dir = get_config_variable(CONFIG_PATH, 'series_dir') or ''
+
+    if not jellyfin_url or not jellyfin_api_key:
+        flash("Jellyfin is not configured. Please set the URL and API key in Settings.", "warning")
+        return render_template('jellyfin_library.html', items=[], error=True, jellyfin_url='', jellyfin_api_key='')
+
+    headers = {'X-Emby-Token': jellyfin_api_key, 'Content-Type': 'application/json'}
+    jellyfin_url = jellyfin_url.rstrip('/')
+
+    try:
+        # Users
+        users_resp = requests.get(f'{jellyfin_url}/Users', headers=headers, timeout=10)
+        users_resp.raise_for_status()
+        users = [{'id': u['Id'], 'name': u['Name']} for u in users_resp.json() if not u.get('Policy', {}).get('IsDisabled')]
+        all_user_names = [u['name'] for u in users]
+
+        movies_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
+            'IncludeItemTypes': 'Movie', 'Recursive': 'true',
+            'Fields': 'Path,Overview,ProductionYear,CommunityRating', 'Limit': 5000
+        }, timeout=30)
+        movies_resp.raise_for_status()
+        jf_movies = movies_resp.json().get('Items', [])
+
+        series_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
+            'IncludeItemTypes': 'Series', 'Recursive': 'true',
+            'Fields': 'Path,Overview,ProductionYear,CommunityRating', 'Limit': 5000
+        }, timeout=30)
+        series_resp.raise_for_status()
+        jf_series = series_resp.json().get('Items', [])
+
+        # Watch status: movies use IsPlayed on Movie, series use any watched Episode
+        watched = {}
+        for user in users:
+            try:
+                w = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
+                    'IncludeItemTypes': 'Movie', 'Recursive': 'true',
+                    'IsPlayed': 'true', 'Fields': 'Id', 'Limit': 5000
+                }, timeout=20)
+                w.raise_for_status()
+                for item in w.json().get('Items', []):
+                    watched.setdefault(item['Id'], []).append(user['name'])
+            except Exception:
+                pass
+            try:
+                w = requests.get(f'{jellyfin_url}/Users/{user["id"]}/Items', headers=headers, params={
+                    'IncludeItemTypes': 'Episode', 'Recursive': 'true',
+                    'IsPlayed': 'true', 'Fields': 'SeriesId', 'Limit': 5000
+                }, timeout=20)
+                w.raise_for_status()
+                for ep in w.json().get('Items', []):
+                    sid = ep.get('SeriesId')
+                    if sid and user['name'] not in watched.get(sid, []):
+                        watched.setdefault(sid, []).append(user['name'])
+            except Exception:
+                pass
+
+        items = []
+        for movie in jf_movies:
+            path = movie.get('Path', '')
+            in_m3usort = path.endswith('.strm')
+            items.append({
+                'id': movie['Id'],
+                'name': movie['Name'],
+                'type': 'Movie',
+                'year': movie.get('ProductionYear', ''),
+                'rating': movie.get('CommunityRating', ''),
+                'overview': movie.get('Overview', ''),
+                'path': path,
+                'in_m3usort': in_m3usort,
+                'watched_by': watched.get(movie['Id'], []),
+                'all_users': all_user_names,
+            })
+
+        # For series, fetch one episode per series to check file extension (.strm = M3Usort)
+        # Use thread pool for parallel requests — much faster than sequential
+        import time as _time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        _cache_key = jellyfin_url
+        _now = _time.time()
+        if _cache_key in _jf_library_cache:
+            _ts, series_is_strm = _jf_library_cache[_cache_key]
+            if _now - _ts > _JF_LIBRARY_CACHE_TTL:
+                series_is_strm = None  # expired
+        else:
+            series_is_strm = None
+
+        if series_is_strm is None:
+            series_is_strm = {}
+            def _check_strm(serie):
+                try:
+                    r = requests.get(f'{jellyfin_url}/Shows/{serie["Id"]}/Episodes', headers=headers,
+                                     params={'Fields': 'Path', 'Limit': 1}, timeout=8)
+                    if r.status_code == 200:
+                        eps = r.json().get('Items', [])
+                        if eps:
+                            return serie['Id'], eps[0].get('Path', '').endswith('.strm')
+                except Exception:
+                    pass
+                return serie['Id'], False
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                for sid, is_strm in pool.map(_check_strm, jf_series):
+                    series_is_strm[sid] = is_strm
+            _jf_library_cache[_cache_key] = (_now, series_is_strm)
+
+        for serie in jf_series:
+            path = serie.get('Path', '')
+            in_m3usort = series_is_strm.get(serie['Id'], False)
+            items.append({
+                'id': serie['Id'],
+                'name': serie['Name'],
+                'type': 'Series',
+                'year': serie.get('ProductionYear', ''),
+                'rating': serie.get('CommunityRating', ''),
+                'overview': serie.get('Overview', ''),
+                'path': path,
+                'in_m3usort': in_m3usort,
+                'watched_by': watched.get(serie['Id'], []),
+                'all_users': all_user_names,
+            })
+
+        items.sort(key=lambda x: x['name'].lower())
+
+    except Exception as e:
+        flash(f"Error connecting to Jellyfin: {e}", "danger")
+        return render_template('jellyfin_library.html', items=[], error=True, jellyfin_url='', jellyfin_api_key='')
+
+    return render_template('jellyfin_library.html', items=items, error=False, jellyfin_url=jellyfin_url, jellyfin_api_key=jellyfin_api_key)
+
+
+@main_bp.route('/jellyfin_library/refresh')
+@admin_required
+def jellyfin_library_refresh():
+    _jf_library_cache.clear()
+    _seasons_cache.clear()
+    return redirect(url_for('main_bp.jellyfin_library'))
+
+
+_seasons_cache = {}  # {item_id: (timestamp, data)}
+_SEASONS_CACHE_TTL = 300  # 5 minutes
+_jf_library_cache = {}   # {key: (timestamp, items)}
+_JF_LIBRARY_CACHE_TTL = 300  # 5 minutes
+
+@main_bp.route('/jellyfin_seasons/<string:item_id>')
+@admin_required
+def jellyfin_seasons(item_id):
+    """Return seasons and episodes for a series item, with short-lived cache."""
+    import time
+    now = time.time()
+
+    # Return cached result if still fresh
+    if item_id in _seasons_cache:
+        ts, cached = _seasons_cache[item_id]
+        if now - ts < _SEASONS_CACHE_TTL:
+            return jsonify(cached)
+
+    jellyfin_url = (get_config_variable(CONFIG_PATH, 'jellyfin_url') or '').rstrip('/')
+    jellyfin_api_key = get_credential('jellyfin_api_key') or ''
+    headers = {'X-Emby-Token': jellyfin_api_key}
+
+    try:
+        # Fetch seasons
+        seasons_resp = requests.get(f'{jellyfin_url}/Shows/{item_id}/Seasons', headers=headers,
+                                    params={'Fields': 'Path,IndexNumber'}, timeout=15)
+        seasons_resp.raise_for_status()
+        seasons_raw = seasons_resp.json().get('Items', [])
+
+        # Fetch ALL episodes in one request using SeriesId
+        eps_resp = requests.get(f'{jellyfin_url}/Shows/{item_id}/Episodes', headers=headers,
+                                params={'Fields': 'Path,Overview,IndexNumber,ParentIndexNumber',
+                                        'Limit': 2000}, timeout=20)
+        eps_resp.raise_for_status()
+        all_episodes = eps_resp.json().get('Items', [])
+
+        # Group episodes by season id
+        # Jellyfin episodes include SeasonId directly
+        eps_by_season = {}
+        for ep in all_episodes:
+            sid = ep.get('SeasonId') or ep.get('ParentId', '')
+            if sid:
+                eps_by_season.setdefault(sid, []).append({
+                    'id': ep['Id'],
+                    'name': ep.get('Name', ''),
+                    'index': ep.get('IndexNumber', ''),
+                    'path': ep.get('Path', ''),
+                })
+
+        seasons = []
+        for s in seasons_raw:
+            sid = s['Id']
+            episodes = eps_by_season.get(sid, [])
+            # Sort by episode index
+            episodes.sort(key=lambda e: (e['index'] if isinstance(e['index'], int) else 9999))
+            seasons.append({
+                'id': sid,
+                'name': s.get('Name') or f"Season {s.get('IndexNumber', '')}",
+                'index': s.get('IndexNumber', 0),
+                'episode_count': len(episodes),
+                'episodes': episodes,
+            })
+
+        result = {'success': True, 'seasons': seasons}
+        _seasons_cache[item_id] = (now, result)
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@main_bp.route('/jellyfin_remove', methods=['POST'])
+@admin_required
+def jellyfin_remove():
+    data = request.get_json()
+    item_id = data.get('item_id')
+    item_path = data.get('item_path')
+    item_type = data.get('item_type')
+
+    jellyfin_url = (get_config_variable(CONFIG_PATH, 'jellyfin_url') or '').rstrip('/')
+    jellyfin_api_key = get_credential('jellyfin_api_key') or ''
+    headers = {'X-Emby-Token': jellyfin_api_key}
+
+    errors = []
+
+    # Delete from Jellyfin
+    try:
+        r = requests.delete(f'{jellyfin_url}/Items/{item_id}', headers=headers, timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        errors.append(f"Jellyfin delete failed: {e}")
+
+    # Delete strm file(s) from disk
+    try:
+        if item_path and os.path.exists(item_path):
+            if item_type == 'Movie':
+                shutil.rmtree(os.path.dirname(item_path), ignore_errors=True)
+            else:
+                shutil.rmtree(item_path, ignore_errors=True)
+    except Exception as e:
+        errors.append(f"File delete failed: {e}")
+
+    # Invalidate seasons cache for this item
+    _seasons_cache.pop(item_id, None)
+    _jf_library_cache.clear()
+
+    if errors:
+        return jsonify({'success': False, 'error': '; '.join(errors)}), 500
+
+    return jsonify({'success': True})
 
 
 @main_bp.route('/groups')
@@ -1554,6 +2259,83 @@ def json_flash(message, message_type):
     }
     return json.dumps(data)
 
+
+
+@main_bp.route('/files')
+@admin_required
+def file_browser():
+    movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir') or ''
+    series_dir = get_config_variable(CONFIG_PATH, 'series_dir') or ''
+    return render_template('file_browser.html', movies_dir=movies_dir, series_dir=series_dir)
+
+
+@main_bp.route('/files/list')
+@admin_required
+def file_browser_list():
+    """Return directory contents as JSON. Restricted to allowed roots."""
+    movies_dir = (get_config_variable(CONFIG_PATH, 'movies_dir') or '').rstrip('/')
+    series_dir = (get_config_variable(CONFIG_PATH, 'series_dir') or '').rstrip('/')
+    allowed_roots = [r for r in [movies_dir, series_dir] if r]
+
+    path = request.args.get('path', '').rstrip('/')
+    if not path:
+        # Return the root dirs themselves
+        roots = []
+        for r in allowed_roots:
+            roots.append({'name': r.split('/')[-1], 'path': r, 'type': 'dir', 'full_path': r})
+        return jsonify({'items': roots, 'path': ''})
+
+    # Security: must be under an allowed root
+    abs_path = os.path.realpath(path)
+    if not any(abs_path.startswith(os.path.realpath(r)) for r in allowed_roots):
+        return jsonify({'error': 'Access denied'}), 403
+
+    if not os.path.isdir(abs_path):
+        return jsonify({'error': 'Not a directory'}), 400
+
+    items = []
+    try:
+        for entry in sorted(os.scandir(abs_path), key=lambda e: (not e.is_dir(), e.name.lower())):
+            stat = entry.stat()
+            item = {
+                'name': entry.name,
+                'path': entry.path,
+                'type': 'dir' if entry.is_dir() else 'file',
+                'size': stat.st_size if entry.is_file() else None,
+                'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M'),
+            }
+            if entry.is_file():
+                item['ext'] = entry.name.rsplit('.', 1)[-1].lower() if '.' in entry.name else ''
+            items.append(item)
+    except PermissionError:
+        return jsonify({'error': 'Permission denied'}), 403
+
+    return jsonify({'items': items, 'path': abs_path})
+
+
+@main_bp.route('/files/delete', methods=['POST'])
+@admin_required
+def file_browser_delete():
+    movies_dir = (get_config_variable(CONFIG_PATH, 'movies_dir') or '').rstrip('/')
+    series_dir = (get_config_variable(CONFIG_PATH, 'series_dir') or '').rstrip('/')
+    allowed_roots = [r for r in [movies_dir, series_dir] if r]
+
+    data = request.get_json()
+    path = data.get('path', '')
+    abs_path = os.path.realpath(path)
+
+    if not any(abs_path.startswith(os.path.realpath(r)) for r in allowed_roots):
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+
+    try:
+        if os.path.isdir(abs_path):
+            shutil.rmtree(abs_path)
+        else:
+            os.remove(abs_path)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @main_bp.route('/log')
 def log():
     hide_webserver_logs = get_config_variable(CONFIG_PATH, 'hide_webserver_logs')
@@ -1591,21 +2373,23 @@ def log():
     
     return render_template('log.html', log_entries=log_entries, current_page=page, total_pages=total_pages)
 
-def extract_credentials_from_url(m3u_url):
-    match = re.search(r'username=([^&]+)&password=([^&]+)', m3u_url)
-    if match:
-        return match.groups()
-    return None, None
-
 def is_cache_valid():
     if not GROUPS_CACHE['last_updated']:
         return False
     return datetime.now() - GROUPS_CACHE['last_updated'] < timedelta(seconds=CACHE_DURATION)
 
 def fetch_channel_groups(m3u_path):
-    """Fetch channel groups using the ipytv library."""
-    original_playlist = playlist.loadf(m3u_path)
-    group_titles = set(channel.attributes.get('group-title', 'No Group Title') for channel in original_playlist)
+    """Fetch channel groups by scanning M3U directly — much faster than ipytv for large files."""
+    group_titles = set()
+    try:
+        with open(m3u_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if line.startswith('#EXTINF'):
+                    m = re.search(r'group-title="([^"]*)"', line)
+                    if m:
+                        group_titles.add(m.group(1) or 'No Group Title')
+    except Exception as e:
+        PrintLog(f"Error reading M3U groups: {e}", "ERROR")
     return sorted(group_titles)
 
 def init():
@@ -1616,6 +2400,11 @@ def init():
 
 def startup_delayed():
     sleep(1)
+
+    if not os.path.exists(CONFIG_PATH):
+        PrintLog("No config.py found — skipping startup tasks.", "WARNING")
+        return
+
     internal_ip = get_internal_ip()
     port_number = get_config_variable(CONFIG_PATH, 'port_number')
     max_age_before_download = get_config_variable(CONFIG_PATH, 'maxage_before_download')
@@ -1628,7 +2417,7 @@ def startup_delayed():
             if response.status_code == 200:
                 PrintLog("Server is up and running.", "INFO")
 
-                m3u_url = get_config_variable(CONFIG_PATH, 'url')
+                m3u_url = get_credential('url')
                 maxage_before_download = int(get_config_variable(CONFIG_PATH, 'maxage_before_download'))
                 original_m3u_path = f'{BASE_DIR}/files/original.m3u'
                 if is_download_needed(original_m3u_path, maxage_before_download):
@@ -1645,7 +2434,7 @@ def startup_delayed():
                 else:
                     scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=max_age_before_download)
 
-                m3u_url = get_config_variable(CONFIG_PATH, 'url')
+                m3u_url = get_credential('url')
                 enable_scheduler = get_config_variable(CONFIG_PATH, 'enable_scheduler')
 
                 if enable_scheduler == "1":
@@ -1669,19 +2458,33 @@ def startup_delayed():
 def startup_instant():
     global MUST_CHANGE_PW
 
-    current_secret_key = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
-    if current_secret_key == "ChangeMe!":
-        PrintLog("Updating SECRET_KEY . . .", "INFO")
-        new_secret_key = secrets.token_urlsafe(16)
-        update_config_variable(CONFIG_PATH, 'SECRET_KEY', new_secret_key)
-        app.config['SECRET_KEY'] = new_secret_key
+    if not os.path.exists(CONFIG_PATH):
+        PrintLog("No config.py found — setup wizard will be shown.", "WARNING")
+        return
 
-    current_url = get_config_variable(CONFIG_PATH, 'url')
-    if current_url == "":
+    # Set SECRET_KEY from env var if available, otherwise fall back to config
+    env_secret = os.environ.get('SECRET_KEY')
+    if env_secret:
+        app.config['SECRET_KEY'] = env_secret
+    else:
+        config_secret = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
+        if config_secret and config_secret != "ChangeMe!":
+            app.config['SECRET_KEY'] = config_secret
+        else:
+            new_secret_key = secrets.token_urlsafe(32)
+            update_config_variable(CONFIG_PATH, 'SECRET_KEY', new_secret_key)
+            app.config['SECRET_KEY'] = new_secret_key
+            PrintLog("Generated new SECRET_KEY and saved to config.", "INFO")
+
+    # Migrate any plaintext credentials to encrypted
+    migrate_credentials()
+
+    current_url = get_credential('url')
+    if not current_url:
         internal_ip = get_internal_ip()
         port_number = get_config_variable(CONFIG_PATH, 'port_number')
         new_url = "http://" + internal_ip + ":" + port_number + "/get.php?username=123&password=456&output=mpegts&type=m3u_plus"
-        update_config_variable(CONFIG_PATH, 'url', new_url)
+        set_credential('url', new_url)
 
     files_dir = f'{BASE_DIR}/files'
     if not os.path.exists(files_dir):

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Setup M3Usort</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="//fonts.googleapis.com/css?family=Raleway:400,300,600" rel="stylesheet" type="text/css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='normalize.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='skeleton-main.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='skeleton-dark.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='extra.css') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+</head>
+<body>
+<div class="container" style="max-width: 600px; margin-top: 4rem;">
+    <h4>Setup M3Usort</h4>
+    <p style="color: #aaa;">Welcome! Fill in the details below to get started. You can change everything later in Settings.</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    {% for category, message in messages %}
+    <div class="flash-message {{ category }}">{{ message }}</div>
+    {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    <form method="POST" action="{{ url_for('setup') }}">
+
+        <hr>
+        <h5>Provider</h5>
+        <label for="provider_url">Provider M3U URL</label>
+        <input class="u-full-width" type="text" id="provider_url" name="provider_url"
+            placeholder="http://provider.com:8080/get.php?username=xxx&password=yyy&type=m3u_plus" required>
+        <small style="color:#aaa;">Your IPTV provider URL — stored encrypted.</small>
+
+        <hr>
+        <h5>Passwords</h5>
+        <div class="row">
+            <div class="six columns">
+                <label for="admin_password">Admin Password</label>
+                <input class="u-full-width" type="password" id="admin_password" name="admin_password"
+                    placeholder="Choose a strong password" required>
+                <small style="color:#aaa;">Used to log into M3Usort.</small>
+            </div>
+            <div class="six columns">
+                <label for="playlist_password">Playlist Password</label>
+                <input class="u-full-width" type="password" id="playlist_password" name="playlist_password"
+                    placeholder="Choose a strong password" required>
+                <small style="color:#aaa;">Used to access your M3U playlist URL.</small>
+            </div>
+        </div>
+
+        <hr>
+        <h5>Media directories</h5>
+        <div class="row">
+            <div class="six columns">
+                <label for="movies_dir">Movies Directory</label>
+                <input class="u-full-width" type="text" id="movies_dir" name="movies_dir" value="/data/media/movies">
+            </div>
+            <div class="six columns">
+                <label for="series_dir">Series Directory</label>
+                <input class="u-full-width" type="text" id="series_dir" name="series_dir" value="/data/media/tv">
+            </div>
+        </div>
+
+        <input type="submit" value="Complete Setup" class="button-primary" style="margin-top: 1.5rem;">
+    </form>
+
+    <hr>
+    <h5>Restore from backup</h5>
+    <p style="color: #aaa; font-size: 0.9rem;">Already have a config backup? Upload it to skip setup entirely.</p>
+    <form method="POST" action="{{ url_for('setup_restore') }}" enctype="multipart/form-data">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input type="file" name="config_file" accept=".py" required style="color:#ccc;">
+            <button type="submit" class="button">&#11014; Restore config</button>
+        </div>
+    </form>
+</div>
+</body>
+</html>

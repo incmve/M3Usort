@@ -20,11 +20,11 @@ services:
       - /data/media/tv:/data/media/tv
     restart: always
     environment:
-      - IN_DOCKER=true
-      - PUID=0
-      - PGID=0
-      - TZ=Europe/Amsterdam
-	  - HOST_IP=192.168.0.x
+      - PUID=${PUID:-0}
+      - PGID=${PGID:-0}
+      - HOST_IP=${HOST_IP}
+      - TZ=${TZ}
+      - SECRET_KEY=${SECRET_KEY:-ChangeMe!}
     ports:
       - 5050:5050
 networks: {}
@@ -35,11 +35,11 @@ docker run -d \
   --name m3usort \
   --restart always \
   -p 5050:5050 \
-  -e IN_DOCKER=true \
   -e PUID=0 \
   -e PGID=0 \
   -e TZ=Europe/Amsterdam \
-  -e - HOST_IP=192.168.0.x \
+  -e HOST_IP=192.168.0.x \
+  -e SECRET_KEY=ChangeMe! \
   -v /opt/stacks/m3usort:/data/M3Usort \
   -v /data/media/movies:/data/media/movies \
   -v /data/media/tv:/data/media/tv \
@@ -68,7 +68,7 @@ Here you can change all the settings:
 - Enable Jellyfin library refresh on VOD or TvShow fetch.
 
 ### Admin -> Security
-Here you can change the password for the admin and for downloading the playlists. It is strongly advised to change this after installation.
+Here you can change the password for the admin and for downloading the playlists. On a fresh install, passwords are set via the setup wizard on first run.
 
 ### Admin -> Log
 Here you can view and search the logfile. Searching only works for the current page you are viewing. The logfile is located in M3USort/logs/M3USort.log
@@ -108,7 +108,7 @@ Take a wild guess...
 
 ## Additional Notes
 
-- For URLs with special characters (e.g., "&", "?"), ensure they are correctly quoted in `config.py` to avoid parsing issues.
+- For URLs with special characters (e.g., "&", "?"), ensure they are correctly quoted when entering them via the setup wizard or Settings page to avoid parsing issues.
 - The `Requests` library is used for downloading the playlist, and `IPyTV` for parsing and generating M3U files.
 
 ---

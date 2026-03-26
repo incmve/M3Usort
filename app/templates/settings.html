@@ -1,104 +1,90 @@
 {% extends 'layout.html' %}
-
 {% block content %}
-<div class="container">
-    <h4>Settings</h4>
-    <div class="row">
-        <div class="twelve columns">
-            <form method="POST">
-                {{ form.hidden_tag() }}
-                <div class="row">
-                    <div class="six columns">
-                        <label for="url">{{ form.url.label }}</label>
-                        {{ form.url(class_="u-full-width") }}
-                    </div>
-                    <div class="six columns">
-                        <label for="output">{{ form.output.label }}</label>
-                        {{ form.output(class_="u-full-width") }}
-                    </div>
+<div class="topbar">
+    <span class="topbar-title">Settings</span>
+</div>
+<div class="page-content">
+    <form method="POST">
+        {{ form.hidden_tag() }}
+        <div class="settings-section">
+            <div class="settings-section-title">Provider</div>
+            <div class="settings-section-body">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+                <div><label>{{ form.url.label }}</label>{{ form.url(class_="filter-input", style="width:100%") }}</div>
+                <div><label>{{ form.output.label }}</label>{{ form.output(class_="filter-input", style="width:100%") }}</div>
+            </div>
+            </div>
+        </div>
+        <div class="settings-section">
+            <div class="settings-section-title">Scheduler</div>
+            <div class="settings-section-body">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:14px;">
+                <div><label>{{ form.maxage.label }}</label>{{ form.maxage(class_="filter-input", style="width:100%") }}</div>
+                <div><label>{{ form.enable_scheduler.label }}</label>{{ form.enable_scheduler(class_="filter-select", style="width:100%") }}</div>
+                <div><label>{{ form.scan_interval.label }}</label>{{ form.scan_interval(class_="filter-input", style="width:100%") }}</div>
+                <div><label>{{ form.debug.label }}</label>{{ form.debug(class_="filter-select", style="width:100%") }}</div>
+            </div>
+            </div>
+        </div>
+        <div class="settings-section">
+            <div class="settings-section-title">Media directories</div>
+            <div class="settings-section-body">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:14px;">
+                <div><label>{{ form.series_dir.label }}</label>{{ form.series_dir(class_="filter-input", style="width:100%") }}</div>
+                <div><label>{{ form.overwrite_series.label }}</label>{{ form.overwrite_series(class_="filter-select", style="width:100%") }}</div>
+                <div><label>{{ form.movies_dir.label }}</label>{{ form.movies_dir(class_="filter-input", style="width:100%") }}</div>
+                <div><label>{{ form.overwrite_movies.label }}</label>{{ form.overwrite_movies(class_="filter-select", style="width:100%") }}</div>
+            </div>
+            </div>
+        </div>
+        <div class="settings-section">
+            <div class="settings-section-title">Playlist</div>
+            <div class="settings-section-body">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;">
+                <div><label>{{ form.new_group_title.label }}</label>{{ form.new_group_title(class_="filter-input", style="width:100%") }}</div>
+                <div><label>{{ form.match_type.label }}</label>{{ form.match_type(class_="filter-select", style="width:100%") }}</div>
+                <div><label>{{ form.hide_webserver_logs.label }}</label>{{ form.hide_webserver_logs(class_="filter-select", style="width:100%") }}</div>
+            </div>
+            </div>
+        </div>
+        <div class="settings-section">
+            <div class="settings-section-title">Jellyfin</div>
+            <div class="settings-section-body">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;">
+                <div><label>{{ form.jellyfin_enabled.label }}</label>{{ form.jellyfin_enabled(class_="filter-select", style="width:100%") }}</div>
+                <div><label>{{ form.jellyfin_url.label }}</label>{{ form.jellyfin_url(class_="filter-input", style="width:100%", placeholder="http://jellyfin:8096") }}</div>
+                <div><label>{{ form.jellyfin_api_key.label }}</label>{{ form.jellyfin_api_key(class_="filter-input", style="width:100%", placeholder="API key") }}</div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">TMDB</div>
+            <div class="settings-section-body">
+                <div style="font-size:12px; color:#555; margin-bottom:12px;">
+                    Used to find direct movie/series links and resolve missing posters.
+                    Get a free API key at <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:#4aadcf;">themoviedb.org</a>.
                 </div>
+                <div><label>{{ form.tmdb_api_key.label }}</label>{{ form.tmdb_api_key(class_="filter-input", style="width:100%", placeholder="TMDB API key (v3 auth)") }}</div>
+            </div>
+            </div>
+        </div>
+        <button type="submit" name="submit" class="button button-primary">Save Settings</button>
+    </form>
 
-                <div class="row">
-                    <div class="six columns">
-                        <label for="maxage">{{ form.maxage.label }}</label>
-                        {{ form.maxage(class_="u-full-width") }}
-                    </div>
-                    <div class="six columns">
-                        <label for="newGroupTitle">{{ form.new_group_title.label }}</label>
-                        {{ form.new_group_title(class_="u-full-width") }}
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="six columns">
-                        <label for="EnableScheduler">{{ form.enable_scheduler.label }}</label>
-                        {{ form.enable_scheduler(class_="u-full-width") }}
-                    </div>
-                    <div class="six columns">
-                        <label for="ScanInterval">{{ form.scan_interval.label }}</label>
-                        {{ form.scan_interval(class_="u-full-width") }}
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="six columns">
-                        <label for="HideWebserverLogs">{{ form.hide_webserver_logs.label }}</label>
-                        {{ form.hide_webserver_logs(class_="u-full-width") }}
-                    </div>
-                </div>
-
-                <hr>
-
-                <div class="row">
-                    <div class="six columns">
-                        <label for="seriesDir">{{ form.series_dir.label }}</label>
-                        {{ form.series_dir(class_="u-full-width") }}
-                    </div>
-                    <div class="six columns">
-                        <label for="OverwriteSeries">{{ form.overwrite_series.label }}</label>
-                        {{ form.overwrite_series(class_="u-full-width") }}
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="six columns">
-                        <label for="moviesDir">{{ form.movies_dir.label }}</label>
-                        {{ form.movies_dir(class_="u-full-width") }}
-                    </div>
-                    <div class="six columns">
-                        <label for="OverwriteMovies">{{ form.overwrite_movies.label }}</label>
-                        {{ form.overwrite_movies(class_="u-full-width") }}
-                    </div>
-                </div>
-                <div class="row">
-                    <div class="six columns">
-                        <label for="moviesDir">{{ form.match_type.label }}</label>
-                        {{ form.match_type(class_="u-full-width") }}
-                    </div>
-                </div>
-
-                <hr>
-
-                <div class="row">
-                    <div class="six columns">
-                        <label for="jellyfin_enabled">{{ form.jellyfin_enabled.label }}</label>
-                        {{ form.jellyfin_enabled(class_="u-full-width") }}
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="six columns">
-                        <label for="jellyfin_url">{{ form.jellyfin_url.label }}</label>
-                        {{ form.jellyfin_url(class_="u-full-width", placeholder="http://jellyfin:8096") }}
-                    </div>
-                    <div class="six columns">
-                        <label for="jellyfin_api_key">{{ form.jellyfin_api_key.label }}</label>
-                        {{ form.jellyfin_api_key(class_="u-full-width", placeholder="Your Jellyfin API key") }}
-                    </div>
-                </div>
-
-                <input type="submit" name="submit" value="Save" class="button-primary" style="margin-top: 1rem;">
-            </form>
+    <div class="settings-section" style="margin-top:20px;">
+        <div class="settings-section-title">Backup &amp; Restore</div>
+            <div class="settings-section-body">
+        <p style="color:#444; font-size:13px; margin-bottom:14px;">Credentials are encrypted using the <code>SECRET_KEY</code> from your <code>.env</code> file — keep it consistent across restores.</p>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <a href="{{ url_for('main_bp.backup_config') }}" class="button">↓ Download config</a>
+            <label class="button" style="cursor:pointer; margin:0; line-height:34px; height:34px;">
+                ↑ Restore config
+                <form id="restore-form" method="POST" action="{{ url_for('main_bp.restore_config') }}" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ form.csrf_token._value() }}">
+                    <input type="file" name="config_file" accept=".py" required style="display:none;" onchange="document.getElementById('restore-form').submit();">
+                </form>
+            </label>
+            </div>
         </div>
     </div>
 </div>

@@ -1,62 +1,117 @@
-<!-- nav.html -->
-<nav class="navbar fixed-top">
-  <!--  <div class="container"> -->
-  <ul class="navbar-list">
+<nav class="sidebar">
+    <div class="sidebar-logo">
+        <div class="sidebar-logo-name">M3Usort</div>
+        <div class="sidebar-logo-sub">IPTV Manager</div>
+    </div>
 
-    <li class="navbar-item">
-      <a href="{{ url_for('main_bp.home') }}">Home</a>
-    </li>
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">General</div>
+        <a href="{{ url_for('main_bp.home') }}" class="sidebar-item {% if request.endpoint == 'main_bp.home' %}active{% endif %}">
+            <span class="si-icon">⌂</span> Dashboard
+        </a>
+    </div>
 
     {% if is_admin %}
-    <li class="navbar-item dropdown">
-      <a href="javascript:void(0)" class="dropbtn">Admin</a>
-      <div class="dropdown-content">
-        <a href="{{ url_for('main_bp.settings') }}">Settings</a>
-        <a href="{{ url_for('main_bp.security') }}">Security</a>
-        <a href="{{ url_for('main_bp.log') }}">Log</a>
-      </div>
-    </li>
-
-    <li class="navbar-item dropdown">
-      <a href="javascript:void(0)" class="dropbtn">Groups</a>
-      <div class="dropdown-content">
-        <a href="{{ url_for('main_bp.groups') }}">Add groups</a>
-        <a href="{{ url_for('main_bp.reorder_groups') }}">Sort groups</a>
-      </div>
-    </li>
-
-    <li class="navbar-item dropdown">
-      <a href="javascript:void(0)" class="dropbtn">Channels</a>
-      <div class="dropdown-content">
-        <a href="{{ url_for('main_bp.channel_selection') }}">Add channel groups</a>
-        <a href="{{ url_for('main_bp.reorder_channels') }}">Sort channels</a>
-        <a href=# id="rebuild-link">Rebuild M3U</a>
-      </div>
-    </li>
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Playlist</div>
+        <a href="{{ url_for('main_bp.groups') }}" class="sidebar-item {% if request.endpoint == 'main_bp.groups' %}active{% endif %}">
+            <span class="si-icon">⊞</span> Add Groups
+        </a>
+        <a href="{{ url_for('main_bp.reorder_groups') }}" class="sidebar-item {% if request.endpoint == 'main_bp.reorder_groups' %}active{% endif %}">
+            <span class="si-icon">↕</span> Sort Groups
+        </a>
+        <a href="{{ url_for('main_bp.channel_selection') }}" class="sidebar-item {% if request.endpoint == 'main_bp.channel_selection' %}active{% endif %}">
+            <span class="si-icon">☰</span> Add Channels
+        </a>
+        <a href="{{ url_for('main_bp.reorder_channels') }}" class="sidebar-item {% if request.endpoint == 'main_bp.reorder_channels' %}active{% endif %}">
+            <span class="si-icon">↕</span> Sort Channels
+        </a>
+        <a href="#" id="rebuild-link" class="sidebar-item">
+            <span class="si-icon">⟳</span> Rebuild M3U
+        </a>
+    </div>
     {% endif %}
 
-    <li class="navbar-item dropdown">
-      <a href="javascript:void(0)" class="dropbtn">VOD</a>
-      <div class="dropdown-content">
-        <a href="{{ url_for('main_bp.new_today') }}">New this week</a>
-        <a href="{{ url_for('main_bp.movies') }}">Movies</a>
-        <a href="{{ url_for('main_bp.series') }}">Series</a>
-        <a href=# id="download-link">Start download</a>
-      </div>
-    </li>
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">VOD</div>
+        <a href="{{ url_for('main_bp.new_today') }}" class="sidebar-item {% if request.endpoint == 'main_bp.new_today' %}active{% endif %}">
+            <span class="si-icon">★</span> New this week
+        </a>
+        <a href="{{ url_for('main_bp.movies') }}" class="sidebar-item {% if request.endpoint == 'main_bp.movies' %}active{% endif %}">
+            <span class="si-icon">🎬</span> Movies
+        </a>
+        <a href="{{ url_for('main_bp.series') }}" class="sidebar-item {% if request.endpoint == 'main_bp.series' %}active{% endif %}">
+            <span class="si-icon">📺</span> Series
+        </a>
+        {% if is_admin %}
+        <a href="{{ url_for('main_bp.jellyfin_library') }}" class="sidebar-item {% if request.endpoint == 'main_bp.jellyfin_library' %}active{% endif %}">
+            <span class="si-icon">♦</span> Jellyfin
+        </a>
+        <a href="#" id="download-link" class="sidebar-item">
+            <span class="si-icon">↓</span> Start download
+        </a>
+        {% endif %}
+    </div>
 
-    <li class="navbar-item">
-      <a href="/logout">Logout</a>
-    </li>
+    {% if is_admin %}
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Admin</div>
+        <a href="{{ url_for('main_bp.settings') }}" class="sidebar-item {% if request.endpoint == 'main_bp.settings' %}active{% endif %}">
+            <span class="si-icon">⚙</span> Settings
+        </a>
+        <a href="{{ url_for('main_bp.security') }}" class="sidebar-item {% if request.endpoint == 'main_bp.security' %}active{% endif %}">
+            <span class="si-icon">🔒</span> Security
+        </a>
+        <a href="{{ url_for('main_bp.log') }}" class="sidebar-item {% if request.endpoint == 'main_bp.log' %}active{% endif %}">
+            <span class="si-icon">📋</span> Log
+        </a>
+        <a href="{{ url_for('main_bp.file_browser') }}" class="sidebar-item {% if request.endpoint == 'main_bp.file_browser' %}active{% endif %}">
+            <span class="si-icon">📁</span> Files
+        </a>
+    </div>
+    {% endif %}
 
-    <li class="navbar-item dropdown">
-      <a href="javascript:void(0)" class="dropbtn">About</a>
-      <div class="dropdown-content">
-        <a href="https://github.com/incmve/M3Usort/blob/main/README.md" target="_blank">ReadMe</a>
-        <a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank">Changelog</a>
-      </div>
-    </li>
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">About</div>
+        <a href="https://github.com/incmve/M3Usort/blob/main/README.md" target="_blank" class="sidebar-item">
+            <span class="si-icon">?</span> ReadMe
+        </a>
+        <a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" class="sidebar-item">
+            <span class="si-icon">📝</span> Changelog
+        </a>
+    </div>
 
-  </ul>
-  <!--  </div> -->
+    <div class="sidebar-bottom">
+        <a href="/logout" class="sidebar-user" style="text-decoration:none;">
+            <div class="sidebar-avatar">{% if is_admin %}A{% else %}G{% endif %}</div>
+            <span class="sidebar-username">{% if is_admin %}Admin{% else %}Guest{% endif %} · logout</span>
+        </a>
+    </div>
 </nav>
+
+<script>
+(function() {
+    var dl = document.getElementById('download-link');
+    if (!dl) return;
+    dl.addEventListener('click', function(e) {
+        e.preventDefault();
+        dl.style.opacity = '0.5';
+        dl.style.pointerEvents = 'none';
+        fetch('/download', {method: 'GET'})
+            .then(r => r.json())
+            .then(data => {
+                dl.style.opacity = '';
+                dl.style.pointerEvents = '';
+                const c = document.querySelector('.flash-wrap');
+                if (c) {
+                    const d = document.createElement('div');
+                    d.textContent = data.message || 'Download finished';
+                    d.className = 'flash-message success';
+                    c.appendChild(d);
+                    setTimeout(() => { d.style.opacity='0'; setTimeout(()=>d.remove(), 600); }, 5000);
+                }
+            })
+            .catch(() => { dl.style.opacity = ''; dl.style.pointerEvents = ''; });
+    });
+})();
+</script>

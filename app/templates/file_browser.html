@@ -1,0 +1,178 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="topbar">
+    <span class="topbar-title">File Browser</span>
+    <div class="topbar-right">
+        <span class="topbar-pill" style="color:#5abf7e; border-color:#1a4a30; background:#0a2018;">Admin only</span>
+    </div>
+</div>
+
+<div class="page-content">
+
+    <!-- Breadcrumb -->
+    <div id="breadcrumb" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:16px; font-size:13px;">
+        <span id="breadcrumb-inner"></span>
+    </div>
+
+    <!-- File list -->
+    <div class="info-block">
+        <div class="info-block-header" id="current-path-label">Select a directory</div>
+        <div id="file-list" style="min-height:60px;">
+            <div style="padding:20px; color:#444; text-align:center; font-size:13px;">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Delete confirm modal -->
+    <div id="del-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9990; align-items:center; justify-content:center;">
+        <div style="background:#161616; border:1px solid #252525; border-radius:8px; padding:24px; max-width:440px; width:90%;">
+            <div style="font-size:15px; font-weight:600; color:#e0e0e0; margin-bottom:8px;">Confirm delete</div>
+            <div id="del-msg" style="font-size:13px; color:#888; margin-bottom:20px; word-break:break-all;"></div>
+            <div style="display:flex; gap:8px;">
+                <button id="del-confirm" class="jf-remove-btn" style="flex:1;">Delete</button>
+                <button onclick="closeDelModal()" class="button" style="flex:1;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<style>
+.fb-row { display:flex; align-items:center; gap:10px; padding:9px 16px; border-bottom:1px solid #1a1a1a; transition:background .1s; }
+.fb-row:last-child { border-bottom:none; }
+.fb-row:hover { background:#161616; }
+.fb-icon { font-size:15px; width:20px; text-align:center; flex-shrink:0; }
+.fb-name { font-size:13px; color:#d0d0d0; flex:1; cursor:pointer; }
+.fb-name:hover { color:#4aadcf; }
+.fb-dir .fb-name { color:#7ec8f0; font-weight:500; }
+.fb-meta { font-size:11px; color:#444; white-space:nowrap; }
+.fb-ext-strm { font-size:10px; padding:1px 6px; border-radius:3px; background:#0d2535; color:#4aadcf; border:1px solid #1a3a5a; font-weight:600; }
+.fb-ext-mkv, .fb-ext-mp4, .fb-ext-avi { font-size:10px; padding:1px 6px; border-radius:3px; background:#2a1c08; color:#c8a030; border:1px solid #4a3010; font-weight:600; }
+.fb-del { background:transparent; border:1px solid #3a1010; color:#6a3030; border-radius:4px; padding:2px 8px; font-size:10px; cursor:pointer; transition:all .1s; flex-shrink:0; }
+.fb-del:hover { border-color:#8a2020; color:#ef7070; background:#200e0e; }
+.fb-breadcrumb-sep { color:#333; }
+.fb-breadcrumb-link { color:#4aadcf; cursor:pointer; }
+.fb-breadcrumb-link:hover { text-decoration:underline; }
+.fb-breadcrumb-current { color:#888; }
+</style>
+
+<script>
+const MOVIES_DIR = {{ movies_dir | tojson }};
+const SERIES_DIR = {{ series_dir | tojson }};
+let currentPath = '';
+let deleteTarget = null;
+
+function formatSize(bytes) {
+    if (!bytes) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+    if (bytes < 1024*1024*1024) return (bytes/1024/1024).toFixed(1) + ' MB';
+    return (bytes/1024/1024/1024).toFixed(2) + ' GB';
+}
+
+function extBadge(ext) {
+    if (!ext) return '';
+    const cls = ['mkv','mp4','avi'].includes(ext) ? 'fb-ext-mkv' : ext === 'strm' ? 'fb-ext-strm' : '';
+    return cls ? `<span class="${cls}">.${ext}</span>` : `<span class="fb-meta">.${ext}</span>`;
+}
+
+function loadPath(path) {
+    currentPath = path;
+    document.getElementById('file-list').innerHTML = '<div style="padding:20px; color:#444; text-align:center; font-size:13px;">Loading...</div>';
+    const url = path ? `/files/list?path=${encodeURIComponent(path)}` : '/files/list';
+    fetch(url)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { document.getElementById('file-list').innerHTML = `<div style="padding:16px; color:#a04040;">${data.error}</div>`; return; }
+            renderList(data.items, data.path);
+            renderBreadcrumb(data.path);
+            document.getElementById('current-path-label').textContent = data.path || 'Root';
+        })
+        .catch(() => { document.getElementById('file-list').innerHTML = '<div style="padding:16px; color:#a04040;">Failed to load</div>'; });
+}
+
+function renderList(items, path) {
+    if (!items.length) {
+        document.getElementById('file-list').innerHTML = '<div style="padding:16px; color:#444; font-size:13px;">Empty directory</div>';
+        return;
+    }
+    const rows = items.map(item => {
+        const isDir = item.type === 'dir';
+        const icon = isDir ? '📁' : (item.ext === 'strm' ? '🔗' : item.ext === 'mkv' ? '🎬' : '📄');
+        const nameClick = isDir ? `onclick="loadPath('${escJs(item.path)}')"` : '';
+        const badge = !isDir ? extBadge(item.ext) : '';
+        const meta = !isDir ? `<span class="fb-meta">${formatSize(item.size)}</span><span class="fb-meta">${item.modified}</span>` : `<span class="fb-meta">${item.modified}</span>`;
+        const delBtn = `<button class="fb-del" onclick="confirmDelete('${escJs(item.path)}', '${escJs(item.name)}', ${isDir})">✕</button>`;
+        return `<div class="fb-row ${isDir ? 'fb-dir' : ''}">
+            <span class="fb-icon">${icon}</span>
+            <span class="fb-name" ${nameClick}>${escHtml(item.name)}</span>
+            ${badge}
+            ${meta}
+            ${delBtn}
+        </div>`;
+    }).join('');
+    document.getElementById('file-list').innerHTML = rows;
+}
+
+function renderBreadcrumb(path) {
+    const bc = document.getElementById('breadcrumb-inner');
+    if (!path) { bc.innerHTML = '<span class="fb-breadcrumb-current">Root</span>'; return; }
+
+    // Find which root this path is under
+    const roots = [MOVIES_DIR, SERIES_DIR].filter(Boolean);
+    let root = roots.find(r => path.startsWith(r)) || '';
+    let relative = root ? path.slice(root.length) : path;
+    let parts = relative.split('/').filter(Boolean);
+    let rootName = root ? root.split('/').pop() : '/';
+
+    let html = `<span class="fb-breadcrumb-link" onclick="loadPath('')">Roots</span>`;
+    html += `<span class="fb-breadcrumb-sep">/</span>`;
+    html += `<span class="fb-breadcrumb-link" onclick="loadPath('${escJs(root)}')">${escHtml(rootName)}</span>`;
+
+    let built = root;
+    parts.forEach((part, i) => {
+        built += '/' + part;
+        const builtCopy = built;
+        html += `<span class="fb-breadcrumb-sep">/</span>`;
+        if (i === parts.length - 1) {
+            html += `<span class="fb-breadcrumb-current">${escHtml(part)}</span>`;
+        } else {
+            html += `<span class="fb-breadcrumb-link" onclick="loadPath('${escJs(builtCopy)}')">${escHtml(part)}</span>`;
+        }
+    });
+    bc.innerHTML = html;
+}
+
+function confirmDelete(path, name, isDir) {
+    deleteTarget = path;
+    document.getElementById('del-msg').textContent = `${isDir ? 'Folder' : 'File'}: ${name}${isDir ? ' (and all contents)' : ''}`;
+    document.getElementById('del-confirm').onclick = () => doDelete(path);
+    document.getElementById('del-modal').style.display = 'flex';
+}
+
+function closeDelModal() {
+    document.getElementById('del-modal').style.display = 'none';
+    deleteTarget = null;
+}
+
+function doDelete(path) {
+    closeDelModal();
+    fetch('/files/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) loadPath(currentPath);
+        else alert('Error: ' + data.error);
+    })
+    .catch(() => alert('Request failed'));
+}
+
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escJs(s) { return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDelModal(); });
+document.addEventListener('DOMContentLoaded', () => loadPath(''));
+</script>
+{% endblock %}

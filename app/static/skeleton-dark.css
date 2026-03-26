@@ -1,228 +1,102 @@
-/*
-* Skeleton Dark Mode V 0.1
-* Copyright 2014, Dave Gamache
-* Copyright 2021 Paul Treanor
-* www.getskeleton.com
-* Free to use under the MIT license.
-* http://www.opensource.org/licenses/mit-license.php
-* 27/9/2021
-*/
-
-
-
-/* Table of contents
-––––––––––––––––––––––––––––––––––––––––––––––––––
-- Base Styles
-- Links
-- Buttons
-- Forms
-- Code
-- Tables
-- Misc
-*/
-
-/* Base Styles
-–––––––––––––––––––––––––––––––––––––––––––––––––– */
-/* NOTE
-html is set to 62.5% so that all the REM measurements throughout Skeleton
-are based on 10px sizing. So basically 1.5rem = 15px :) */
-html {
-  font-size: 62.5%; }
+html { font-size: 62.5%; }
 body {
-  font-size: 1.5em; /* currently ems cause chrome bug misinterpreting rems on body element */
+  font-size: 1.4em;
   line-height: 1.6;
   font-weight: 400;
-  font-family: "Raleway", "HelveticaNeue", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  background-color: #333;
-  color: #DDD; }
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background-color: #313338;
+  color: #f2f3f5;
+}
+a { color: #4aadcf; text-decoration: none; }
+a:hover { color: #6dc5e0; }
 
-
-
-
-/* Links
-–––––––––––––––––––––––––––––––––––––––––––––––––– */
-a {
-  color: #FFF; }
-a:hover {
-  color: #EEE; }
-
-
-/* Buttons
-–––––––––––––––––––––––––––––––––––––––––––––––––– */
-.button,
-button,
-input[type="submit"],
-input[type="reset"],
-input[type="button"] {
+/* Buttons */
+.button, button, input[type="submit"], input[type="reset"], input[type="button"] {
   display: inline-block;
-  height: 38px;
-  padding: 0 30px;
-  color: #CCC;
+  height: 34px;
+  padding: 0 18px;
+  color: #c9cdd3;
   text-align: center;
   font-size: 11px;
   font-weight: 600;
-  line-height: 38px;
-  letter-spacing: .1rem;
+  line-height: 34px;
+  letter-spacing: .06rem;
   text-transform: uppercase;
   text-decoration: none;
   white-space: nowrap;
   background-color: transparent;
-  border-radius: 4px;
-  border: 1px solid #BBB;
+  border-radius: 6px;
+  border: 1px solid #43454d;
   cursor: pointer;
-  box-sizing: border-box; }
-.button:hover,
-button:hover,
-input[type="submit"]:hover,
-input[type="reset"]:hover,
-input[type="button"]:hover {
-  color: #CCC;
-  border-color: #FFF;
-  outline: 0; }
-.button:active,
-button:active,
-input[type="submit"]:active,
-input[type="reset"]:active,
-input[type="button"]:active {
-  color: #333;
-  border-color: #888;
-  background-color: #DDD;
-  outline: 0; }
-.button.button-primary,
-button.button-primary,
-input[type="submit"].button-primary,
-input[type="reset"].button-primary,
-input[type="button"].button-primary {
-  color: #FFF;
+  box-sizing: border-box;
+  transition: border-color .15s, color .15s, background-color .15s;
+}
+.button:hover, button:hover, input[type="submit"]:hover, input[type="reset"]:hover, input[type="button"]:hover {
+  color: #f2f3f5;
+  border-color: #5a5d66;
+  background-color: #393c43;
+  outline: 0;
+}
+.button:active, button:active, input[type="submit"]:active, input[type="reset"]:active, input[type="button"]:active {
+  background-color: #404249;
+  outline: 0;
+}
+.button.button-primary, button.button-primary, input[type="submit"].button-primary, input[type="reset"].button-primary, input[type="button"].button-primary {
+  color: #fff;
   background-color: #188fb4;
-  border-color: #188fb4; }
-.button.button-primary:hover,
-button.button-primary:hover,
-input[type="submit"].button-primary:hover,
-input[type="reset"].button-primary:hover,
-input[type="button"].button-primary:hover {
-  color: #FFF;
-  background-color: #1EAEDB;
-  border-color: #188fb4; }
-.button.button-primary:active,
-button.button-primary:active,
-input[type="submit"].button-primary:active,
-input[type="reset"].button-primary:active,
-input[type="button"].button-primary:active {
-  color: #FFF;
-  background-color: #33C3F0;
-  border-color: #0c485a; }
-
-
-
-/* Forms
-–––––––––––––––––––––––––––––––––––––––––––––––––– */
-input[type="email"],
-input[type="number"],
-input[type="search"],
-input[type="text"],
-input[type="tel"],
-input[type="url"],
-input[type="password"],
-textarea,
-select {
-  color: #000;
-  height: 38px;
-  padding: 6px 10px; /* The 6px vertically centers text on FF, ignored by Webkit */
-  background-color: #AAA;
-  border: 1px solid #000;
-  border-radius: 4px;
-  box-shadow: none;
-  box-sizing: border-box; }
-/* Removes awkward default styles on some inputs for iOS */
-input[type="email"],
-input[type="number"],
-input[type="search"],
-input[type="text"],
-input[type="tel"],
-input[type="url"],
-input[type="password"],
-textarea {
-  -webkit-appearance: none;
-     -moz-appearance: none;
-          appearance: none; }
-textarea {
-  min-height: 65px;
-  padding-top: 6px;
-  padding-bottom: 6px; }
-input[type="email"]:focus,
-input[type="number"]:focus,
-input[type="search"]:focus,
-input[type="text"]:focus,
-input[type="tel"]:focus,
-input[type="url"]:focus,
-input[type="password"]:focus,
-textarea:focus,
-select:focus {
-  border: 1px solid #188fb4;
-  outline: 0; }
-label,
-legend {
-  display: block;
-  margin-bottom: .5rem;
-  font-weight: 600; }
-fieldset {
-  padding: 0;
-  border-width: 0; }
-input[type="checkbox"],
-input[type="radio"] {
-  display: inline; }
-label > .label-body {
-  display: inline-block;
-  margin-left: .5rem;
-  font-weight: normal; }
-
-
-
-
-/* Code
-–––––––––––––––––––––––––––––––––––––––––––––––––– */
-code {
-  padding: .2rem .5rem;
-  margin: 0 .2rem;
-  font-size: 90%;
-  white-space: nowrap;
-  background: #1a1a1a;
-  border: 1px solid #1f1f1f;
-  border-radius: 4px; }
-pre > code {
-  display: block;
-  padding: 1rem 1.5rem;
-  white-space: pre; }
-
-
-/* Tables
-–––––––––––––––––––––––––––––––––––––––––––––––––– */
-th,
-td {
-  padding: 12px 15px;
-  text-align: left;
-  border-bottom: 1px solid #E1E1E1; }
-th:first-child,
-td:first-child {
-  padding-left: 0; }
-th:last-child,
-td:last-child {
-  padding-right: 0; }
-
-
-
-/* Misc
-–––––––––––––––––––––––––––––––––––––––––––––––––– */
-hr {
-  margin-top: 3rem;
-  margin-bottom: 3.5rem;
-  border-width: 0;
-  border-top: 1px solid #0f0f0f; }
-
-img {
-  opacity: 0.75;
+  border-color: #188fb4;
+}
+.button.button-primary:hover, button.button-primary:hover, input[type="submit"].button-primary:hover, input[type="reset"].button-primary:hover, input[type="button"].button-primary:hover {
+  background-color: #1aa8d4;
+  border-color: #1aa8d4;
+  color: #fff;
+}
+.button.button-primary:active, button.button-primary:active {
+  background-color: #127a9a;
+  border-color: #127a9a;
 }
 
+/* Forms */
+input[type="email"], input[type="number"], input[type="search"], input[type="text"],
+input[type="tel"], input[type="url"], input[type="password"], textarea, select {
+  color: #f2f3f5;
+  height: 36px;
+  padding: 6px 12px;
+  background-color: #383a40;
+  border: 1px solid #43454d;
+  border-radius: 6px;
+  box-shadow: none;
+  box-sizing: border-box;
+  transition: border-color .15s;
+}
+input[type="email"], input[type="number"], input[type="search"], input[type="text"],
+input[type="tel"], input[type="url"], input[type="password"], textarea {
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+}
+textarea { min-height: 65px; padding-top: 6px; padding-bottom: 6px; }
+input:focus, textarea:focus, select:focus { border: 1px solid #188fb4; outline: 0; }
+label, legend { display: block; margin-bottom: .4rem; font-weight: 600; color: #9ba3af; font-size: .85em; letter-spacing: .04em; text-transform: uppercase; }
+fieldset { padding: 0; border-width: 0; }
+input[type="checkbox"], input[type="radio"] { display: inline; }
+label > .label-body { display: inline-block; margin-left: .5rem; font-weight: normal; }
 
+/* Code */
+code {
+  padding: .2rem .5rem; margin: 0 .2rem; font-size: 90%;
+  white-space: nowrap; background: #2b2d31; border: 1px solid #43454d;
+  border-radius: 4px; color: #7ec8e3;
+}
+pre > code { display: block; padding: 1rem 1.5rem; white-space: pre; }
 
+/* Tables */
+th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #43454d; }
+th { color: #80848e; font-size: .8em; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; }
+th:first-child, td:first-child { padding-left: 0; }
+th:last-child, td:last-child { padding-right: 0; }
+
+/* Misc */
+hr { margin-top: 2rem; margin-bottom: 2rem; border-width: 0; border-top: 1px solid #43454d; }
+img { opacity: .9; }
+h1, h2, h3, h4, h5, h6 { color: #f2f3f5; font-weight: 500; }
+h4 { font-size: 2rem; }
+h5 { font-size: 1.6rem; }

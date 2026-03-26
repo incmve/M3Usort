@@ -1,24 +1,22 @@
 {% extends 'layout.html' %}
-
 {% block content %}
-<div class="container">
-    <h4>Security Settings</h4>
-    <div class="row">
-        <div class="twelve columns">
-            <!-- Form for changing admin password -->
-            <form method="POST" action="{{ url_for('main_bp.change_admin_password') }}" style="margin-bottom: 2rem;">
-                <label for="adminPassword">New Admin Password</label>
-                <input class="u-full-width" type="password" id="adminPassword" name="admin_password"
-                    placeholder="New admin Password" required>
-                <input class="button-primary" type="submit" value="Change Admin Password" style="margin-top: 1rem;">
+<div class="topbar"><span class="topbar-title">Security</span></div>
+<div class="page-content">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="settings-section">
+            <div class="settings-section-title">Admin Password</div>
+            <form method="POST" action="{{ url_for('main_bp.change_admin_password') }}">
+                <label>New Admin Password</label>
+                <input class="filter-input" type="password" name="admin_password" placeholder="New admin password" required style="width:100%; margin-bottom:10px;">
+                <button type="submit" class="button button-primary">Change Password</button>
             </form>
-
-            <!-- Form for changing playlist credentials -->
+        </div>
+        <div class="settings-section">
+            <div class="settings-section-title">Playlist Password</div>
             <form method="POST" action="{{ url_for('main_bp.change_playlist_credentials') }}">
-                <label for="playlistPassword">New Playlist Password</label>
-                <input class="u-full-width" type="password" id="playlistPassword" name="playlist_password"
-                    placeholder="New playlist Password" required>
-                <input class="button-primary" type="submit" value="Change Playlist Password" style="margin-top: 1rem;">
+                <label>New Playlist Password</label>
+                <input class="filter-input" type="password" name="playlist_password" placeholder="New playlist password" required style="width:100%; margin-bottom:10px;">
+                <button type="submit" class="button button-primary">Change Password</button>
             </form>
         </div>
     </div>

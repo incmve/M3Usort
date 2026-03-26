@@ -1,10 +1,14 @@
 # Changelog
 
-## 0.2.01
+## 2.0.0
+- BREAKING: `admin_password`, `playlist_password`, and `SECRET_KEY` are no longer set in `config.sample`. Fresh installs are now configured via the setup wizard. Existing installs are unaffected.
 - Added categories
 - Movies and TV shows no longer call the API but use local cache.
 - Option to manually refresh cache.
 - Made the image a little smaller
+- Updated theme to lighter charcoal palette for better readability
+- Login card redesigned with red background and improved contrast
+- Added restore from backup section to setup page
 
 ## 0.2.00
 - Removed fork connection with the original G https://github.com/koffienl/M3Usort

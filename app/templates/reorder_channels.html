@@ -1,77 +1,45 @@
 {% extends 'layout.html' %}
-
 {% block content %}
-<div class="container">
-    <h4>Reorder Channels</h4>
-    <div class="row">
-        <div class="twelve columns">
-            <form method="POST" action="{{ url_for('main_bp.save_reordered_channels') }}">
-                <input class="button-primary" type="submit" value="Save" style="margin-top: 1rem;">
-
-                <input type="hidden" id="channel_order" name="channel_order">
-                <ul id="channels-list" class="list-group">
-                    {% for channel_name in channel_names %}
-                    <li class="list-group-item draggable-item" draggable="true" data-channel="{{ channel_name }}">
-                        <span class="drag-handle">&#x2630;</span> <!-- Drag Handle Icon -->
-                        {{ channel_name }}
-                        <a href="#" class="delete-btn" onclick="deleteItem(this)">&#10060;</a> <!-- Delete Button -->
-
-                    </li>
-                    {% endfor %}
-                </ul>
-            </form>
+<div class="topbar"><span class="topbar-title">Sort Channels</span></div>
+<div class="page-content">
+    <form method="POST" action="{{ url_for('main_bp.save_reordered_channels') }}">
+        <div style="margin-bottom:16px;">
+            <button type="submit" class="button button-primary">Save Order</button>
         </div>
-
-        <script>
-            document.addEventListener('DOMContentLoaded', () => {
-                const list = document.getElementById('channels-list');
-                let draggingEle;
-
-                // Function to update the channel_order input's value based on the current list
-                const updateOrderInput = () => {
-                    const order = Array.from(list.querySelectorAll('.list-group-item')).map(item => item.getAttribute('data-channel'));
-                    document.getElementById('channel_order').value = JSON.stringify(order);
-                };
-
-                list.addEventListener('dragstart', e => {
-                    draggingEle = e.target;
-                    e.dataTransfer.setData('text', ''); // For Firefox
-                });
-
-                list.addEventListener('dragover', e => {
-                    e.preventDefault(); // Allow drop
-                    const afterElement = getDragAfterElement(list, e.clientY);
-                    if (afterElement == null) {
-                        list.appendChild(draggingEle);
-                    } else {
-                        list.insertBefore(draggingEle, afterElement);
-                    }
-                });
-
-                list.addEventListener('dragend', () => {
-                    updateOrderInput(); // Update hidden input when dragging ends
-                });
-
-                window.deleteItem = (btn) => {
-                    btn.closest('li').remove();
-                    updateOrderInput(); // Update hidden input after deletion
-                };
-
-                function getDragAfterElement(list, y) {
-                    return Array.from(list.querySelectorAll('.draggable-item:not(.dragging)'))
-                        .reduce((closest, child) => {
-                            const box = child.getBoundingClientRect();
-                            const offset = y - box.top - box.height / 2;
-                            if (offset < 0 && offset > closest.offset) {
-                                return { offset: offset, element: child };
-                            } else {
-                                return closest;
-                            }
-                        }, { offset: Number.NEGATIVE_INFINITY }).element;
-                }
-
-                // Initial update for the order input
-                updateOrderInput();
-            });
-        </script>
-        {% endblock %}
+        <input type="hidden" id="channel_order" name="channel_order">
+        <ul id="channels-list" style="margin:0; padding:0; list-style:none;">
+            {% for channel_name in channel_names %}
+            <li class="draggable-item" draggable="true" data-channel="{{ channel_name }}">
+                <span class="drag-handle">&#x2630;</span>
+                {{ channel_name }}
+                <a href="#" class="delete-btn" onclick="deleteItem(this)">✕</a>
+            </li>
+            {% endfor %}
+        </ul>
+    </form>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const list = document.getElementById('channels-list');
+    let dragging;
+    const updateOrder = () => {
+        const order = Array.from(list.querySelectorAll('.draggable-item')).map(i => i.getAttribute('data-channel'));
+        document.getElementById('channel_order').value = JSON.stringify(order);
+    };
+    list.addEventListener('dragstart', e => { dragging = e.target; });
+    list.addEventListener('dragover', e => {
+        e.preventDefault();
+        const after = Array.from(list.querySelectorAll('.draggable-item:not(.dragging)')).reduce((c, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = e.clientY - box.top - box.height/2;
+            if (offset < 0 && offset > c.offset) return {offset, element: child};
+            return c;
+        }, {offset: Number.NEGATIVE_INFINITY}).element;
+        if (after == null) list.appendChild(dragging); else list.insertBefore(dragging, after);
+    });
+    list.addEventListener('dragend', updateOrder);
+    window.deleteItem = btn => { btn.closest('li').remove(); updateOrder(); };
+    updateOrder();
+});
+</script>
+{% endblock %}

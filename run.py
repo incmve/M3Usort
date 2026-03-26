@@ -44,30 +44,20 @@ def setup_logging():
 
 setup_logging()
 
-# Check if config.py exists, if not, read from config.sample and write to config.py
-if not os.path.exists(config_file):
-    with open(sample_config_file, 'r') as sample_file:
-        sample_content = sample_file.read()
-    
-    with open(config_file, 'w') as config:
-        config.write(sample_content)
-    
-    print(f"'{config_file}' created from '{sample_config_file}'.")
-    sleep(1)
-
 app_start_time = datetime.now()
 os.environ['TZ'] = 'Europe/Amsterdam'
-
 
 CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
 CONFIG_PATH = os.path.join(CURRENT_DIR, 'config.py')
 CONFIG_PATH = os.path.normpath(CONFIG_PATH)
 
-with open(CONFIG_PATH, 'r') as file:
-    config_content = file.read()
-config_namespace = {}
-exec(config_content, {}, config_namespace)
-PORT_NUMBER = config_namespace.get('port_number')
+PORT_NUMBER = 5050
+if os.path.exists(CONFIG_PATH):
+    with open(CONFIG_PATH, 'r') as file:
+        config_content = file.read()
+    config_namespace = {}
+    exec(config_content, {}, config_namespace)
+    PORT_NUMBER = config_namespace.get('port_number', 5050)
 
 from app import create_app
 app = create_app()

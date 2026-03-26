@@ -1,0 +1,377 @@
+{% extends 'layout.html' %}
+
+{% block content %}
+<div class="topbar">
+    <span class="topbar-title">Jellyfin Library</span>
+    <div class="topbar-right">
+        {% if not error %}
+        <span class="topbar-pill ok">● Connected</span>
+        <a href="{{ url_for('main_bp.jellyfin_library_refresh') }}" class="topbar-btn">↻ Refresh</a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="page-content">
+{% if error %}
+    <p style="color:#666;">Jellyfin is not configured. Go to <a href="{{ url_for('main_bp.settings') }}" style="color:#4aadcf;">Settings</a> to set it up.</p>
+{% else %}
+
+    <div class="filter-bar" style="margin-bottom:16px;">
+        <input type="text" id="search-bar" class="filter-input" placeholder="Search library..." oninput="filterItems()">
+        <select id="type-filter" onchange="filterItems()">
+            <option value="">All types</option>
+            <option value="Movie">Movies</option>
+            <option value="Series">Series</option>
+        </select>
+        <select id="source-filter" onchange="filterItems()">
+            <option value="">All sources</option>
+            <option value="m3usort">M3Usort</option>
+            <option value="other">Other</option>
+        </select>
+        <div style="margin-left:auto; display:flex; gap:4px;">
+            <button id="btn-list" class="vt-btn active" onclick="setView('list')">&#9776; List</button>
+            <button id="btn-grid" class="vt-btn" onclick="setView('grid')">&#9783; Posters</button>
+        </div>
+    </div>
+
+    <div id="count-bar" style="font-size:12px; color:#444; margin-bottom:12px;"></div>
+
+    <!-- LIST VIEW -->
+    <div id="view-list">
+        <table class="jf-table" id="library-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Year</th>
+                    <th>Source</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in items %}
+            <tr class="library-row jf-row"
+                data-id="{{ item.id }}"
+                data-name="{{ item.name | lower }}"
+                data-type="{{ item.type }}"
+                data-source="{{ 'm3usort' if item.in_m3usort else 'other' }}"
+                data-item='{{ item | tojson }}'
+                onclick="openItemModal(JSON.parse(this.getAttribute('data-item')))">
+                <td class="jf-name">{{ item.name }}</td>
+                <td class="jf-meta"><span class="jf-badge {{ 'movie' if item.type == 'Movie' else 'series' }}">{{ item.type }}</span></td>
+                <td class="jf-meta"><span class="jf-badge year">{{ item.year }}</span></td>
+                <td class="jf-meta">
+                    {% if item.in_m3usort %}
+                        <span class="jf-badge m3u">M3Usort</span>
+                    {% else %}
+                        <span class="jf-badge other">Other</span>
+                    {% endif %}
+                </td>
+                <td onclick="event.stopPropagation()">
+                    <button class="jf-remove-btn" onclick="removeItem('{{ item.id }}', '{{ item.path }}', '{{ item.type }}', '{{ item.name }}', this)">Remove</button>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- POSTER GRID VIEW -->
+    <div id="view-grid" style="display:none;">
+        <div class="poster-grid" id="poster-grid-inner">
+        {% for item in items %}
+        <div class="poster-card library-row"
+            data-id="{{ item.id }}"
+            data-name="{{ item.name | lower }}"
+            data-type="{{ item.type }}"
+            data-source="{{ 'm3usort' if item.in_m3usort else 'other' }}"
+            data-item='{{ item | tojson }}'
+            onclick="openItemModal(JSON.parse(this.getAttribute('data-item')))">
+            <div class="poster-img">
+                <img src="{{ jellyfin_url }}/Items/{{ item.id }}/Images/Primary?maxHeight=220&api_key={{ jellyfin_api_key }}"
+                    onerror="this.style.display='none'" loading="lazy">
+            </div>
+            <div class="poster-name" title="{{ item.name }}">{{ item.name }}</div>
+            <div class="poster-meta">{{ item.year }}</div>
+        </div>
+        {% endfor %}
+        </div>
+    </div>
+
+    <!-- ITEM MODAL -->
+    <div id="jf-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9990; align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 16px;">
+        <div style="background:#161616; border:1px solid #252525; border-radius:8px; max-width:600px; width:100%; position:relative;">
+            <div style="display:flex; align-items:flex-start; gap:16px; padding:20px 20px 16px; border-bottom:1px solid #1e1e1e;">
+                <img id="jm-poster" src="" style="width:70px; height:105px; object-fit:cover; border-radius:4px; flex-shrink:0; background:#111;">
+                <div style="flex:1; min-width:0; padding-right:24px;">
+                    <div id="jm-title" style="font-size:16px; font-weight:600; color:#e8e8e8; margin-bottom:4px;"></div>
+                    <div id="jm-meta" style="font-size:12px; color:#555; margin-bottom:8px;"></div>
+                    <div id="jm-source"></div>
+                </div>
+                <span onclick="closeItemModal()" style="position:absolute; top:12px; right:14px; cursor:pointer; color:#444; font-size:20px; line-height:1;">&times;</span>
+            </div>
+            <div style="padding:16px 20px;">
+                <!-- Watch status -->
+                <div id="jm-watch-wrap" style="margin-bottom:14px; display:none;">
+                    <div class="jm-section-label">Watch status</div>
+                    <div id="jm-watch-status" style="display:flex; gap:10px; flex-wrap:wrap;"></div>
+                </div>
+                <!-- File path -->
+                <div style="margin-bottom:14px;">
+                    <div class="jm-section-label">File path</div>
+                    <div id="jm-path" style="font-family:'Courier New',monospace; font-size:11px; color:#888; background:#111; border:1px solid #1e1e1e; border-radius:4px; padding:8px 10px; word-break:break-all; line-height:1.5;"></div>
+                </div>
+                <!-- Overview -->
+                <div id="jm-overview-wrap" style="margin-bottom:14px; display:none;">
+                    <div class="jm-section-label">Overview</div>
+                    <div id="jm-overview" style="font-size:13px; color:#666; line-height:1.6;"></div>
+                </div>
+                <!-- Seasons (series only) -->
+                <div id="jm-seasons-wrap" style="display:none; margin-bottom:14px;">
+                    <div class="jm-section-label" style="display:flex; align-items:center; gap:8px;">
+                        Seasons &amp; Episodes
+                        <span id="jm-seasons-loading" style="color:#444; font-size:11px; font-weight:400; letter-spacing:0; text-transform:none;"></span>
+                    </div>
+                    <div id="jm-seasons-list"></div>
+                </div>
+                <!-- Actions -->
+                <div style="display:flex; gap:8px; padding-top:14px; border-top:1px solid #1e1e1e;">
+                    <button id="jm-remove-btn" class="jf-remove-btn">Remove from Jellyfin</button>
+                    <button onclick="closeItemModal()" class="button">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endif %}
+</div>
+
+<style>
+.jf-table { width:100%; border-collapse:collapse; }
+.jf-table thead th { font-size:10px; color:#3a5a6a; letter-spacing:.1em; text-transform:uppercase; font-weight:700; padding:8px 12px; border-bottom:1px solid #222; text-align:left; }
+.jf-row { border-bottom:1px solid #1a1a1a; cursor:pointer; transition:background .1s; }
+.jf-row:hover { background:#161616; }
+.jf-name { padding:12px 12px; font-size:13px; color:#d0d0d0; font-weight:500; }
+.jf-meta { padding:10px 12px; }
+.jf-badge { font-size:10px; padding:2px 8px; border-radius:20px; font-weight:600; letter-spacing:.04em; white-space:nowrap; }
+.jf-badge.m3u   { background:#0d2535; color:#4aadcf; border:1px solid #1a3a5a; }
+.jf-badge.other { background:#252525; color:#666;    border:1px solid #333; }
+.jf-badge.movie  { background:#1a2535; color:#6aadff; border:1px solid #2a4a7a; }
+.jf-badge.series { background:#1a2a1a; color:#6ad48a; border:1px solid #2a5a3a; }
+.jf-badge.year   { background:#2a2a35; color:#9ba3af; border:1px solid #43454d; }
+.jf-remove-btn { background:transparent; border:1px solid #5c1a1a; color:#a04040; border-radius:6px; padding:4px 10px; font-size:11px; font-weight:600; cursor:pointer; letter-spacing:.04em; text-transform:uppercase; transition:background .1s, color .1s; white-space:nowrap; }
+.jf-remove-btn:hover { background:#5c1a1a; color:#ef9090; }
+.jm-section-label { font-size:10px; color:#3a5a6a; letter-spacing:.1em; text-transform:uppercase; font-weight:700; margin-bottom:6px; }
+
+/* Season accordion */
+.season-header { display:flex; align-items:center; gap:8px; padding:9px 12px; background:#0d1f2d; border:1px solid #1a3a5a; border-radius:6px; cursor:pointer; margin-bottom:4px; transition:background .1s; user-select:none; }
+.season-header:hover { background:#0f2535; }
+.season-arrow { color:#4aadcf; font-size:10px; transition:transform .15s; display:inline-block; }
+.season-arrow.open { transform:rotate(90deg); }
+.season-name { font-size:13px; color:#7ec8f0; font-weight:600; flex:1; }
+.season-count { font-size:11px; color:#2a5a7a; }
+.season-episodes { display:none; background:#080e14; border:1px solid #1a3a5a; border-radius:0 0 6px 6px; border-top:none; margin-top:-4px; margin-bottom:4px; }
+.ep-row { display:flex; align-items:flex-start; gap:10px; padding:7px 12px; border-bottom:1px solid #0d1a24; }
+.ep-row:last-child { border-bottom:none; }
+.ep-num { font-size:11px; color:#4aadcf; min-width:28px; font-weight:700; padding-top:1px; }
+.ep-name { font-size:12px; color:#8ab0c8; flex:1; line-height:1.4; }
+.ep-path { font-size:10px; color:#2a4a5a; font-family:'Courier New',monospace; word-break:break-all; margin-top:2px; }
+</style>
+
+<script>
+const jellyfinUrl = "{{ jellyfin_url }}";
+const jellyfinKey = "{{ jellyfin_api_key }}";
+let currentView = localStorage.getItem('jf_view') || 'list';
+let modalItem = null;
+
+function setView(v) {
+    currentView = v;
+    localStorage.setItem('jf_view', v);
+    document.getElementById('view-list').style.display = v === 'list' ? '' : 'none';
+    document.getElementById('view-grid').style.display = v === 'grid' ? '' : 'none';
+    document.getElementById('btn-list').className = v === 'list' ? 'vt-btn active' : 'vt-btn';
+    document.getElementById('btn-grid').className = v === 'grid' ? 'vt-btn active' : 'vt-btn';
+    filterItems();
+}
+
+function filterItems() {
+    const search = document.getElementById('search-bar').value.toLowerCase();
+    const type = document.getElementById('type-filter').value;
+    const source = document.getElementById('source-filter').value;
+    let listVisible = 0, gridVisible = 0;
+    document.querySelectorAll('#library-table tbody .library-row').forEach(row => {
+        const show = row.getAttribute('data-name').includes(search)
+            && (!type || row.getAttribute('data-type') === type)
+            && (!source || row.getAttribute('data-source') === source);
+        row.style.display = show ? '' : 'none';
+        if (show) listVisible++;
+    });
+    document.querySelectorAll('#poster-grid-inner .library-row').forEach(row => {
+        const show = row.getAttribute('data-name').includes(search)
+            && (!type || row.getAttribute('data-type') === type)
+            && (!source || row.getAttribute('data-source') === source);
+        row.style.display = show ? '' : 'none';
+        if (show) gridVisible++;
+    });
+    const count = currentView === 'list' ? listVisible : gridVisible;
+    document.getElementById('count-bar').textContent = `${count} items`;
+}
+
+function openItemModal(item) {
+    modalItem = item;
+
+    const poster = document.getElementById('jm-poster');
+    poster.style.display = '';
+    poster.src = `${jellyfinUrl}/Items/${item.id}/Images/Primary?maxHeight=210&api_key=${jellyfinKey}`;
+    poster.onerror = () => { poster.style.display = 'none'; };
+
+    document.getElementById('jm-title').textContent = item.name;
+    document.getElementById('jm-meta').textContent = [
+        item.type, item.year,
+        item.rating ? '★ ' + parseFloat(item.rating).toFixed(1) : ''
+    ].filter(Boolean).join(' · ');
+
+    document.getElementById('jm-source').innerHTML = item.in_m3usort
+        ? '<span class="jf-badge m3u">M3Usort</span>'
+        : '<span class="jf-badge other">Other</span>';
+
+    document.getElementById('jm-path').textContent = item.path || '—';
+
+    // Watch status — movies only (series episode-level tracking not reliable here)
+    const watchWrap = document.getElementById('jm-watch-wrap');
+    const watchEl = document.getElementById('jm-watch-status');
+    if (item.type === 'Movie' && item.all_users && item.all_users.length) {
+        watchEl.innerHTML = item.all_users.map(u => {
+            const watched = item.watched_by && item.watched_by.includes(u);
+            return `<span style="font-size:12px; padding:3px 10px; border-radius:20px; background:${watched ? '#0a2018' : '#141414'}; border:1px solid ${watched ? '#1a4a30' : '#222'}; color:${watched ? '#4aad70' : '#444'};">${watched ? '✓' : '○'} ${u}</span>`;
+        }).join('');
+        watchWrap.style.display = '';
+    } else {
+        watchWrap.style.display = 'none';
+    }
+
+    const ovEl = document.getElementById('jm-overview');
+    const ovWrap = document.getElementById('jm-overview-wrap');
+    if (item.overview) { ovEl.textContent = item.overview; ovWrap.style.display = ''; }
+    else { ovWrap.style.display = 'none'; }
+
+    // Seasons for series
+    const seasonsWrap = document.getElementById('jm-seasons-wrap');
+    const seasonsList = document.getElementById('jm-seasons-list');
+    const seasonsLoading = document.getElementById('jm-seasons-loading');
+    if (item.type === 'Series') {
+        seasonsWrap.style.display = '';
+        seasonsList.innerHTML = '';
+        seasonsLoading.textContent = 'Loading...';
+        fetch(`/jellyfin_seasons/${item.id}`)
+            .then(r => r.json())
+            .then(data => {
+                seasonsLoading.textContent = '';
+                if (!data.success || !data.seasons.length) {
+                    seasonsLoading.textContent = data.error || 'No seasons found';
+                    return;
+                }
+                data.seasons.forEach(s => {
+                    const wrap = document.createElement('div');
+
+                    const header = document.createElement('div');
+                    header.className = 'season-header';
+                    header.innerHTML = `<span class="season-arrow">▶</span><span class="season-name">${escHtml(s.name)}</span><span class="season-count">${s.episode_count} ep</span>`;
+
+                    const epList = document.createElement('div');
+                    epList.className = 'season-episodes';
+                    epList.classList.add('hidden');
+                    s.episodes.forEach(ep => {
+                        const row = document.createElement('div');
+                        row.className = 'ep-row';
+                        const fname = ep.path ? ep.path.split('/').pop() : '';
+                        row.innerHTML = `<div class="ep-num">E${ep.index !== '' ? ep.index : '?'}</div><div style="flex:1;min-width:0;"><div class="ep-name">${escHtml(ep.name)}</div>${fname ? `<div class="ep-path">${escHtml(fname)}</div>` : ''}</div>`;
+                        epList.appendChild(row);
+                    });
+
+                    header.addEventListener('click', () => {
+                        const open = !epList.classList.contains('hidden');
+                        if (open) {
+                            epList.classList.add('hidden');
+                            epList.style.display = 'none';
+                            header.querySelector('.season-arrow').classList.remove('open');
+                            header.style.borderRadius = '6px';
+                        } else {
+                            epList.style.display = 'block';
+                            epList.classList.remove('hidden');
+                            header.querySelector('.season-arrow').classList.add('open');
+                            header.style.borderRadius = '6px 6px 0 0';
+                        }
+                    });
+
+                    wrap.appendChild(header);
+                    wrap.appendChild(epList);
+                    seasonsList.appendChild(wrap);
+                });
+            })
+            .catch(() => { seasonsLoading.textContent = 'Failed to load'; });
+    } else {
+        seasonsWrap.style.display = 'none';
+    }
+
+    // Remove button
+    const btn = document.getElementById('jm-remove-btn');
+    btn.textContent = 'Remove from Jellyfin';
+    btn.disabled = false;
+    btn.onclick = () => doRemove(item, btn);
+
+    document.getElementById('jf-modal').style.display = 'flex';
+    document.getElementById('jf-modal').scrollTop = 0;
+}
+
+function doRemove(item, btn) {
+    if (!confirm(`Remove "${item.name}" from Jellyfin and delete files?`)) return;
+    btn.textContent = 'Removing...'; btn.disabled = true;
+    fetch('{{ url_for("main_bp.jellyfin_remove") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({item_id: item.id, item_path: item.path, item_type: item.type})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            closeItemModal();
+            document.querySelectorAll(`.library-row[data-id="${item.id}"]`).forEach(r => r.remove());
+            filterItems();
+        } else {
+            alert('Error: ' + data.error);
+            btn.textContent = 'Remove from Jellyfin'; btn.disabled = false;
+        }
+    })
+    .catch(() => { alert('Request failed'); btn.textContent = 'Remove from Jellyfin'; btn.disabled = false; });
+}
+
+function closeItemModal() {
+    document.getElementById('jf-modal').style.display = 'none';
+    modalItem = null;
+}
+
+function removeItem(itemId, itemPath, itemType, itemName, btn) {
+    if (!confirm(`Remove "${itemName}" from Jellyfin and delete files?`)) return;
+    btn.textContent = '...'; btn.disabled = true;
+    fetch('{{ url_for("main_bp.jellyfin_remove") }}', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({item_id: itemId, item_path: itemPath, item_type: itemType})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            document.querySelectorAll(`.library-row[data-id="${itemId}"]`).forEach(r => r.remove());
+            filterItems();
+        } else { alert('Error: ' + data.error); btn.textContent = 'Remove'; btn.disabled = false; }
+    })
+    .catch(() => { alert('Request failed'); btn.textContent = 'Remove'; btn.disabled = false; });
+}
+
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeItemModal(); });
+document.getElementById('jf-modal').addEventListener('click', function(e) { if (e.target === this) closeItemModal(); });
+document.addEventListener('DOMContentLoaded', () => setView(currentView));
+</script>
+{% endblock %}
