@@ -120,6 +120,74 @@ def scheduled_system_tasks():
     check_for_app_updates()
 
 
+
+
+def enrich_vod_cache():
+    """Background enrichment: fetch tmdb_id/plot for items missing them. Runs after fast cache build."""
+    try:
+        m3u_url = get_credential('url')
+        if not m3u_url or '://' not in m3u_url or '/get.php' not in m3u_url:
+            return
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
+        username, password = extract_credentials_from_url(m3u_url)
+        base = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}"
+    except Exception as e:
+        PrintLog(f"enrich_vod_cache: URL parse failed: {e}", "ERROR")
+        return
+
+    # Enrich movies
+    try:
+        movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+        if os.path.exists(movies_cache_path):
+            movies_data = json.load(open(movies_cache_path, encoding='utf-8'))
+            enriched = 0
+            for movie in movies_data:
+                if not movie.get('tmdb_id') and not movie.get('plot'):
+                    try:
+                        r = requests.get(f"{base}&action=get_vod_info&vod_id={movie.get('stream_id')}", timeout=5)
+                        if r.status_code == 200:
+                            info = r.json().get('info', {})
+                            movie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
+                            movie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
+                            movie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
+                            movie['rating']  = info.get('rating') or info.get('rating_5based') or ''
+                            enriched += 1
+                    except Exception:
+                        pass
+            if enriched:
+                with open(movies_cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(movies_data, f)
+                PrintLog(f"Enriched {enriched} movies with TMDB data", "INFO")
+    except Exception as e:
+        PrintLog(f"enrich_vod_cache: movies failed: {e}", "ERROR")
+
+    # Enrich series
+    try:
+        series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+        if os.path.exists(series_cache_path):
+            series_data = json.load(open(series_cache_path, encoding='utf-8'))
+            enriched = 0
+            for serie in series_data:
+                if not serie.get('tmdb_id') and not serie.get('plot'):
+                    try:
+                        r = requests.get(f"{base}&action=get_series_info&series_id={serie.get('series_id')}", timeout=5)
+                        if r.status_code == 200:
+                            info = r.json().get('info', {})
+                            serie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
+                            serie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
+                            serie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
+                            serie['rating']  = info.get('rating') or info.get('rating_5based') or ''
+                            enriched += 1
+                    except Exception:
+                        pass
+            if enriched:
+                with open(series_cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(series_data, f)
+                PrintLog(f"Enriched {enriched} series with TMDB data", "INFO")
+    except Exception as e:
+        PrintLog(f"enrich_vod_cache: series failed: {e}", "ERROR")
+
 def save_vod_cache():
     """Fetch and save full movies and series data from provider to local JSON cache files."""
     try:
@@ -152,8 +220,8 @@ def save_vod_cache():
             if not movie.get('category_name'):
                 movie['category_name'] = movie_cats.get(str(movie.get('category_id', '')), '')
 
-        # Enrich with per-movie info (tmdb_id, plot, rating) — load existing cache first to skip already-fetched items
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+        # Preserve existing enrichment data (tmdb_id, plot etc) from previous cache
         existing_info = {}
         if os.path.exists(movies_cache_path):
             try:
@@ -161,32 +229,15 @@ def save_vod_cache():
                 existing_info = {m['stream_id']: m for m in existing if m.get('tmdb_id') or m.get('plot')}
             except Exception:
                 pass
-
-        enriched = 0
         for movie in movies_data:
-            sid = movie.get('stream_id')
-            if sid in existing_info:
-                # Reuse already-fetched info
-                prev = existing_info[sid]
+            prev = existing_info.get(movie.get('stream_id'))
+            if prev:
                 for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
                     if prev.get(field):
                         movie[field] = prev[field]
-            elif not movie.get('tmdb_id') and not movie.get('plot'):
-                try:
-                    r = requests.get(f"{base}&action=get_vod_info&vod_id={sid}", timeout=5)
-                    if r.status_code == 200:
-                        info = r.json().get('info', {})
-                        movie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
-                        movie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
-                        movie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
-                        movie['rating']  = info.get('rating') or info.get('rating_5based') or ''
-                        enriched += 1
-                except Exception:
-                    pass
-
         with open(movies_cache_path, 'w', encoding='utf-8') as f:
             json.dump(movies_data, f)
-        PrintLog(f"Saved movies cache ({len(movies_data)} items, {enriched} newly enriched)", "INFO")
+        PrintLog(f"Saved movies cache ({len(movies_data)} items)", "INFO")
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to save movies cache: {e}", "ERROR")
 
@@ -207,44 +258,27 @@ def save_vod_cache():
             if not serie.get('category_name'):
                 serie['category_name'] = series_cats.get(str(serie.get('category_id', '')), '')
 
-        # Enrich with per-series info (tmdb_id, plot, rating, fresh cover)
         series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+        # Preserve existing enrichment data from previous cache
         existing_info = {}
         if os.path.exists(series_cache_path):
             try:
                 existing = json.load(open(series_cache_path, encoding='utf-8'))
-                existing_info = {s['series_id']: s for s in existing if s.get('tmdb_id') or s.get('plot')}
+                existing_info = {s['series_id']: s for s in existing if s.get('tmdb_id') or s.get('plot') or s.get('cover','').startswith('https://image.tmdb')}
             except Exception:
                 pass
-
-        enriched = 0
         for serie in series_data:
-            sid = serie.get('series_id')
-            if sid in existing_info:
-                prev = existing_info[sid]
-                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating', 'cover'):
+            prev = existing_info.get(serie.get('series_id'))
+            if prev:
+                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
                     if prev.get(field):
                         serie[field] = prev[field]
-            elif not serie.get('tmdb_id') and not serie.get('plot'):
-                try:
-                    r = requests.get(f"{base}&action=get_series_info&series_id={sid}", timeout=5)
-                    if r.status_code == 200:
-                        info = r.json().get('info', {})
-                        serie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
-                        serie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
-                        serie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
-                        serie['rating']  = info.get('rating') or info.get('rating_5based') or ''
-                        # Use fresher cover from info if available
-                        fresh_cover = info.get('cover') or info.get('cover_big') or ''
-                        if fresh_cover:
-                            serie['cover'] = fresh_cover
-                        enriched += 1
-                except Exception:
-                    pass
-
+                # Preserve fixed TMDB cover
+                if prev.get('cover', '').startswith('https://image.tmdb'):
+                    serie['cover'] = prev['cover']
         with open(series_cache_path, 'w', encoding='utf-8') as f:
             json.dump(series_data, f)
-        PrintLog(f"Saved series cache ({len(series_data)} items, {enriched} newly enriched)", "INFO")
+        PrintLog(f"Saved series cache ({len(series_data)} items)", "INFO")
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to save series cache: {e}", "ERROR")
 
@@ -271,6 +305,7 @@ def scheduled_vod_download():
     find_wanted_movies(movies_dir)
 
     save_vod_cache()
+    Thread(target=enrich_vod_cache, daemon=True).start()
     refresh_jellyfin()
 
 def scheduled_renew_m3u():
