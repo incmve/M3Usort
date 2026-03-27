@@ -318,10 +318,11 @@ def is_download_needed(file_path, max_age_hours):
 
 def update_series_directory(series_dir):
     series_list = GetSeriesList()
-    
+    overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series') or 0)
+
     for root, dirs, files in os.walk(series_dir):
         for dir_name in dirs:
-            matching_series = next((series for series in series_list if series['name'] == dir_name), None)
+            matching_series = next((s for s in series_list if s['name'] == dir_name), None)
             if matching_series:
                 DownloadSeries(matching_series['series_id'])
             else:
@@ -803,18 +804,30 @@ def GetMoviesList():
 
 @app.route('/GetSeriesList')
 def GetSeriesList():
-    m3u_url = get_credential('url')
-    scheme, rest = m3u_url.split('://')
-    domain_with_port, _ = rest.split('/get.php')
-    username, password = extract_credentials_from_url(m3u_url)
-    api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series&category_id=ALL"
+    """Return series list from local cache, fall back to live API if cache missing."""
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    if os.path.exists(series_cache_path):
+        try:
+            with open(series_cache_path, 'r', encoding='utf-8') as f:
+                series_data = json.load(f)
+            return [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', '')} for s in series_data]
+        except Exception as e:
+            PrintLog(f"GetSeriesList: failed to read cache: {e}", "ERROR")
 
+    # Fall back to live API
     series = []
     try:
-        response = requests.get(api_url)
+        m3u_url = get_credential('url')
+        if not m3u_url or '://' not in m3u_url or '/get.php' not in m3u_url:
+            return series
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
+        username, password = extract_credentials_from_url(m3u_url)
+        api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series&category_id=ALL"
+        response = requests.get(api_url, timeout=30)
         response.raise_for_status()
         series_data = response.json()
-        series = [{'name': serie['name'], 'series_id': serie['series_id'], 'series_cover': serie['cover']} for serie in series_data]
+        series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', '')} for s in series_data]
     except Exception as e:
         PrintLog(f"Error fetching series list: {e}", "ERROR")
     return series
@@ -855,8 +868,8 @@ def DownloadSeries(series_id):
 def process_episode(episode, series_name, base_url, username, password, series_dir, overwrite_series):
     try:
         episode_id = episode['id']
-        episode_num = str(episode['episode_num']).zfill(2)
-        season_num = str(episode.get('season', '1')).zfill(2)
+        episode_num = str(int(float(episode['episode_num']))).zfill(2)
+        season_num = str(int(float(episode.get('season', 1)))).zfill(2)
         strm_file_name = f"{series_name} S{season_num}E{episode_num}.strm"
         strm_content = f"{base_url}/series/{username}/{password}/{episode_id}.mkv"
 
@@ -924,8 +937,8 @@ def rebuild():
 
 @main_bp.route('/download')
 def download():
-    scheduled_vod_download()
-    json = json_flash("Download finished", "success")
+    Thread(target=scheduled_vod_download, daemon=True).start()
+    json = json_flash("Download started in the background.", "success")
     return json
 
 
@@ -1110,8 +1123,8 @@ def new_today():
 
 @main_bp.route('/refresh_vod_cache')
 def refresh_vod_cache():
-    save_vod_cache()
-    flash("VOD cache refreshed successfully.", "success")
+    Thread(target=save_vod_cache, daemon=True).start()
+    flash("VOD cache refresh started in the background.", "success")
     return redirect(url_for('main_bp.new_today'))
 
 
