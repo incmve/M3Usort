@@ -69,7 +69,7 @@
             <span class="info-label">Version</span>
             <span class="info-value" id="version">
                 {% if update_available %}
-                <a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" style="color:#3a8a5a;">{{ version }}</a>
+                <a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" class="info-value ok">{{ version }} ↑</a>
                 {% else %}{{ version }}{% endif %}
             </span>
         </div>
@@ -132,7 +132,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
                 document.getElementById("exp_date").textContent = data.exp_date;
                 if (data.update_available == 1) {
-                    document.getElementById("version").innerHTML = `<a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" style="color:#3a8a5a;">${data.version}</a>`;
+                    document.getElementById("version").innerHTML = `<a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" class="info-value ok">${data.version} ↑</a>`;
                 } else {
                     document.getElementById("version").textContent = data.version;
                 }

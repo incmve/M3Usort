@@ -60,7 +60,8 @@
 .topbar-sub { color: #80848e; font-size: 13px; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .topbar-pill { font-size: 11px; padding: 3px 10px; border-radius: 20px; border: 1px solid #43454d; color: #9ba3af; white-space: nowrap; }
-.topbar-pill.warn { border-color: #3a2808; color: #b8902a; }
+.topbar-pill.warn { border-color: #7a4a10; color: #f0a830; background:#1e1205; font-weight:600; animation: pill-pulse 2s infinite; }
+@keyframes pill-pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
 .topbar-pill.ok { border-color: #1a4a2a; color: #6bcf8e; }
 .topbar-pill.err { border-color: #3a1010; color: #a04040; }
 .topbar-btn { background: #188fb4; border: none; color: #fff; border-radius: 6px; padding: 5px 14px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; transition: background .15s; }
@@ -85,7 +86,7 @@
 .stat-label { font-size: 10px; color: #9ba3af; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 5px; font-weight: 600; }
 .stat-value { font-size: 22px; font-weight: 500; color: #f2f3f5; }
 .stat-sub { font-size: 11px; color: #80848e; margin-top: 2px; }
-.stat-card.warn .stat-value { color: #b8902a; }
+.stat-card.warn .stat-value { color: #f0a830; }
 .stat-card.danger .stat-value { color: #a04040; }
 
 /* ── Info rows ── */
@@ -96,7 +97,7 @@
 .info-label { color: #9ba3af; }
 .info-value { color: #e3e5e8; font-family: 'Courier New', monospace; font-size: 11px; }
 .info-value.link { color: #4aadcf; font-family: inherit; font-size: 12px; }
-.info-value.warn { color: #b8902a; }
+.info-value.warn { color: #f0a830; }
 .info-value.ok { color: #6bcf8e; }
 
 /* ── Filter bar ── */
