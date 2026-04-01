@@ -1,10 +1,11 @@
 <nav class="sidebar">
-    <div class="sidebar-logo">
+    <a href="{{ url_for('main_bp.home') }}" class="sidebar-logo" style="text-decoration:none;">
         <div class="sidebar-logo-name">M3Usort</div>
         <div class="sidebar-logo-sub">IPTV Manager</div>
-    </div>
+    </a>
 
-    <div class="sidebar-section">
+    <div id="nav-sections">
+    <div class="sidebar-section" data-sort="general">
         <div class="sidebar-section-label collapsible" data-section="general">General <span class="collapse-arrow">▾</span></div>
         <div class="sidebar-section-items" data-section="general">
             <a href="{{ url_for('main_bp.home') }}" class="sidebar-item {% if request.endpoint == 'main_bp.home' %}active{% endif %}">
@@ -14,7 +15,7 @@
     </div>
 
     {% if is_admin %}
-    <div class="sidebar-section">
+    <div class="sidebar-section" data-sort="playlist">
         <div class="sidebar-section-label collapsible" data-section="playlist">Playlist <span class="collapse-arrow">▾</span></div>
         <div class="sidebar-section-items" data-section="playlist">
             <a href="{{ url_for('main_bp.groups') }}" class="sidebar-item {% if request.endpoint == 'main_bp.groups' %}active{% endif %}">
@@ -36,7 +37,7 @@
     </div>
     {% endif %}
 
-    <div class="sidebar-section">
+    <div class="sidebar-section" data-sort="vod">
         <div class="sidebar-section-label collapsible" data-section="vod">VOD <span class="collapse-arrow">▾</span></div>
         <div class="sidebar-section-items" data-section="vod">
             <a href="{{ url_for('main_bp.new_today') }}" class="sidebar-item {% if request.endpoint == 'main_bp.new_today' %}active{% endif %}">
@@ -60,7 +61,7 @@
     </div>
 
     {% if is_admin %}
-    <div class="sidebar-section">
+    <div class="sidebar-section" data-sort="admin">
         <div class="sidebar-section-label collapsible" data-section="admin">Admin <span class="collapse-arrow">▾</span></div>
         <div class="sidebar-section-items" data-section="admin">
             <a href="{{ url_for('main_bp.settings') }}" class="sidebar-item {% if request.endpoint == 'main_bp.settings' %}active{% endif %}">
@@ -79,7 +80,7 @@
     </div>
     {% endif %}
 
-    <div class="sidebar-section">
+    <div class="sidebar-section" data-sort="about">
         <div class="sidebar-section-label collapsible" data-section="about">About <span class="collapse-arrow">▾</span></div>
         <div class="sidebar-section-items" data-section="about">
             <a href="https://github.com/incmve/M3Usort/blob/main/README.md" target="_blank" class="sidebar-item">
@@ -90,6 +91,7 @@
             </a>
         </div>
     </div>
+    </div><!-- end nav-sections -->
 
     <div class="sidebar-bottom">
         <a href="/logout" class="sidebar-user" style="text-decoration:none;">
@@ -105,9 +107,38 @@
 .sidebar-section-label.collapsible.collapsed .collapse-arrow { transform:rotate(-90deg); }
 .sidebar-section-items { overflow:hidden; transition:max-height .2s ease; }
 .sidebar-section-items.collapsed { max-height:0 !important; }
+.sidebar-section.sortable-ghost { opacity:0.3; }
+.sidebar-section.sortable-drag { background:#1a1a2a; border-radius:6px; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script>
 (function() {
+    // Restore saved section order
+    var saved = localStorage.getItem('nav-section-order');
+    if (saved) {
+        try {
+            var order = JSON.parse(saved);
+            var container = document.getElementById('nav-sections');
+            order.forEach(function(section) {
+                var el = container.querySelector('.sidebar-section[data-sort="' + section + '"]');
+                if (el) container.appendChild(el);
+            });
+        } catch(e) {}
+    }
+
+    // Init Sortable
+    Sortable.create(document.getElementById('nav-sections'), {
+        animation: 150,
+        handle: '.sidebar-section-label',
+        ghostClass: 'sortable-ghost',
+        dragClass: 'sortable-drag',
+        onEnd: function() {
+            var order = Array.from(document.querySelectorAll('#nav-sections .sidebar-section'))
+                .map(function(el) { return el.dataset.sort; });
+            localStorage.setItem('nav-section-order', JSON.stringify(order));
+        }
+    });
+
     document.querySelectorAll('.sidebar-section-label.collapsible').forEach(function(label) {
         var key = 'nav-collapsed-' + label.dataset.section;
         var items = document.querySelector('.sidebar-section-items[data-section="' + label.dataset.section + '"]');

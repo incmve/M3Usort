@@ -73,6 +73,7 @@ const MOVIES_DIR = {{ movies_dir | tojson }};
 const SERIES_DIR = {{ series_dir | tojson }};
 let currentPath = '';
 let selectedPaths = new Set();
+let lastCheckedIndex = -1;
 
 function formatSize(bytes) {
     if (!bytes) return '';
@@ -91,6 +92,7 @@ function extBadge(ext) {
 function loadPath(path, pushState = true) {
     currentPath = path;
     selectedPaths.clear();
+    lastCheckedIndex = -1;
     updateBulkToolbar();
     document.getElementById('file-list').innerHTML = '<div style="padding:20px; color:#666; text-align:center; font-size:13px;">Loading...</div>';
     if (pushState) {
@@ -128,7 +130,7 @@ function renderList(items, path) {
             : `<span class="fb-meta">${item.modified}</span>`;
         const delBtn = `<button class="fb-del" onclick="confirmDelete('${escJs(item.path)}', '${escJs(item.name)}', ${isDir})">✕</button>`;
         return `<div class="fb-row ${isDir ? 'fb-dir' : ''}" data-path="${escHtml(item.path)}">
-            <input type="checkbox" class="fb-checkbox fb-row-cb" data-path="${escHtml(item.path)}" onchange="toggleSelect(this)">
+            <input type="checkbox" class="fb-checkbox fb-row-cb" data-path="${escHtml(item.path)}" onchange="toggleSelect(this, event)">
             <span class="fb-icon">${icon}</span>
             <span class="fb-name" ${nameClick}>${escHtml(item.name)}</span>
             ${badge}
@@ -139,11 +141,24 @@ function renderList(items, path) {
     document.getElementById('file-list').innerHTML = html;
 }
 
-function toggleSelect(cb) {
-    if (cb.checked) selectedPaths.add(cb.dataset.path);
-    else selectedPaths.delete(cb.dataset.path);
-    const row = cb.closest('.fb-row');
-    row.classList.toggle('fb-selected', cb.checked);
+function toggleSelect(cb, event) {
+    const boxes = Array.from(document.querySelectorAll('.fb-row-cb'));
+    const index = boxes.indexOf(cb);
+    if (event && event.shiftKey && lastCheckedIndex !== -1) {
+        const start = Math.min(lastCheckedIndex, index);
+        const end = Math.max(lastCheckedIndex, index);
+        boxes.slice(start, end + 1).forEach(box => {
+            box.checked = cb.checked;
+            box.closest('.fb-row').classList.toggle('fb-selected', cb.checked);
+            if (cb.checked) selectedPaths.add(box.dataset.path);
+            else selectedPaths.delete(box.dataset.path);
+        });
+    } else {
+        if (cb.checked) selectedPaths.add(cb.dataset.path);
+        else selectedPaths.delete(cb.dataset.path);
+        cb.closest('.fb-row').classList.toggle('fb-selected', cb.checked);
+    }
+    lastCheckedIndex = index;
     updateBulkToolbar();
     updateSelectAllState();
 }
