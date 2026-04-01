@@ -130,7 +130,7 @@ function renderList(items, path) {
             : `<span class="fb-meta">${item.modified}</span>`;
         const delBtn = `<button class="fb-del" onclick="confirmDelete('${escJs(item.path)}', '${escJs(item.name)}', ${isDir})">✕</button>`;
         return `<div class="fb-row ${isDir ? 'fb-dir' : ''}" data-path="${escHtml(item.path)}">
-            <input type="checkbox" class="fb-checkbox fb-row-cb" data-path="${escHtml(item.path)}" onchange="toggleSelect(this, event)">
+            <input type="checkbox" class="fb-checkbox fb-row-cb" data-path="${escHtml(item.path)}" onclick="toggleSelect(this, event)">
             <span class="fb-icon">${icon}</span>
             <span class="fb-name" ${nameClick}>${escHtml(item.name)}</span>
             ${badge}
