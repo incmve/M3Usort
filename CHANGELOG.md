@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+- Improved file browser: readable date/size text, more prominent delete button, multi-select with bulk delete, URL updates on folder navigation with F5/back support
+- Fixed unreadable text (color:#444) across all templates
+- Collapsible nav sections with state saved across page loads
+- Dockerfile: fresh installs no longer copy config.py, ensuring setup wizard appears on first run
+
 ## 2.0.0
 - BREAKING: `admin_password`, `playlist_password`, and `SECRET_KEY` are no longer set in `config.sample`. Fresh installs are now configured via the setup wizard. Existing installs are unaffected.
 - Added categories
