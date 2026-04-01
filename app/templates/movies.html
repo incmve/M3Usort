@@ -23,7 +23,7 @@
                 </div>
             </div>
 
-            <div id="count-bar" style="font-size:12px; color:#444; margin-bottom:10px;"></div>
+            <div id="count-bar" style="font-size:12px; color:#888; margin-bottom:10px;"></div>
             <div id="view-grid"><div class="poster-grid" id="movies-grid"></div><div id="grid-load-more" style="text-align:center; padding:16px; display:none;"><button class="button" onclick="loadMoreGrid()">Load more</button></div></div>
             <div id="view-list" style="display:none;"><div class="list-view" id="movies-list-view"></div><div id="list-load-more" style="text-align:center; padding:16px; display:none;"><button class="button" onclick="loadMoreList()">Load more</button></div></div>
         </div>
@@ -136,7 +136,7 @@ function RemoveWantedMovie(movieName) {
 function renderModalInfo(data, title, type, modalLinks) {
     let metaHtml = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px;">';
     if (data.rating) metaHtml += `<span style="color:#c8a030;font-weight:600;">★ ${parseFloat(data.rating).toFixed(1)}</span>`;
-    metaHtml += `<span id="jf-status" style="font-size:12px;color:#444;">⏳ Checking Jellyfin...</span>`;
+    metaHtml += `<span id="jf-status" style="font-size:12px;color:#888;">⏳ Checking Jellyfin...</span>`;
     metaHtml += '</div>';
     let btns = '';
     if (data.tmdb_id) {

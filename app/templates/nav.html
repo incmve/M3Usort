@@ -5,80 +5,90 @@
     </div>
 
     <div class="sidebar-section">
-        <div class="sidebar-section-label">General</div>
-        <a href="{{ url_for('main_bp.home') }}" class="sidebar-item {% if request.endpoint == 'main_bp.home' %}active{% endif %}">
-            <span class="si-icon">⌂</span> Dashboard
-        </a>
+        <div class="sidebar-section-label collapsible" data-section="general">General <span class="collapse-arrow">▾</span></div>
+        <div class="sidebar-section-items" data-section="general">
+            <a href="{{ url_for('main_bp.home') }}" class="sidebar-item {% if request.endpoint == 'main_bp.home' %}active{% endif %}">
+                <span class="si-icon">⌂</span> Dashboard
+            </a>
+        </div>
     </div>
 
     {% if is_admin %}
     <div class="sidebar-section">
-        <div class="sidebar-section-label">Playlist</div>
-        <a href="{{ url_for('main_bp.groups') }}" class="sidebar-item {% if request.endpoint == 'main_bp.groups' %}active{% endif %}">
-            <span class="si-icon">⊞</span> Add Groups
-        </a>
-        <a href="{{ url_for('main_bp.reorder_groups') }}" class="sidebar-item {% if request.endpoint == 'main_bp.reorder_groups' %}active{% endif %}">
-            <span class="si-icon">↕</span> Sort Groups
-        </a>
-        <a href="{{ url_for('main_bp.channel_selection') }}" class="sidebar-item {% if request.endpoint == 'main_bp.channel_selection' %}active{% endif %}">
-            <span class="si-icon">☰</span> Add Channels
-        </a>
-        <a href="{{ url_for('main_bp.reorder_channels') }}" class="sidebar-item {% if request.endpoint == 'main_bp.reorder_channels' %}active{% endif %}">
-            <span class="si-icon">↕</span> Sort Channels
-        </a>
-        <a href="#" id="rebuild-link" class="sidebar-item">
-            <span class="si-icon">⟳</span> Rebuild M3U
-        </a>
+        <div class="sidebar-section-label collapsible" data-section="playlist">Playlist <span class="collapse-arrow">▾</span></div>
+        <div class="sidebar-section-items" data-section="playlist">
+            <a href="{{ url_for('main_bp.groups') }}" class="sidebar-item {% if request.endpoint == 'main_bp.groups' %}active{% endif %}">
+                <span class="si-icon">⊞</span> Add Groups
+            </a>
+            <a href="{{ url_for('main_bp.reorder_groups') }}" class="sidebar-item {% if request.endpoint == 'main_bp.reorder_groups' %}active{% endif %}">
+                <span class="si-icon">↕</span> Sort Groups
+            </a>
+            <a href="{{ url_for('main_bp.channel_selection') }}" class="sidebar-item {% if request.endpoint == 'main_bp.channel_selection' %}active{% endif %}">
+                <span class="si-icon">☰</span> Add Channels
+            </a>
+            <a href="{{ url_for('main_bp.reorder_channels') }}" class="sidebar-item {% if request.endpoint == 'main_bp.reorder_channels' %}active{% endif %}">
+                <span class="si-icon">↕</span> Sort Channels
+            </a>
+            <a href="#" id="rebuild-link" class="sidebar-item">
+                <span class="si-icon">⟳</span> Rebuild M3U
+            </a>
+        </div>
     </div>
     {% endif %}
 
     <div class="sidebar-section">
-        <div class="sidebar-section-label">VOD</div>
-        <a href="{{ url_for('main_bp.new_today') }}" class="sidebar-item {% if request.endpoint == 'main_bp.new_today' %}active{% endif %}">
-            <span class="si-icon">★</span> New this week
-        </a>
-        <a href="{{ url_for('main_bp.movies') }}" class="sidebar-item {% if request.endpoint == 'main_bp.movies' %}active{% endif %}">
-            <span class="si-icon">🎬</span> Movies
-        </a>
-        <a href="{{ url_for('main_bp.series') }}" class="sidebar-item {% if request.endpoint == 'main_bp.series' %}active{% endif %}">
-            <span class="si-icon">📺</span> Series
-        </a>
-        {% if is_admin %}
-        <a href="{{ url_for('main_bp.jellyfin_library') }}" class="sidebar-item {% if request.endpoint == 'main_bp.jellyfin_library' %}active{% endif %}">
-            <span class="si-icon">♦</span> Jellyfin
-        </a>
-        <a href="#" id="download-link" class="sidebar-item">
-            <span class="si-icon">↓</span> Start download
-        </a>
-        {% endif %}
+        <div class="sidebar-section-label collapsible" data-section="vod">VOD <span class="collapse-arrow">▾</span></div>
+        <div class="sidebar-section-items" data-section="vod">
+            <a href="{{ url_for('main_bp.new_today') }}" class="sidebar-item {% if request.endpoint == 'main_bp.new_today' %}active{% endif %}">
+                <span class="si-icon">★</span> New this week
+            </a>
+            <a href="{{ url_for('main_bp.movies') }}" class="sidebar-item {% if request.endpoint == 'main_bp.movies' %}active{% endif %}">
+                <span class="si-icon">🎬</span> Movies
+            </a>
+            <a href="{{ url_for('main_bp.series') }}" class="sidebar-item {% if request.endpoint == 'main_bp.series' %}active{% endif %}">
+                <span class="si-icon">📺</span> Series
+            </a>
+            {% if is_admin %}
+            <a href="{{ url_for('main_bp.jellyfin_library') }}" class="sidebar-item {% if request.endpoint == 'main_bp.jellyfin_library' %}active{% endif %}">
+                <span class="si-icon">♦</span> Jellyfin
+            </a>
+            <a href="#" id="download-link" class="sidebar-item">
+                <span class="si-icon">↓</span> Start download
+            </a>
+            {% endif %}
+        </div>
     </div>
 
     {% if is_admin %}
     <div class="sidebar-section">
-        <div class="sidebar-section-label">Admin</div>
-        <a href="{{ url_for('main_bp.settings') }}" class="sidebar-item {% if request.endpoint == 'main_bp.settings' %}active{% endif %}">
-            <span class="si-icon">⚙</span> Settings
-        </a>
-        <a href="{{ url_for('main_bp.security') }}" class="sidebar-item {% if request.endpoint == 'main_bp.security' %}active{% endif %}">
-            <span class="si-icon">🔒</span> Security
-        </a>
-        <a href="{{ url_for('main_bp.log') }}" class="sidebar-item {% if request.endpoint == 'main_bp.log' %}active{% endif %}">
-            <span class="si-icon">📋</span> Log
-        </a>
-        <a href="{{ url_for('main_bp.file_browser') }}" class="sidebar-item {% if request.endpoint == 'main_bp.file_browser' %}active{% endif %}">
-            <span class="si-icon">📁</span> Files
-        </a>
+        <div class="sidebar-section-label collapsible" data-section="admin">Admin <span class="collapse-arrow">▾</span></div>
+        <div class="sidebar-section-items" data-section="admin">
+            <a href="{{ url_for('main_bp.settings') }}" class="sidebar-item {% if request.endpoint == 'main_bp.settings' %}active{% endif %}">
+                <span class="si-icon">⚙</span> Settings
+            </a>
+            <a href="{{ url_for('main_bp.security') }}" class="sidebar-item {% if request.endpoint == 'main_bp.security' %}active{% endif %}">
+                <span class="si-icon">🔒</span> Security
+            </a>
+            <a href="{{ url_for('main_bp.log') }}" class="sidebar-item {% if request.endpoint == 'main_bp.log' %}active{% endif %}">
+                <span class="si-icon">📋</span> Log
+            </a>
+            <a href="{{ url_for('main_bp.file_browser') }}" class="sidebar-item {% if request.endpoint == 'main_bp.file_browser' %}active{% endif %}">
+                <span class="si-icon">📁</span> Files
+            </a>
+        </div>
     </div>
     {% endif %}
 
     <div class="sidebar-section">
-        <div class="sidebar-section-label">About</div>
-        <a href="https://github.com/incmve/M3Usort/blob/main/README.md" target="_blank" class="sidebar-item">
-            <span class="si-icon">?</span> ReadMe
-        </a>
-        <a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" class="sidebar-item">
-            <span class="si-icon">📝</span> Changelog
-        </a>
+        <div class="sidebar-section-label collapsible" data-section="about">About <span class="collapse-arrow">▾</span></div>
+        <div class="sidebar-section-items" data-section="about">
+            <a href="https://github.com/incmve/M3Usort/blob/main/README.md" target="_blank" class="sidebar-item">
+                <span class="si-icon">?</span> ReadMe
+            </a>
+            <a href="https://github.com/incmve/M3Usort/blob/main/CHANGELOG.md" target="_blank" class="sidebar-item">
+                <span class="si-icon">📝</span> Changelog
+            </a>
+        </div>
     </div>
 
     <div class="sidebar-bottom">
@@ -89,6 +99,35 @@
     </div>
 </nav>
 
+<style>
+.sidebar-section-label.collapsible { cursor:pointer; display:flex; justify-content:space-between; align-items:center; user-select:none; }
+.collapse-arrow { font-size:10px; transition:transform .2s; }
+.sidebar-section-label.collapsible.collapsed .collapse-arrow { transform:rotate(-90deg); }
+.sidebar-section-items { overflow:hidden; transition:max-height .2s ease; }
+.sidebar-section-items.collapsed { max-height:0 !important; }
+</style>
+<script>
+(function() {
+    document.querySelectorAll('.sidebar-section-label.collapsible').forEach(function(label) {
+        var key = 'nav-collapsed-' + label.dataset.section;
+        var items = document.querySelector('.sidebar-section-items[data-section="' + label.dataset.section + '"]');
+        if (!items) return;
+        // Set natural height for transition
+        items.style.maxHeight = items.scrollHeight + 'px';
+        // Restore state
+        if (localStorage.getItem(key) === '1') {
+            label.classList.add('collapsed');
+            items.classList.add('collapsed');
+        }
+        label.addEventListener('click', function() {
+            var collapsed = label.classList.toggle('collapsed');
+            items.classList.toggle('collapsed', collapsed);
+            localStorage.setItem(key, collapsed ? '1' : '0');
+            if (!collapsed) items.style.maxHeight = items.scrollHeight + 'px';
+        });
+    });
+})();
+</script>
 <script>
 (function() {
     var dl = document.getElementById('download-link');

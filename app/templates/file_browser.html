@@ -14,11 +14,18 @@
         <span id="breadcrumb-inner"></span>
     </div>
 
+    <!-- Bulk action toolbar -->
+    <div id="bulk-toolbar" style="display:none; align-items:center; gap:10px; margin-bottom:10px; padding:8px 12px; background:#1a1010; border:1px solid #3a1515; border-radius:6px;">
+        <span id="bulk-count" style="font-size:13px; color:#d0d0d0; flex:1;"></span>
+        <button class="fb-del-bulk" onclick="confirmBulkDelete()">Delete selected</button>
+        <button class="button" style="font-size:12px; padding:4px 12px;" onclick="clearSelection()">Clear</button>
+    </div>
+
     <!-- File list -->
     <div class="info-block">
         <div class="info-block-header" id="current-path-label">Select a directory</div>
         <div id="file-list" style="min-height:60px;">
-            <div style="padding:20px; color:#444; text-align:center; font-size:13px;">Loading...</div>
+            <div style="padding:20px; color:#666; text-align:center; font-size:13px;">Loading...</div>
         </div>
     </div>
 
@@ -40,26 +47,32 @@
 .fb-row { display:flex; align-items:center; gap:10px; padding:9px 16px; border-bottom:1px solid #1a1a1a; transition:background .1s; }
 .fb-row:last-child { border-bottom:none; }
 .fb-row:hover { background:#161616; }
+.fb-row.fb-selected { background:#1a1a2a; }
 .fb-icon { font-size:15px; width:20px; text-align:center; flex-shrink:0; }
 .fb-name { font-size:13px; color:#d0d0d0; flex:1; cursor:pointer; }
 .fb-name:hover { color:#4aadcf; }
 .fb-dir .fb-name { color:#7ec8f0; font-weight:500; }
-.fb-meta { font-size:11px; color:#444; white-space:nowrap; }
+.fb-meta { font-size:11px; color:#888; white-space:nowrap; }
 .fb-ext-strm { font-size:10px; padding:1px 6px; border-radius:3px; background:#0d2535; color:#4aadcf; border:1px solid #1a3a5a; font-weight:600; }
 .fb-ext-mkv, .fb-ext-mp4, .fb-ext-avi { font-size:10px; padding:1px 6px; border-radius:3px; background:#2a1c08; color:#c8a030; border:1px solid #4a3010; font-weight:600; }
-.fb-del { background:transparent; border:1px solid #3a1010; color:#6a3030; border-radius:4px; padding:2px 8px; font-size:10px; cursor:pointer; transition:all .1s; flex-shrink:0; }
-.fb-del:hover { border-color:#8a2020; color:#ef7070; background:#200e0e; }
+.fb-del { background:#200e0e; border:1px solid #7a2020; color:#e06060; border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; transition:all .1s; flex-shrink:0; font-weight:600; }
+.fb-del:hover { border-color:#c03030; color:#ff8080; background:#2e0e0e; }
+.fb-del-bulk { background:#2e0e0e; border:1px solid #c03030; color:#ff7070; border-radius:4px; padding:4px 14px; font-size:12px; cursor:pointer; transition:all .1s; font-weight:600; }
+.fb-del-bulk:hover { background:#3e1010; border-color:#e04040; color:#ffaaaa; }
 .fb-breadcrumb-sep { color:#333; }
 .fb-breadcrumb-link { color:#4aadcf; cursor:pointer; }
 .fb-breadcrumb-link:hover { text-decoration:underline; }
 .fb-breadcrumb-current { color:#888; }
+.fb-checkbox { width:15px; height:15px; cursor:pointer; accent-color:#4aadcf; flex-shrink:0; }
+.fb-select-all-row { display:flex; align-items:center; gap:10px; padding:7px 16px; border-bottom:1px solid #252525; }
+.fb-select-all-label { font-size:12px; color:#666; cursor:pointer; user-select:none; }
 </style>
 
 <script>
 const MOVIES_DIR = {{ movies_dir | tojson }};
 const SERIES_DIR = {{ series_dir | tojson }};
 let currentPath = '';
-let deleteTarget = null;
+let selectedPaths = new Set();
 
 function formatSize(bytes) {
     if (!bytes) return '';
@@ -75,11 +88,17 @@ function extBadge(ext) {
     return cls ? `<span class="${cls}">.${ext}</span>` : `<span class="fb-meta">.${ext}</span>`;
 }
 
-function loadPath(path) {
+function loadPath(path, pushState = true) {
     currentPath = path;
-    document.getElementById('file-list').innerHTML = '<div style="padding:20px; color:#444; text-align:center; font-size:13px;">Loading...</div>';
-    const url = path ? `/files/list?path=${encodeURIComponent(path)}` : '/files/list';
-    fetch(url)
+    selectedPaths.clear();
+    updateBulkToolbar();
+    document.getElementById('file-list').innerHTML = '<div style="padding:20px; color:#666; text-align:center; font-size:13px;">Loading...</div>';
+    if (pushState) {
+        const url = path ? `/files?path=${encodeURIComponent(path)}` : '/files';
+        history.pushState({ path }, '', url);
+    }
+    const apiUrl = path ? `/files/list?path=${encodeURIComponent(path)}` : '/files/list';
+    fetch(apiUrl)
         .then(r => r.json())
         .then(data => {
             if (data.error) { document.getElementById('file-list').innerHTML = `<div style="padding:16px; color:#a04040;">${data.error}</div>`; return; }
@@ -92,17 +111,24 @@ function loadPath(path) {
 
 function renderList(items, path) {
     if (!items.length) {
-        document.getElementById('file-list').innerHTML = '<div style="padding:16px; color:#444; font-size:13px;">Empty directory</div>';
+        document.getElementById('file-list').innerHTML = '<div style="padding:16px; color:#666; font-size:13px;">Empty directory</div>';
         return;
     }
-    const rows = items.map(item => {
+    let html = `<div class="fb-select-all-row">
+        <input type="checkbox" class="fb-checkbox" id="select-all" onchange="toggleSelectAll(this)">
+        <label for="select-all" class="fb-select-all-label">Select all</label>
+    </div>`;
+    html += items.map(item => {
         const isDir = item.type === 'dir';
         const icon = isDir ? '📁' : (item.ext === 'strm' ? '🔗' : item.ext === 'mkv' ? '🎬' : '📄');
         const nameClick = isDir ? `onclick="loadPath('${escJs(item.path)}')"` : '';
         const badge = !isDir ? extBadge(item.ext) : '';
-        const meta = !isDir ? `<span class="fb-meta">${formatSize(item.size)}</span><span class="fb-meta">${item.modified}</span>` : `<span class="fb-meta">${item.modified}</span>`;
+        const meta = !isDir
+            ? `<span class="fb-meta">${formatSize(item.size)}</span><span class="fb-meta">${item.modified}</span>`
+            : `<span class="fb-meta">${item.modified}</span>`;
         const delBtn = `<button class="fb-del" onclick="confirmDelete('${escJs(item.path)}', '${escJs(item.name)}', ${isDir})">✕</button>`;
-        return `<div class="fb-row ${isDir ? 'fb-dir' : ''}">
+        return `<div class="fb-row ${isDir ? 'fb-dir' : ''}" data-path="${escHtml(item.path)}">
+            <input type="checkbox" class="fb-checkbox fb-row-cb" data-path="${escHtml(item.path)}" onchange="toggleSelect(this)">
             <span class="fb-icon">${icon}</span>
             <span class="fb-name" ${nameClick}>${escHtml(item.name)}</span>
             ${badge}
@@ -110,14 +136,89 @@ function renderList(items, path) {
             ${delBtn}
         </div>`;
     }).join('');
-    document.getElementById('file-list').innerHTML = rows;
+    document.getElementById('file-list').innerHTML = html;
+}
+
+function toggleSelect(cb) {
+    if (cb.checked) selectedPaths.add(cb.dataset.path);
+    else selectedPaths.delete(cb.dataset.path);
+    const row = cb.closest('.fb-row');
+    row.classList.toggle('fb-selected', cb.checked);
+    updateBulkToolbar();
+    updateSelectAllState();
+}
+
+function toggleSelectAll(cb) {
+    document.querySelectorAll('.fb-row-cb').forEach(box => {
+        box.checked = cb.checked;
+        const row = box.closest('.fb-row');
+        row.classList.toggle('fb-selected', cb.checked);
+        if (cb.checked) selectedPaths.add(box.dataset.path);
+        else selectedPaths.delete(box.dataset.path);
+    });
+    updateBulkToolbar();
+}
+
+function updateSelectAllState() {
+    const all = document.querySelectorAll('.fb-row-cb');
+    const checked = document.querySelectorAll('.fb-row-cb:checked');
+    const sa = document.getElementById('select-all');
+    if (!sa) return;
+    sa.indeterminate = checked.length > 0 && checked.length < all.length;
+    sa.checked = all.length > 0 && checked.length === all.length;
+}
+
+function clearSelection() {
+    selectedPaths.clear();
+    document.querySelectorAll('.fb-row-cb').forEach(cb => { cb.checked = false; cb.closest('.fb-row').classList.remove('fb-selected'); });
+    const sa = document.getElementById('select-all');
+    if (sa) { sa.checked = false; sa.indeterminate = false; }
+    updateBulkToolbar();
+}
+
+function updateBulkToolbar() {
+    const toolbar = document.getElementById('bulk-toolbar');
+    const count = selectedPaths.size;
+    toolbar.style.display = count > 0 ? 'flex' : 'none';
+    document.getElementById('bulk-count').textContent = `${count} item${count !== 1 ? 's' : ''} selected`;
+}
+
+function confirmDelete(path, name, isDir) {
+    document.getElementById('del-msg').textContent = `${isDir ? 'Folder' : 'File'}: ${name}${isDir ? ' (and all contents)' : ''}`;
+    document.getElementById('del-confirm').onclick = () => doDelete([path]);
+    document.getElementById('del-modal').style.display = 'flex';
+}
+
+function confirmBulkDelete() {
+    const count = selectedPaths.size;
+    document.getElementById('del-msg').textContent = `Delete ${count} selected item${count !== 1 ? 's' : ''}?`;
+    document.getElementById('del-confirm').onclick = () => doDelete([...selectedPaths]);
+    document.getElementById('del-modal').style.display = 'flex';
+}
+
+function closeDelModal() {
+    document.getElementById('del-modal').style.display = 'none';
+}
+
+function doDelete(paths) {
+    closeDelModal();
+    fetch('/files/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ paths })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) loadPath(currentPath);
+        else alert('Error: ' + data.error);
+    })
+    .catch(() => alert('Request failed'));
 }
 
 function renderBreadcrumb(path) {
     const bc = document.getElementById('breadcrumb-inner');
     if (!path) { bc.innerHTML = '<span class="fb-breadcrumb-current">Root</span>'; return; }
 
-    // Find which root this path is under
     const roots = [MOVIES_DIR, SERIES_DIR].filter(Boolean);
     let root = roots.find(r => path.startsWith(r)) || '';
     let relative = root ? path.slice(root.length) : path;
@@ -142,37 +243,16 @@ function renderBreadcrumb(path) {
     bc.innerHTML = html;
 }
 
-function confirmDelete(path, name, isDir) {
-    deleteTarget = path;
-    document.getElementById('del-msg').textContent = `${isDir ? 'Folder' : 'File'}: ${name}${isDir ? ' (and all contents)' : ''}`;
-    document.getElementById('del-confirm').onclick = () => doDelete(path);
-    document.getElementById('del-modal').style.display = 'flex';
-}
-
-function closeDelModal() {
-    document.getElementById('del-modal').style.display = 'none';
-    deleteTarget = null;
-}
-
-function doDelete(path) {
-    closeDelModal();
-    fetch('/files/delete', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({path})
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.success) loadPath(currentPath);
-        else alert('Error: ' + data.error);
-    })
-    .catch(() => alert('Request failed'));
-}
-
 function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function escJs(s) { return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDelModal(); });
-document.addEventListener('DOMContentLoaded', () => loadPath(''));
+window.addEventListener('popstate', e => { loadPath((e.state && e.state.path) || '', false); });
+document.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    const initialPath = params.get('path') || '';
+    history.replaceState({ path: initialPath }, '', window.location.href);
+    loadPath(initialPath, false);
+});
 </script>
 {% endblock %}
