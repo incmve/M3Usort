@@ -352,6 +352,7 @@ def is_download_needed(file_path, max_age_hours):
         return False
 
 def update_series_directory(series_dir):
+    from time import sleep
     series_list = GetSeriesList()
     overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series') or 0)
 
@@ -359,7 +360,16 @@ def update_series_directory(series_dir):
         for dir_name in dirs:
             matching_series = next((s for s in series_list if s['name'] == dir_name), None)
             if matching_series:
-                DownloadSeries(matching_series['series_id'])
+                if overwrite_series == 1:
+                    DownloadSeries(matching_series['series_id'])
+                    sleep(0.5)
+                else:
+                    # Count existing strm files — only call DownloadSeries if folder exists
+                    # process_episode will skip files that already exist
+                    series_folder = os.path.join(series_dir, dir_name)
+                    existing = set(f for f in os.listdir(series_folder) if f.endswith('.strm'))
+                    DownloadSeries(matching_series['series_id'], existing_files=existing)
+                    sleep(0.5)
             else:
                 PrintLog(f"No matching series found for directory: {dir_name}", "WARNING")
 
@@ -867,7 +877,7 @@ def GetSeriesList():
         PrintLog(f"Error fetching series list: {e}", "ERROR")
     return series
 
-def DownloadSeries(series_id):
+def DownloadSeries(series_id, existing_files=None):
     series_dir = get_config_variable(CONFIG_PATH, 'series_dir')
     m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
@@ -880,25 +890,41 @@ def DownloadSeries(series_id):
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     series_info_url = f"{base_url}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
     try:
-        response = requests.get(series_info_url)
+        response = requests.get(series_info_url, timeout=15)
         response.raise_for_status()
         series_info = response.json()
     except Exception as e:
         PrintLog(f"Error fetching series info for ID {series_id}: {e}", "ERROR")
         return
+
     series_name = series_info['info']['name']
 
+    # Build expected episode filenames from API response
+    all_episodes = []
     try:
         for season in series_info['episodes']:
             for episode in series_info['episodes'][season]:
-                process_episode(episode, series_name, base_url, username, password, series_dir, overwrite_series)
+                all_episodes.append(episode)
     except TypeError:
         try:
             for season_episodes in series_info['episodes']:
                 for episode in season_episodes:
-                    process_episode(episode, series_name, base_url, username, password, series_dir, overwrite_series)
-        except Exception as alternate_format_error:
-            PrintLog(f"Error processing alternate episodes format for series '{series_name}' with ID {series_id}: {alternate_format_error}", "WARNING")
+                    all_episodes.append(episode)
+        except Exception as e:
+            PrintLog(f"Error parsing episodes for '{series_name}': {e}", "WARNING")
+            return
+
+    # If existing_files provided and overwrite is off, skip episodes already on disk
+    for episode in all_episodes:
+        try:
+            episode_num = str(int(float(episode['episode_num']))).zfill(2)
+            season_num = str(int(float(episode.get('season', 1)))).zfill(2)
+            strm_file_name = f"{series_name} S{season_num}E{episode_num}.strm"
+            if existing_files is not None and overwrite_series != 1 and strm_file_name in existing_files:
+                continue
+            process_episode(episode, series_name, base_url, username, password, series_dir, overwrite_series)
+        except Exception as ep_error:
+            PrintLog(f"Error processing episode for series '{series_name}': {ep_error}", "ERROR")
 
 def process_episode(episode, series_name, base_url, username, password, series_dir, overwrite_series):
     try:
@@ -2369,23 +2395,20 @@ def file_browser_delete():
     allowed_roots = [r for r in [movies_dir, series_dir] if r]
 
     data = request.get_json()
-    paths = data.get('paths') or ([data.get('path')] if data.get('path') else [])
-    errors = []
-    for path in paths:
-        abs_path = os.path.realpath(path)
-        if not any(abs_path.startswith(os.path.realpath(r)) for r in allowed_roots):
-            errors.append(f'{path}: Access denied')
-            continue
-        try:
-            if os.path.isdir(abs_path):
-                shutil.rmtree(abs_path)
-            else:
-                os.remove(abs_path)
-        except Exception as e:
-            errors.append(f'{path}: {e}')
-    if errors:
-        return jsonify({'success': False, 'error': '\n'.join(errors)}), 500
-    return jsonify({'success': True})
+    path = data.get('path', '')
+    abs_path = os.path.realpath(path)
+
+    if not any(abs_path.startswith(os.path.realpath(r)) for r in allowed_roots):
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+
+    try:
+        if os.path.isdir(abs_path):
+            shutil.rmtree(abs_path)
+        else:
+            os.remove(abs_path)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @main_bp.route('/log')
 def log():
