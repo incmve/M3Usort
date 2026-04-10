@@ -94,9 +94,10 @@
     var dl = document.getElementById('download-link');
     if (!dl) return;
     var COOLDOWN = 300;
+    var LS_KEY = 'dl_started_at';
 
-    function startCooldown() {
-        var remaining = COOLDOWN;
+    function startCooldown(remaining) {
+        if (remaining === undefined) remaining = COOLDOWN;
         dl.style.pointerEvents = 'none';
         dl.style.color = '#4aadcf';
         dl.innerHTML = '<span class="si-icon">⏳</span> <span id="dl-countdown">' + remaining + 's</span>';
@@ -106,11 +107,24 @@
             if (el) el.textContent = remaining + 's';
             if (remaining <= 0) {
                 clearInterval(timer);
+                localStorage.removeItem(LS_KEY);
                 dl.style.pointerEvents = '';
                 dl.style.color = '';
                 dl.innerHTML = '<span class="si-icon">↓</span> Start download';
             }
         }, 1000);
+    }
+
+    // Resume countdown after page refresh
+    var stored = localStorage.getItem(LS_KEY);
+    if (stored) {
+        var elapsed = Math.floor((Date.now() - parseInt(stored)) / 1000);
+        var remaining = COOLDOWN - elapsed;
+        if (remaining > 0) {
+            startCooldown(remaining);
+        } else {
+            localStorage.removeItem(LS_KEY);
+        }
     }
 
     dl.addEventListener('click', function(e) {
@@ -119,6 +133,7 @@
         fetch('/download', {method: 'GET'})
             .then(r => r.json())
             .then(data => {
+                localStorage.setItem(LS_KEY, Date.now().toString());
                 startCooldown();
                 const c = document.querySelector('.flash-wrap');
                 if (c) {
