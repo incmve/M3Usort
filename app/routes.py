@@ -140,7 +140,8 @@ def enrich_vod_cache():
     try:
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
         if os.path.exists(movies_cache_path):
-            movies_data = json.load(open(movies_cache_path, encoding='utf-8'))
+            with open(movies_cache_path, encoding='utf-8') as f:
+                movies_data = json.load(f)
             enriched = 0
             for movie in movies_data:
                 if not movie.get('tmdb_id') and not movie.get('plot'):
@@ -166,7 +167,8 @@ def enrich_vod_cache():
     try:
         series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
         if os.path.exists(series_cache_path):
-            series_data = json.load(open(series_cache_path, encoding='utf-8'))
+            with open(series_cache_path, encoding='utf-8') as f:
+                series_data = json.load(f)
             enriched = 0
             for serie in series_data:
                 if not serie.get('tmdb_id') and not serie.get('plot'):
@@ -225,7 +227,8 @@ def save_vod_cache():
         existing_info = {}
         if os.path.exists(movies_cache_path):
             try:
-                existing = json.load(open(movies_cache_path, encoding='utf-8'))
+                with open(movies_cache_path, encoding='utf-8') as f:
+                    existing = json.load(f)
                 existing_info = {m['stream_id']: m for m in existing if m.get('tmdb_id') or m.get('plot')}
             except Exception:
                 pass
@@ -263,7 +266,8 @@ def save_vod_cache():
         existing_info = {}
         if os.path.exists(series_cache_path):
             try:
-                existing = json.load(open(series_cache_path, encoding='utf-8'))
+                with open(series_cache_path, encoding='utf-8') as f:
+                    existing = json.load(f)
                 existing_info = {s['series_id']: s for s in existing if s.get('tmdb_id') or s.get('plot') or s.get('cover','').startswith('https://image.tmdb')}
             except Exception:
                 pass
@@ -680,8 +684,16 @@ def update_home_data():
 
     movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
     series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
-    total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
-    total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
+    if os.path.exists(movies_cache_path):
+        with open(movies_cache_path, encoding='utf-8') as f:
+            total_movies = len(json.load(f))
+    else:
+        total_movies = 0
+    if os.path.exists(series_cache_path):
+        with open(series_cache_path, encoding='utf-8') as f:
+            total_series = len(json.load(f))
+    else:
+        total_series = 0
 
     uptime_duration = current_time - app.app_start_time
     total_seconds = int(uptime_duration.total_seconds())
@@ -776,8 +788,16 @@ def home():
 
     movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
     series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
-    total_movies = len(json.load(open(movies_cache_path, encoding='utf-8'))) if os.path.exists(movies_cache_path) else 0
-    total_series = len(json.load(open(series_cache_path, encoding='utf-8'))) if os.path.exists(series_cache_path) else 0
+    if os.path.exists(movies_cache_path):
+        with open(movies_cache_path, encoding='utf-8') as f:
+            total_movies = len(json.load(f))
+    else:
+        total_movies = 0
+    if os.path.exists(series_cache_path):
+        with open(series_cache_path, encoding='utf-8') as f:
+            total_series = len(json.load(f))
+    else:
+        total_series = 0
 
     uptime_duration = current_time - app.app_start_time
     total_seconds = int(uptime_duration.total_seconds())
@@ -1463,7 +1483,8 @@ def get_vod_info(stream_id):
     try:
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
         if os.path.exists(movies_cache_path):
-            movies_data = json.load(open(movies_cache_path, encoding='utf-8'))
+            with open(movies_cache_path, encoding='utf-8') as f:
+                movies_data = json.load(f)
             movie = next((m for m in movies_data if m.get('stream_id') == stream_id), None)
             if movie:
                 name = movie.get('name', '')
@@ -1512,7 +1533,8 @@ def get_series_info_meta(series_id):
     try:
         series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
         if os.path.exists(series_cache_path):
-            series_data = json.load(open(series_cache_path, encoding='utf-8'))
+            with open(series_cache_path, encoding='utf-8') as f:
+                series_data = json.load(f)
             serie = next((s for s in series_data if s.get('series_id') == series_id), None)
             if serie:
                 name    = serie.get('name', '')

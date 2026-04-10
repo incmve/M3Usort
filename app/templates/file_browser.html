@@ -224,10 +224,10 @@ function doDelete(paths) {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.success) loadPath(currentPath);
-        else alert('Error: ' + data.error);
+        loadPath(currentPath);
+        if (!data.success) alert('Error: ' + data.error);
     })
-    .catch(() => alert('Request failed'));
+    .catch(() => { loadPath(currentPath); alert('Request failed'); });
 }
 
 function renderBreadcrumb(path) {
