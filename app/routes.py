@@ -2395,20 +2395,23 @@ def file_browser_delete():
     allowed_roots = [r for r in [movies_dir, series_dir] if r]
 
     data = request.get_json()
-    path = data.get('path', '')
-    abs_path = os.path.realpath(path)
+    paths = data.get('paths', [])
+    if not paths:
+        return jsonify({'success': False, 'error': 'No paths provided'}), 400
 
-    if not any(abs_path.startswith(os.path.realpath(r)) for r in allowed_roots):
-        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    for path in paths:
+        abs_path = os.path.realpath(path)
+        if not any(abs_path.startswith(os.path.realpath(r)) for r in allowed_roots):
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
+        try:
+            if os.path.isdir(abs_path):
+                shutil.rmtree(abs_path)
+            else:
+                os.remove(abs_path)
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
 
-    try:
-        if os.path.isdir(abs_path):
-            shutil.rmtree(abs_path)
-        else:
-            os.remove(abs_path)
-        return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify({'success': True})
 
 @main_bp.route('/log')
 def log():
