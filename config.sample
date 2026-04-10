@@ -16,6 +16,14 @@ match_type = "1"
 jellyfin_enabled = "0"
 jellyfin_url = ""
 jellyfin_api_key = ""
+smb_enabled = "0"
+smb_host = ""
+smb_share = ""
+smb_path = ""
+smb_username = ""
+smb_password = ""
+backup_scheduled = "0"
+backup_time = "02:00"
 
 
 # List of channel groups to whitelist

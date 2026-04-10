@@ -6,4 +6,5 @@ flask_apscheduler
 requests
 m3u-ipytv
 packaging
-cryptography
+cryptography>=46.0.7
+smbprotocol

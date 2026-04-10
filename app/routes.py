@@ -25,6 +25,8 @@ from packaging import version
 import hashlib
 import difflib
 import shutil
+import zipfile
+import io
 from cryptography.fernet import Fernet
 import base64
 
@@ -94,10 +96,25 @@ def admin_required(f):
 
 @app.context_processor
 def inject_globals():
+    secret_key_in_config = None
+    if os.path.exists(CONFIG_PATH):
+        val = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
+        if val:
+            secret_key_in_config = val
     return dict(
         UPDATE_AVAILABLE=UPDATE_AVAILABLE,
-        is_admin=session.get('is_admin', False)
+        is_admin=session.get('is_admin', False),
+        secret_key_in_config=secret_key_in_config
     )
+
+@app.before_request
+def redirect_if_secret_key_in_config():
+    """Redirect any authenticated request to the migration page if SECRET_KEY is still in config.py."""
+    allowed = {'migrate_secret_key', 'remove_secret_key_from_config', 'static', 'login', 'logout', 'setup', 'setup_restore', 'healthcheck'}
+    if request.endpoint and request.endpoint.split('.')[-1] not in allowed:
+        if session.get('is_admin') and os.path.exists(CONFIG_PATH):
+            if get_config_variable(CONFIG_PATH, 'SECRET_KEY'):
+                return redirect(url_for('migrate_secret_key'))
 
 
 @app.route('/healthcheck')
@@ -485,7 +502,10 @@ ENCRYPTED_FIELDS = ['url', 'jellyfin_api_key', 'tmdb_api_key']
 ENCRYPTION_PREFIX = 'enc:'
 
 def _get_fernet():
-    secret_key = os.environ.get('SECRET_KEY') or get_config_variable(CONFIG_PATH, 'SECRET_KEY') or 'default-insecure-key'
+    secret_key = os.environ.get('SECRET_KEY')
+    if not secret_key:
+        logging.error("SECRET_KEY is not set in environment. Encryption/decryption will fail.")
+        raise RuntimeError("SECRET_KEY not set in environment")
     key = base64.urlsafe_b64encode(hashlib.sha256(secret_key.encode()).digest())
     return Fernet(key)
 
@@ -502,9 +522,10 @@ def encrypt_credential(value):
 def decrypt_credential(value):
     if not value or not value.startswith(ENCRYPTION_PREFIX):
         return value
+    token = value[len(ENCRYPTION_PREFIX):].encode()
     try:
         f = _get_fernet()
-        return f.decrypt(value[len(ENCRYPTION_PREFIX):].encode()).decode()
+        return f.decrypt(token).decode()
     except Exception as e:
         logging.error(f"Decryption error: {e}")
         return value
@@ -1669,7 +1690,32 @@ def settings():
         update_config_variable(CONFIG_PATH, 'jellyfin_url', form.jellyfin_url.data)
         set_credential('jellyfin_api_key', form.jellyfin_api_key.data)
         set_credential('tmdb_api_key', form.tmdb_api_key.data)
+        update_config_variable(CONFIG_PATH, 'smb_enabled', form.smb_enabled.data)
+        update_config_variable(CONFIG_PATH, 'smb_host', form.smb_host.data)
+        update_config_variable(CONFIG_PATH, 'smb_share', form.smb_share.data)
+        update_config_variable(CONFIG_PATH, 'smb_path', form.smb_path.data)
+        update_config_variable(CONFIG_PATH, 'smb_username', form.smb_username.data)
+        if form.smb_password.data:
+            set_credential('smb_password', form.smb_password.data)
+        update_config_variable(CONFIG_PATH, 'backup_scheduled', form.backup_scheduled.data)
+        update_config_variable(CONFIG_PATH, 'backup_time', form.backup_time.data or '02:00')
         update_config_variable(CONFIG_PATH, 'debug', form.debug.data)
+
+        # Manage scheduled backup job
+        backup_job = scheduler.get_job('SMB Backup scheduler')
+        if form.backup_scheduled.data == '0' or form.smb_enabled.data == '0':
+            if backup_job:
+                scheduler.remove_job(id='SMB Backup scheduler')
+        else:
+            try:
+                t = form.backup_time.data or '02:00'
+                bh, bm = int(t.split(':')[0]), int(t.split(':')[1])
+            except Exception:
+                bh, bm = 2, 0
+            if backup_job:
+                scheduler.remove_job(id='SMB Backup scheduler')
+            scheduler.add_job(id='SMB Backup scheduler', func=scheduled_smb_backup,
+                              trigger='cron', hour=bh, minute=bm)
 
         job = scheduler.get_job('M3U Download scheduler')
         if job:
@@ -1700,7 +1746,11 @@ def settings():
         return redirect(url_for('main_bp.settings'))
 
     else:
-        form.url.data = get_credential('url')
+        def _safe_credential(key):
+            val = get_credential(key)
+            return '' if val and val.startswith(ENCRYPTION_PREFIX) else (val or '')
+
+        form.url.data = _safe_credential('url')
         form.output.data = get_config_variable(CONFIG_PATH, 'output')
         form.maxage.data = get_config_variable(CONFIG_PATH, 'maxage_before_download')
         form.new_group_title.data = get_config_variable(CONFIG_PATH, 'new_group_title')
@@ -1714,11 +1764,40 @@ def settings():
         form.match_type.data = get_config_variable(CONFIG_PATH, 'match_type')
         form.jellyfin_enabled.data = get_config_variable(CONFIG_PATH, 'jellyfin_enabled') or "0"
         form.jellyfin_url.data = get_config_variable(CONFIG_PATH, 'jellyfin_url')
-        form.jellyfin_api_key.data = get_credential('jellyfin_api_key')
-        form.tmdb_api_key.data = get_credential('tmdb_api_key')
+        form.jellyfin_api_key.data = _safe_credential('jellyfin_api_key')
+        form.tmdb_api_key.data = _safe_credential('tmdb_api_key')
+        form.smb_enabled.data = get_config_variable(CONFIG_PATH, 'smb_enabled') or "0"
+        form.smb_host.data = get_config_variable(CONFIG_PATH, 'smb_host') or ''
+        form.smb_share.data = get_config_variable(CONFIG_PATH, 'smb_share') or ''
+        form.smb_path.data = get_config_variable(CONFIG_PATH, 'smb_path') or ''
+        form.smb_username.data = get_config_variable(CONFIG_PATH, 'smb_username') or ''
+        form.smb_password.data = ''  # never pre-fill password
+        form.backup_scheduled.data = get_config_variable(CONFIG_PATH, 'backup_scheduled') or "0"
+        form.backup_time.data = get_config_variable(CONFIG_PATH, 'backup_time') or "02:00"
         form.debug.data = get_config_variable(CONFIG_PATH, 'debug') or "no"
 
     return render_template('settings.html', form=form)
+
+
+@app.route('/migrate_secret_key')
+@admin_required
+def migrate_secret_key():
+    return render_template('migrate_secret_key.html')
+
+
+@app.route('/remove_secret_key_from_config', methods=['POST'])
+@admin_required
+def remove_secret_key_from_config():
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        filtered = [l for l in lines if not l.strip().startswith('SECRET_KEY')]
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            f.writelines(filtered)
+        flash("SECRET_KEY removed from config.py. Make sure it is set in your .env file.", "success")
+    except Exception as e:
+        flash(f"Could not update config.py: {e}", "danger")
+    return redirect(url_for('main_bp.settings'))
 
 
 @main_bp.route('/backup_config')
@@ -1732,6 +1811,84 @@ def backup_config():
     )
 
 
+def _build_backup_zip():
+    """Build an in-memory ZIP containing config.py."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.write(CONFIG_PATH, 'config.py')
+    buf.seek(0)
+    return buf
+
+
+@main_bp.route('/backup/download')
+@admin_required
+def backup_download():
+    """Download a ZIP backup of config.py."""
+    from flask import send_file
+    buf = _build_backup_zip()
+    filename = f"m3usort_backup_{datetime.now().strftime('%Y-%m-%d')}.zip"
+    return send_file(buf, as_attachment=True, download_name=filename, mimetype='application/zip')
+
+
+@main_bp.route('/backup/smb', methods=['POST'])
+@admin_required
+def backup_smb():
+    """Write a ZIP backup of config.py to the configured SMB share."""
+    smb_enabled = get_config_variable(CONFIG_PATH, 'smb_enabled') or '0'
+    if smb_enabled != '1':
+        return jsonify({'success': False, 'error': 'SMB not enabled'}), 400
+
+    smb_host     = get_config_variable(CONFIG_PATH, 'smb_host') or ''
+    smb_share    = get_config_variable(CONFIG_PATH, 'smb_share') or ''
+    smb_path     = (get_config_variable(CONFIG_PATH, 'smb_path') or '').strip('/')
+    smb_username = get_config_variable(CONFIG_PATH, 'smb_username') or ''
+    smb_password = get_credential('smb_password') or ''
+
+    if not smb_host or not smb_share:
+        return jsonify({'success': False, 'error': 'SMB host or share not configured'}), 400
+
+    try:
+        import smbclient
+        smbclient.ClientConfig(username=smb_username, password=smb_password)
+        filename = f"m3usort_backup_{datetime.now().strftime('%Y-%m-%d_%H%M')}.zip"
+        remote_path = f"\\\\{smb_host}\\{smb_share}\\{smb_path}\\{filename}".replace('\\\\', '\\\\').replace('//', '//')
+        buf = _build_backup_zip()
+        with smbclient.open_file(remote_path, mode='wb') as rf:
+            rf.write(buf.read())
+        PrintLog(f"Backup written to SMB: {remote_path}", "INFO")
+        return jsonify({'success': True, 'filename': filename})
+    except Exception as e:
+        PrintLog(f"SMB backup failed: {e}", "ERROR")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def scheduled_smb_backup():
+    """Scheduled daily backup to SMB."""
+    with app.app_context():
+        smb_enabled = get_config_variable(CONFIG_PATH, 'smb_enabled') or '0'
+        if smb_enabled != '1':
+            return
+        smb_host     = get_config_variable(CONFIG_PATH, 'smb_host') or ''
+        smb_share    = get_config_variable(CONFIG_PATH, 'smb_share') or ''
+        smb_path     = (get_config_variable(CONFIG_PATH, 'smb_path') or '').strip('/')
+        smb_username = get_config_variable(CONFIG_PATH, 'smb_username') or ''
+        smb_password = get_credential('smb_password') or ''
+        if not smb_host or not smb_share:
+            PrintLog("Scheduled SMB backup: host/share not configured", "ERROR")
+            return
+        try:
+            import smbclient
+            smbclient.ClientConfig(username=smb_username, password=smb_password)
+            filename = f"m3usort_backup_{datetime.now().strftime('%Y-%m-%d_%H%M')}.zip"
+            remote_path = f"\\\\{smb_host}\\{smb_share}\\{smb_path}\\{filename}"
+            buf = _build_backup_zip()
+            with smbclient.open_file(remote_path, mode='wb') as rf:
+                rf.write(buf.read())
+            PrintLog(f"Scheduled backup written to SMB: {remote_path}", "INFO")
+        except Exception as e:
+            PrintLog(f"Scheduled SMB backup failed: {e}", "ERROR")
+
+
 @main_bp.route('/restore_config', methods=['POST'])
 @admin_required
 def restore_config():
@@ -1740,11 +1897,23 @@ def restore_config():
         return redirect(url_for('main_bp.settings'))
 
     f = request.files['config_file']
-    if not f.filename.endswith('.py'):
-        flash("Invalid file. Please upload a config.py file.", "danger")
+    fname = f.filename or ''
+    if not (fname.endswith('.py') or fname.endswith('.zip')):
+        flash("Invalid file. Please upload a config.py or backup .zip file.", "danger")
         return redirect(url_for('main_bp.settings'))
 
-    content = f.read().decode('utf-8')
+    if fname.endswith('.zip'):
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(f.read()))
+            if 'config.py' not in zf.namelist():
+                flash("ZIP does not contain config.py.", "danger")
+                return redirect(url_for('main_bp.settings'))
+            content = zf.read('config.py').decode('utf-8')
+        except Exception as e:
+            flash(f"Could not read ZIP: {e}", "danger")
+            return redirect(url_for('main_bp.settings'))
+    else:
+        content = f.read().decode('utf-8')
 
     # Validate required keys exist
     required_keys = ['url', 'output', 'admin_password', 'playlist_password']
@@ -1758,6 +1927,12 @@ def restore_config():
     missing = [k for k in required_keys if k not in config_ns]
     if missing:
         flash(f"Config file is missing required keys: {', '.join(missing)}", "danger")
+        return redirect(url_for('main_bp.settings'))
+
+    # Block restore if SECRET_KEY is present in the backup — user must move it to .env first
+    if 'SECRET_KEY' in config_ns:
+        session['restore_secret_key'] = config_ns['SECRET_KEY']
+        flash("secret_key_in_restore", "secret_key_restore")
         return redirect(url_for('main_bp.settings'))
 
     # Backup current config before overwriting
@@ -1860,11 +2035,23 @@ def setup_restore():
         return redirect(url_for('setup'))
 
     f = request.files['config_file']
-    if not f.filename.endswith('.py'):
-        flash("Invalid file. Please upload a config.py file.", "danger")
+    fname = f.filename or ''
+    if not (fname.endswith('.py') or fname.endswith('.zip')):
+        flash("Invalid file. Please upload a config.py or backup .zip file.", "danger")
         return redirect(url_for('setup'))
 
-    content = f.read().decode('utf-8')
+    if fname.endswith('.zip'):
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(f.read()))
+            if 'config.py' not in zf.namelist():
+                flash("ZIP does not contain config.py.", "danger")
+                return redirect(url_for('setup'))
+            content = zf.read('config.py').decode('utf-8')
+        except Exception as e:
+            flash(f"Could not read ZIP: {e}", "danger")
+            return redirect(url_for('setup'))
+    else:
+        content = f.read().decode('utf-8')
 
     # Validate required keys
     required_keys = ['url', 'output', 'admin_password', 'playlist_password']
@@ -1878,6 +2065,12 @@ def setup_restore():
     missing = [k for k in required_keys if k not in config_ns]
     if missing:
         flash(f"Config file is missing required keys: {', '.join(missing)}", "danger")
+        return redirect(url_for('setup'))
+
+    # Block restore if SECRET_KEY is present in the backup — user must move it to .env first
+    if 'SECRET_KEY' in config_ns:
+        session['restore_secret_key'] = config_ns['SECRET_KEY']
+        flash("secret_key_in_restore", "secret_key_restore")
         return redirect(url_for('setup'))
 
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
@@ -2513,19 +2706,17 @@ def startup_instant():
         PrintLog("No config.py found — setup wizard will be shown.", "WARNING")
         return
 
-    # Set SECRET_KEY from env var if available, otherwise fall back to config
+    # SECRET_KEY must come from environment only — never from config.py
     env_secret = os.environ.get('SECRET_KEY')
     if env_secret:
         app.config['SECRET_KEY'] = env_secret
     else:
-        config_secret = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
-        if config_secret and config_secret != "ChangeMe!":
-            app.config['SECRET_KEY'] = config_secret
-        else:
-            new_secret_key = secrets.token_urlsafe(32)
-            update_config_variable(CONFIG_PATH, 'SECRET_KEY', new_secret_key)
-            app.config['SECRET_KEY'] = new_secret_key
-            PrintLog("Generated new SECRET_KEY and saved to config.", "INFO")
+        PrintLog("WARNING: SECRET_KEY is not set in environment. Set it in your .env file or docker-compose.", "WARNING")
+
+    # Warn if SECRET_KEY is still present in config.py (should be moved to .env)
+    config_secret = get_config_variable(CONFIG_PATH, 'SECRET_KEY')
+    if config_secret:
+        PrintLog("WARNING: SECRET_KEY found in config.py — it should be removed and placed in your .env file.", "WARNING")
 
     # Migrate any plaintext credentials to encrypted
     migrate_credentials()

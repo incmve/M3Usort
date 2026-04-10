@@ -26,10 +26,22 @@
 
     <div class="page-wrapper">
         <div class="flash-wrap">
-            {% with messages = get_flashed_messages(with_categories=true) %}
+{% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
             {% for category, message in messages %}
+            {% if category == 'secret_key_restore' %}
+            <div class="flash-message danger" style="margin-top:10px;">
+                <strong>Restore blocked:</strong> The backup contains a <code>SECRET_KEY</code> which must be moved to your <code>.env</code> file before restoring.
+                Add the line below to your <code>.env</code> file, then remove <code>SECRET_KEY</code> from the backup's <code>config.py</code> and try again:
+                <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+                    {% set sk = session.get('restore_secret_key', '') %}
+                    <code id="rsk-value" style="background:#1a1c1f; padding:4px 10px; border-radius:4px; font-size:13px; user-select:all;">SECRET_KEY={{ sk }}</code>
+                    <button onclick="navigator.clipboard.writeText('SECRET_KEY={{ sk }}').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})" style="padding:4px 12px; font-size:12px; cursor:pointer; background:#4aadcf; border:none; border-radius:4px; color:#fff;">Copy</button>
+                </div>
+            </div>
+            {% else %}
             <div class="flash-message {{ category }}" style="margin-top:10px;">{{ message }}</div>
+            {% endif %}
             {% endfor %}
             {% endif %}
             {% endwith %}

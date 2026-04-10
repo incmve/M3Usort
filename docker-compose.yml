@@ -1,18 +1,18 @@
 services:
   m3usort:
-    image: incmve/m3usort:latest
+    build: .
     container_name: m3usort
     volumes:
-      - /opt/stacks/m3usort:/data/M3Usort
-      - /data/media/movies:/data/media/movies
-      - /data/media/tv:/data/media/tv
+      - C:/temp/m3usort/data:/data/M3Usort
+      - C:/temp/m3usort/movies:/data/media/movies
+      - C:/temp/m3usort/tv:/data/media/tv
     restart: always
     environment:
       - PUID=${PUID:-0}
       - PGID=${PGID:-0}
       - HOST_IP=${HOST_IP}
       - TZ=${TZ}
-      - SECRET_KEY=${SECRET_KEY:-ChangeMe!}
+      - SECRET_KEY=${SECRET_KEY}
     ports:
       - 5050:5050
 networks: {}

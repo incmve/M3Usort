@@ -67,25 +67,77 @@
                 <div><label>{{ form.tmdb_api_key.label }}</label>{{ form.tmdb_api_key(class_="filter-input", style="width:100%", placeholder="TMDB API key (v3 auth)") }}</div>
             </div>
             </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">SMB Backup</div>
+            <div class="settings-section-body">
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; margin-bottom:14px;">
+                    <div><label>{{ form.smb_enabled.label }}</label>{{ form.smb_enabled(class_="filter-select", style="width:100%") }}</div>
+                    <div><label>{{ form.smb_host.label }}</label>{{ form.smb_host(class_="filter-input", style="width:100%", placeholder="192.168.0.10") }}</div>
+                    <div><label>{{ form.smb_share.label }}</label>{{ form.smb_share(class_="filter-input", style="width:100%", placeholder="backups") }}</div>
+                    <div><label>{{ form.smb_path.label }}</label>{{ form.smb_path(class_="filter-input", style="width:100%", placeholder="m3usort") }}</div>
+                    <div><label>{{ form.smb_username.label }}</label>{{ form.smb_username(class_="filter-input", style="width:100%", placeholder="username") }}</div>
+                    <div><label>{{ form.smb_password.label }}</label>{{ form.smb_password(class_="filter-input", style="width:100%", type="password", placeholder="leave blank to keep current") }}</div>
+                </div>
+                <div style="display:inline-flex; gap:14px; align-items:flex-end; flex-wrap:wrap;">
+                    <div><label>{{ form.backup_scheduled.label }}</label>{{ form.backup_scheduled(class_="filter-select", style="width:160px;") }}</div>
+                    <div><label>{{ form.backup_time.label }}</label>{{ form.backup_time(class_="filter-input", style="width:130px; color-scheme:dark;", type="time") }}</div>
+                </div>
+            </div>
+        </div>
         </div>
         <button type="submit" name="submit" class="button button-primary">Save Settings</button>
     </form>
 
     <div class="settings-section" style="margin-top:20px;">
         <div class="settings-section-title">Backup &amp; Restore</div>
-            <div class="settings-section-body">
-        <p style="color:#888; font-size:13px; margin-bottom:14px;">Credentials are encrypted using the <code>SECRET_KEY</code> from your <code>.env</code> file — keep it consistent across restores.</p>
-        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-            <a href="{{ url_for('main_bp.backup_config') }}" class="button">↓ Download config</a>
-            <label class="button" style="cursor:pointer; margin:0; line-height:34px; height:34px;">
-                ↑ Restore config
-                <form id="restore-form" method="POST" action="{{ url_for('main_bp.restore_config') }}" enctype="multipart/form-data">
-                    <input type="hidden" name="csrf_token" value="{{ form.csrf_token._value() }}">
-                    <input type="file" name="config_file" accept=".py" required style="display:none;" onchange="document.getElementById('restore-form').submit();">
-                </form>
-            </label>
+        <div class="settings-section-body">
+            <p style="color:#888; font-size:13px; margin-bottom:14px;">After restore, re-enter your M3U URL in settings if prompted — credentials are tied to your <code>SECRET_KEY</code>.</p>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <a href="{{ url_for('main_bp.backup_download') }}" class="button">↓ Download backup</a>
+                <button id="smb-backup-btn" class="button" onclick="doSmbBackup(event)">☁ Backup to SMB</button>
+                <label class="button" style="cursor:pointer; margin:0; line-height:34px; height:34px;">
+                    ↑ Restore config
+                    <form id="restore-form" method="POST" action="{{ url_for('main_bp.restore_config') }}" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ form.csrf_token._value() }}">
+                        <input type="file" name="config_file" accept=".py,.zip" required style="display:none;" onchange="document.getElementById('restore-form').submit();">
+                    </form>
+                </label>
             </div>
+            <div id="smb-backup-msg" style="margin-top:10px; font-size:13px; display:none;"></div>
         </div>
     </div>
+
+<script>
+function doSmbBackup(e) {
+    e.preventDefault();
+    const btn = document.getElementById('smb-backup-btn');
+    const msg = document.getElementById('smb-backup-msg');
+    btn.disabled = true;
+    btn.textContent = '⏳ Backing up...';
+    msg.style.display = 'none';
+    fetch('{{ url_for("main_bp.backup_smb") }}', { method: 'POST', headers: {'X-CSRFToken': '{{ form.csrf_token._value() }}'} })
+        .then(r => r.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.textContent = '☁ Backup to SMB';
+            msg.style.display = '';
+            if (data.success) {
+                msg.style.color = '#5abf7e';
+                msg.textContent = '✓ Backup written: ' + data.filename;
+            } else {
+                msg.style.color = '#e06060';
+                msg.textContent = '✗ ' + data.error;
+            }
+        })
+        .catch(() => {
+            btn.disabled = false;
+            btn.textContent = '☁ Backup to SMB';
+            msg.style.display = '';
+            msg.style.color = '#e06060';
+            msg.textContent = '✗ Request failed';
+        });
+}
+</script>
 </div>
 {% endblock %}
