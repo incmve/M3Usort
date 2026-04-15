@@ -1880,8 +1880,6 @@ def backup_download():
     return send_file(buf, as_attachment=True, download_name=filename, mimetype='application/zip')
 
 
-@main_bp.route('/backup/smb', methods=['POST'])
-@admin_required
 def _smb_cleanup(smbclient, smb_host, smb_share, smb_path, keep):
     """Delete oldest m3usort backup ZIPs on the share, keeping the newest `keep` files."""
     try:
@@ -1901,6 +1899,8 @@ def _smb_cleanup(smbclient, smb_host, smb_share, smb_path, keep):
         PrintLog(f"SMB backup cleanup failed: {e}", "WARNING")
 
 
+@main_bp.route('/backup/smb', methods=['POST'])
+@admin_required
 def backup_smb():
     """Write a ZIP backup of config.py to the configured SMB share."""
     smb_enabled = get_config_variable(CONFIG_PATH, 'smb_enabled') or '0'
