@@ -1926,11 +1926,13 @@ def backup_smb():
         with smbclient.open_file(remote_path, mode='wb') as rf:
             rf.write(buf.read())
         PrintLog(f"Backup written to SMB: {remote_path}", "INFO")
-        _smb_cleanup(smbclient, smb_host, smb_share, smb_path, backup_keep)
-        return jsonify({'success': True, 'filename': filename})
     except Exception as e:
         PrintLog(f"SMB backup failed: {e}", "ERROR")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+    # Cleanup only runs after a confirmed successful write
+    _smb_cleanup(smbclient, smb_host, smb_share, smb_path, backup_keep)
+    return jsonify({'success': True, 'filename': filename})
 
 
 def scheduled_smb_backup():
@@ -1957,9 +1959,12 @@ def scheduled_smb_backup():
             with smbclient.open_file(remote_path, mode='wb') as rf:
                 rf.write(buf.read())
             PrintLog(f"Scheduled backup written to SMB: {remote_path}", "INFO")
-            _smb_cleanup(smbclient, smb_host, smb_share, smb_path, backup_keep)
         except Exception as e:
             PrintLog(f"Scheduled SMB backup failed: {e}", "ERROR")
+            return
+
+        # Cleanup only runs after a confirmed successful write
+        _smb_cleanup(smbclient, smb_host, smb_share, smb_path, backup_keep)
 
 
 @main_bp.route('/restore_config', methods=['POST'])
