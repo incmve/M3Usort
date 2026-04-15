@@ -23,7 +23,11 @@
 
     <!-- File list -->
     <div class="info-block">
-        <div class="info-block-header" id="current-path-label">Select a directory</div>
+        <div class="info-block-header" style="display:flex; align-items:center; gap:10px;">
+            <span id="current-path-label" style="flex:1;">Select a directory</span>
+            <input id="fb-search" type="text" placeholder="Filter..." oninput="filterList(this.value)"
+                style="display:none; background:#0e0e0e; border:1px solid #2a2a2a; border-radius:4px; color:#d0d0d0; font-size:12px; padding:3px 8px; width:180px; outline:none;">
+        </div>
         <div id="file-list" style="min-height:60px;">
             <div style="padding:20px; color:#666; text-align:center; font-size:13px;">Loading...</div>
         </div>
@@ -94,6 +98,9 @@ function loadPath(path, pushState = true) {
     selectedPaths.clear();
     lastCheckedIndex = -1;
     updateBulkToolbar();
+    const searchEl = document.getElementById('fb-search');
+    searchEl.value = '';
+    searchEl.style.display = 'none';
     document.getElementById('file-list').innerHTML = '<div style="padding:20px; color:#666; text-align:center; font-size:13px;">Loading...</div>';
     if (pushState) {
         const url = path ? `/files?path=${encodeURIComponent(path)}` : '/files';
@@ -139,6 +146,31 @@ function renderList(items, path) {
         </div>`;
     }).join('');
     document.getElementById('file-list').innerHTML = html;
+    document.getElementById('fb-search').style.display = 'block';
+}
+
+function filterList(term) {
+    const q = term.trim().toLowerCase();
+    let visible = 0;
+    document.querySelectorAll('.fb-row').forEach(row => {
+        const name = (row.querySelector('.fb-name') || {}).textContent || '';
+        const show = !q || name.toLowerCase().includes(q);
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    let noResult = document.getElementById('fb-no-results');
+    if (visible === 0 && q) {
+        if (!noResult) {
+            noResult = document.createElement('div');
+            noResult.id = 'fb-no-results';
+            noResult.style.cssText = 'padding:16px; color:#666; font-size:13px; text-align:center;';
+            noResult.textContent = 'No matches';
+            document.getElementById('file-list').appendChild(noResult);
+        }
+    } else if (noResult) {
+        noResult.remove();
+    }
+    updateSelectAllState();
 }
 
 function toggleSelect(cb, event) {
@@ -165,6 +197,7 @@ function toggleSelect(cb, event) {
 
 function toggleSelectAll(cb) {
     document.querySelectorAll('.fb-row-cb').forEach(box => {
+        if (box.closest('.fb-row').style.display === 'none') return;
         box.checked = cb.checked;
         const row = box.closest('.fb-row');
         row.classList.toggle('fb-selected', cb.checked);
@@ -175,8 +208,8 @@ function toggleSelectAll(cb) {
 }
 
 function updateSelectAllState() {
-    const all = document.querySelectorAll('.fb-row-cb');
-    const checked = document.querySelectorAll('.fb-row-cb:checked');
+    const all = Array.from(document.querySelectorAll('.fb-row-cb')).filter(b => b.closest('.fb-row').style.display !== 'none');
+    const checked = all.filter(b => b.checked);
     const sa = document.getElementById('select-all');
     if (!sa) return;
     sa.indeterminate = checked.length > 0 && checked.length < all.length;
@@ -261,7 +294,13 @@ function renderBreadcrumb(path) {
 function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function escJs(s) { return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDelModal(); });
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        closeDelModal();
+        const s = document.getElementById('fb-search');
+        if (s && s.value) { s.value = ''; filterList(''); }
+    }
+});
 window.addEventListener('popstate', e => { loadPath((e.state && e.state.path) || '', false); });
 document.addEventListener('DOMContentLoaded', () => {
     const params = new URLSearchParams(window.location.search);
