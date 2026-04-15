@@ -126,18 +126,20 @@
         } catch(e) {}
     }
 
-    // Init Sortable
-    Sortable.create(document.getElementById('nav-sections'), {
-        animation: 150,
-        handle: '.sidebar-section-label',
-        ghostClass: 'sortable-ghost',
-        dragClass: 'sortable-drag',
-        onEnd: function() {
-            var order = Array.from(document.querySelectorAll('#nav-sections .sidebar-section'))
-                .map(function(el) { return el.dataset.sort; });
-            localStorage.setItem('nav-section-order', JSON.stringify(order));
-        }
-    });
+    // Init Sortable (guard against CDN failure)
+    try {
+        Sortable.create(document.getElementById('nav-sections'), {
+            animation: 150,
+            handle: '.sidebar-section-label',
+            ghostClass: 'sortable-ghost',
+            dragClass: 'sortable-drag',
+            onEnd: function() {
+                var order = Array.from(document.querySelectorAll('#nav-sections .sidebar-section'))
+                    .map(function(el) { return el.dataset.sort; });
+                localStorage.setItem('nav-section-order', JSON.stringify(order));
+            }
+        });
+    } catch(e) {}
 
     document.querySelectorAll('.sidebar-section-label.collapsible').forEach(function(label) {
         var key = 'nav-collapsed-' + label.dataset.section;
