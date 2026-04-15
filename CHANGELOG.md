@@ -5,7 +5,7 @@
 - Clickable M3Usort logo returns to dashboard
 - Shift-select range in file browser
 - Expiry warning more prominent (pulsing amber); update available shown in green
-- SMB backup: write a ZIP backup of config.py to a network share, triggered manually or on a daily schedule
+- SMB backup: write a ZIP backup of config.py to a network share, triggered manually or on a daily schedule; configurable retention to keep the N most recent backups
 - SECRET_KEY migration: if the key is found in config.py, admin is guided to move it to .env; restoring a backup containing SECRET_KEY is blocked until it is moved
 - Backup format changed to .zip (contains config.py); restore accepts both .py and .zip
 - Dockerfile: upgrade pip to 25.3, run apt-get upgrade in final image for security patches
