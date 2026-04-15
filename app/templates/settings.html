@@ -93,10 +93,10 @@
         <div class="settings-section-title">Backup &amp; Restore</div>
         <div class="settings-section-body">
             <p style="color:#888; font-size:13px; margin-bottom:14px;">After restore, re-enter your M3U URL in settings if prompted — credentials are tied to your <code>SECRET_KEY</code>.</p>
-            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <a href="{{ url_for('main_bp.backup_download') }}" class="button">↓ Download backup</a>
+            <div style="display:flex; gap:10px; align-items:stretch; flex-wrap:wrap;">
+                <a href="{{ url_for('main_bp.backup_download') }}" class="button" style="display:flex; align-items:center;">↓ Download backup</a>
                 <button id="smb-backup-btn" class="button" onclick="doSmbBackup(event)">☁ Backup to SMB</button>
-                <label class="button" style="cursor:pointer; margin:0; line-height:34px; height:34px;">
+                <label class="button" style="cursor:pointer; margin:0; display:flex; align-items:center;">
                     ↑ Restore config
                     <form id="restore-form" method="POST" action="{{ url_for('main_bp.restore_config') }}" enctype="multipart/form-data">
                         <input type="hidden" name="csrf_token" value="{{ form.csrf_token._value() }}">
