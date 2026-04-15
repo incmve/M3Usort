@@ -75,6 +75,13 @@ Here you can change all the settings:
 - Movies Directory: Where to put the files for movies.
 - Overwrite Existing Movies: If set to Yes, it will recreate the movie file every time the interval runs.
 - Enable Jellyfin library refresh on VOD or TvShow fetch.
+- Enable SMB Backup: If set to Yes, the SMB backup options become active.
+- SMB Host: IP address or hostname of the machine hosting the share.
+- SMB Share: The share name (e.g. `backups`).
+- SMB Path: Optional sub-folder inside the share (e.g. `m3usort`).
+- SMB Username / Password: Credentials for the share.
+- Daily scheduled backup: If set to Yes, a backup ZIP is written to the SMB share once a day.
+- Backup time: The time at which the daily backup runs (HH:MM, 24-hour format).
 
 ### Admin -> Backup & Restore
 Download a ZIP backup of your `config.py` at any time from the Settings page. You can restore from a `.zip` or a raw `.py` backup file — both via the Settings page and via the setup wizard on a fresh install. Credentials are encrypted using the `SECRET_KEY` from your `.env` file, so keep it consistent across restores.
