@@ -148,7 +148,7 @@ function renderModalInfo(data, title, type, modalLinks) {
     let descHtml = '';
     if (data.plot) {
         const short = data.plot.length > 180 ? data.plot.substring(0, 180) + '...' : data.plot;
-        descHtml = `<div style="color:#777;line-height:1.5;border-top:1px solid #1e1e1e;padding-top:8px;margin-top:4px;font-size:13px;">`;
+        descHtml = `<div style="color:#b0b0b0;line-height:1.6;border-top:1px solid #1e1e1e;padding-top:8px;margin-top:4px;font-size:13px;">`;
         if (data.plot.length > 180) {
             descHtml += `<span id="desc-short">${short} <span onclick="document.getElementById('desc-short').style.display='none';document.getElementById('desc-full').style.display='block';" style="color:#4aadcf;cursor:pointer;font-size:11px;">more</span></span>`;
             descHtml += `<span id="desc-full" style="display:none;">${data.plot} <span onclick="document.getElementById('desc-full').style.display='none';document.getElementById('desc-short').style.display='block';" style="color:#4aadcf;cursor:pointer;font-size:11px;">less</span></span>`;
