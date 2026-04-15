@@ -27,5 +27,6 @@ class ConfigForm(FlaskForm):
     smb_password = StringField('SMB Password', validators=[Optional()])
     backup_scheduled = SelectField('Daily scheduled backup', choices=[('1', 'Yes'), ('0', 'No')], validators=[DataRequired()])
     backup_time = StringField('Backup time (HH:MM)', validators=[Optional()])
+    backup_keep = IntegerField('Backups to keep', validators=[Optional(), NumberRange(min=1, max=99)])
     debug = SelectField('Debug mode', choices=[('no', 'No'), ('yes', 'Yes')], validators=[DataRequired()])
     submit = SubmitField('Save')

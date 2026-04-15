@@ -24,6 +24,7 @@ smb_username = ""
 smb_password = ""
 backup_scheduled = "0"
 backup_time = "02:00"
+backup_keep = "5"
 
 
 # List of channel groups to whitelist

@@ -1747,6 +1747,7 @@ def settings():
             set_credential('smb_password', form.smb_password.data)
         update_config_variable(CONFIG_PATH, 'backup_scheduled', form.backup_scheduled.data)
         update_config_variable(CONFIG_PATH, 'backup_time', form.backup_time.data or '02:00')
+        update_config_variable(CONFIG_PATH, 'backup_keep', str(form.backup_keep.data) if form.backup_keep.data else '5')
         update_config_variable(CONFIG_PATH, 'debug', form.debug.data)
 
         # Manage scheduled backup job
@@ -1822,6 +1823,7 @@ def settings():
         form.smb_password.data = ''  # never pre-fill password
         form.backup_scheduled.data = get_config_variable(CONFIG_PATH, 'backup_scheduled') or "0"
         form.backup_time.data = get_config_variable(CONFIG_PATH, 'backup_time') or "02:00"
+        form.backup_keep.data = int(get_config_variable(CONFIG_PATH, 'backup_keep') or 5)
         form.debug.data = get_config_variable(CONFIG_PATH, 'debug') or "no"
 
     return render_template('settings.html', form=form)
@@ -1880,6 +1882,25 @@ def backup_download():
 
 @main_bp.route('/backup/smb', methods=['POST'])
 @admin_required
+def _smb_cleanup(smbclient, smb_host, smb_share, smb_path, keep):
+    """Delete oldest m3usort backup ZIPs on the share, keeping the newest `keep` files."""
+    try:
+        keep = int(keep)
+        if keep <= 0:
+            return
+        base = f"\\\\{smb_host}\\{smb_share}\\{smb_path}" if smb_path else f"\\\\{smb_host}\\{smb_share}"
+        entries = list(smbclient.scandir(base))
+        backups = sorted(
+            [e.name for e in entries if e.name.startswith('m3usort_backup_') and e.name.endswith('.zip')]
+        )
+        to_delete = backups[:-keep] if len(backups) > keep else []
+        for name in to_delete:
+            smbclient.remove(f"{base}\\{name}")
+            PrintLog(f"SMB backup cleanup: removed {name}", "INFO")
+    except Exception as e:
+        PrintLog(f"SMB backup cleanup failed: {e}", "WARNING")
+
+
 def backup_smb():
     """Write a ZIP backup of config.py to the configured SMB share."""
     smb_enabled = get_config_variable(CONFIG_PATH, 'smb_enabled') or '0'
@@ -1891,6 +1912,7 @@ def backup_smb():
     smb_path     = (get_config_variable(CONFIG_PATH, 'smb_path') or '').strip('/')
     smb_username = get_config_variable(CONFIG_PATH, 'smb_username') or ''
     smb_password = get_credential('smb_password') or ''
+    backup_keep  = get_config_variable(CONFIG_PATH, 'backup_keep') or '5'
 
     if not smb_host or not smb_share:
         return jsonify({'success': False, 'error': 'SMB host or share not configured'}), 400
@@ -1904,6 +1926,7 @@ def backup_smb():
         with smbclient.open_file(remote_path, mode='wb') as rf:
             rf.write(buf.read())
         PrintLog(f"Backup written to SMB: {remote_path}", "INFO")
+        _smb_cleanup(smbclient, smb_host, smb_share, smb_path, backup_keep)
         return jsonify({'success': True, 'filename': filename})
     except Exception as e:
         PrintLog(f"SMB backup failed: {e}", "ERROR")
@@ -1921,6 +1944,7 @@ def scheduled_smb_backup():
         smb_path     = (get_config_variable(CONFIG_PATH, 'smb_path') or '').strip('/')
         smb_username = get_config_variable(CONFIG_PATH, 'smb_username') or ''
         smb_password = get_credential('smb_password') or ''
+        backup_keep  = get_config_variable(CONFIG_PATH, 'backup_keep') or '5'
         if not smb_host or not smb_share:
             PrintLog("Scheduled SMB backup: host/share not configured", "ERROR")
             return
@@ -1933,6 +1957,7 @@ def scheduled_smb_backup():
             with smbclient.open_file(remote_path, mode='wb') as rf:
                 rf.write(buf.read())
             PrintLog(f"Scheduled backup written to SMB: {remote_path}", "INFO")
+            _smb_cleanup(smbclient, smb_host, smb_share, smb_path, backup_keep)
         except Exception as e:
             PrintLog(f"Scheduled SMB backup failed: {e}", "ERROR")
 
