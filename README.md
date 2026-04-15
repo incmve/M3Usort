@@ -46,6 +46,15 @@ docker run -d \
   incmve/m3usort:latest
 ```
 
+## Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `SECRET_KEY` | Yes | Used to encrypt credentials stored in `config.py`. Generate one with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`. Must stay the same across container recreates — changing it breaks decryption of stored credentials. Copy `.env.sample` to `.env` next to your `docker-compose.yml` and set it there. |
+| `HOST_IP` | Yes | Your server's local IP, shown in the dashboard M3U URL. |
+| `TZ` | No | Timezone (e.g. `Europe/Amsterdam`). Affects scheduler times and log timestamps. |
+| `PUID` / `PGID` | No | User/group ID for file ownership. Defaults to `0` (root). |
+
 ## All the menu items
 
 ### Home
@@ -66,6 +75,12 @@ Here you can change all the settings:
 - Movies Directory: Where to put the files for movies.
 - Overwrite Existing Movies: If set to Yes, it will recreate the movie file every time the interval runs.
 - Enable Jellyfin library refresh on VOD or TvShow fetch.
+
+### Admin -> Backup & Restore
+Download a ZIP backup of your `config.py` at any time from the Settings page. You can restore from a `.zip` or a raw `.py` backup file — both via the Settings page and via the setup wizard on a fresh install. Credentials are encrypted using the `SECRET_KEY` from your `.env` file, so keep it consistent across restores.
+
+#### SMB backup
+M3Usort can write the backup ZIP directly to a network share (SMB/CIFS). Configure the host, share name, optional sub-path, and credentials in the SMB Backup section of Settings. You can trigger a backup manually or enable a daily scheduled backup at a time of your choosing.
 
 ### Admin -> Security
 Here you can change the password for the admin and for downloading the playlists. On a fresh install, passwords are set via the setup wizard on first run.

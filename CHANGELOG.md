@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.2
+- Drag-to-reorder nav sections (SortableJS), order saved across page loads
+- Clickable M3Usort logo returns to dashboard
+- Shift-select range in file browser
+- Expiry warning more prominent (pulsing amber); update available shown in green
+- SMB backup: write a ZIP backup of config.py to a network share, triggered manually or on a daily schedule
+- SECRET_KEY migration: if the key is found in config.py, admin is guided to move it to .env; restoring a backup containing SECRET_KEY is blocked until it is moved
+- Backup format changed to .zip (contains config.py); restore accepts both .py and .zip
+- Dockerfile: upgrade pip to 25.3, run apt-get upgrade in final image for security patches
+- Pin cryptography>=46.0.7 to resolve high/medium CVEs (CVE-2024-26130 and related) in the OpenSSL bindings bundled with older versions of the library
+- Sleep 0.5s between series downloads to avoid hammering the provider API
+- Skip already-downloaded episodes when overwrite is off, avoiding unnecessary API calls on each VOD sync run
+- Fix collapse/remember menu state broken when SortableJS CDN is unreachable
+- Movie/series description text readability improved
+- Download button shows a 300s cooldown persisted across page refreshes to prevent double-triggering
+
 ## 2.0.1
 - Improved file browser: readable date/size text, more prominent delete button, multi-select with bulk delete, URL updates on folder navigation with F5/back support
 - Fixed unreadable text (color:#444) across all templates
