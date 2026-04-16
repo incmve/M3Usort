@@ -173,6 +173,7 @@ def enrich_vod_cache():
                             enriched += 1
                     except Exception:
                         pass
+                    sleep(0.5)
             if enriched:
                 with open(movies_cache_path, 'w', encoding='utf-8') as f:
                     json.dump(movies_data, f)
@@ -200,6 +201,7 @@ def enrich_vod_cache():
                             enriched += 1
                     except Exception:
                         pass
+                    sleep(0.5)
             if enriched:
                 with open(series_cache_path, 'w', encoding='utf-8') as f:
                     json.dump(series_data, f)
@@ -347,7 +349,7 @@ def file_hash(filepath):
 
 def download_m3u(url, output_path):
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
         with open(output_path, 'w', encoding='utf-8') as file:
             file.write(response.text)
@@ -441,31 +443,41 @@ def update_movies_directory(movies_dir):
                 PrintLog(f"No matching movie found for directory: '{dir_name}'", "WARNING")
 
 
-def get_config_variable(config_path, variable_name):
-    config_variable = None
+_config_cache = {}  # {path: (mtime, namespace)}
+
+def _load_config_namespace():
+    """Read and exec config.py, using an mtime-based cache to avoid repeated disk reads."""
     try:
-        with open(CONFIG_PATH, 'r') as file:
-            config_content = file.read()
-        config_namespace = {}
-        exec(config_content, {}, config_namespace)
-        config_variable = config_namespace.get(variable_name)
+        mtime = os.path.getmtime(CONFIG_PATH)
+        cached = _config_cache.get(CONFIG_PATH)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        with open(CONFIG_PATH, 'r') as f:
+            content = f.read()
+        ns = {}
+        exec(content, {}, ns)
+        _config_cache[CONFIG_PATH] = (mtime, ns)
+        return ns
+    except Exception as e:
+        logging.error(f"Error loading config: {e}")
+        return {}
+
+def get_config_variable(config_path, variable_name):
+    try:
+        return _load_config_namespace().get(variable_name)
     except Exception as e:
         logging.error(f"Error reading config variable '{variable_name}': {e}")
-    return config_variable
+        return None
 
 def get_config_array(config_path, array_name):
-    config_variable = None
     try:
-        with open(CONFIG_PATH, 'r') as file:
-            config_content = file.read()
-        config_namespace = {}
-        exec(config_content, {}, config_namespace)
-        config_variable = config_namespace.get(array_name)
+        return _load_config_namespace().get(array_name)
     except Exception as e:
         logging.error(f"Error reading config array '{array_name}': {e}")
-    return config_variable
+        return None
 
 def update_config_variable(config_path, variable_name, new_value):
+    _config_cache.pop(CONFIG_PATH, None)  # invalidate cache on write
     variable_found = False
     with open(config_path, 'r') as file:
         lines = file.readlines()
@@ -482,6 +494,7 @@ def update_config_variable(config_path, variable_name, new_value):
             file.write(f'{variable_name} = "{new_value}"\n')
 
 def update_config_array(config_path, array_name, new_value):
+    _config_cache.pop(CONFIG_PATH, None)  # invalidate cache on write
     with open(CONFIG_PATH, 'r') as file:
         lines = file.readlines()
 
@@ -1323,9 +1336,18 @@ def find_wanted_series_fuzzy(series_dir):
         highest_similarity = 0
         most_recent_year = 0
 
+        wanted_clean = re.sub(r'[^\w\s]', ' ', wanted.lower())
+        wanted_words = set(wanted_clean.split())
+
         for serie in series_list:
             serie_name_stripped, year = strip_year(serie['name'])
-            similarity = fuzz.token_set_ratio(wanted, serie_name_stripped)
+            serie_clean = re.sub(r'[^\w\s]', ' ', serie_name_stripped.lower())
+            serie_words = set(serie_clean.split())
+
+            if not wanted_words.issubset(serie_words):
+                continue
+
+            similarity = fuzz.token_sort_ratio(wanted, serie_name_stripped)
 
             if similarity >= similarity_threshold:
                 is_new_best = (similarity > highest_similarity or
@@ -1338,33 +1360,31 @@ def find_wanted_series_fuzzy(series_dir):
 
         if best_match:
             DownloadSeries(best_match['series_id'])
+            wanted_series.remove(wanted)
         else:
-            PrintLog("No match found", "WARNING")
+            PrintLog(f"No match found for '{wanted}'", "WARNING")
 
     update_config_array(CONFIG_PATH, 'wanted_series', wanted_series)
 
 
 def find_wanted_series_string(series_dir):
     wanted_series = get_config_variable(CONFIG_PATH, 'wanted_series')
-    found_match = False
-    if wanted_series == None:
+    if wanted_series is None:
         wanted_series = []
 
-    m3u_url = get_credential('url')
-    username, password = extract_credentials_from_url(m3u_url)
-    parsed_url = urlparse(m3u_url)
-    base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-    
     series_list = GetSeriesList()
 
     for wanted in wanted_series.copy():
         PrintLog(f"Searching for wanted serie '{wanted}' (method: string)", "NOTICE")
         matches = [serie for serie in series_list if wanted.lower() in serie['name'].lower()]
+        found_match = False
         for serie in matches:
             DownloadSeries(serie['series_id'])
             found_match = True
-    if found_match == True:
-        wanted_series.remove(wanted)
+        if found_match:
+            wanted_series.remove(wanted)
+        else:
+            PrintLog(f"No match found for '{wanted}'", "NOTICE")
     update_config_array(CONFIG_PATH, 'wanted_series', wanted_series)
 
 def find_wanted_movies_fuzzy(movies_dir):
@@ -2735,7 +2755,7 @@ def startup_delayed():
 
     while True:
         try:
-            response = requests.get(f"{base_url}/healthcheck")
+            response = requests.get(f"{base_url}/healthcheck", timeout=5)
             if response.status_code == 200:
                 PrintLog("Server is up and running.", "INFO")
 
@@ -2852,7 +2872,7 @@ def check_for_app_updates():
     global UPDATE_AVAILABLE, UPDATE_VERSION
     try:
         url = "https://raw.githubusercontent.com/incmve/M3Usort/refs/heads/main/CHANGELOG.md"
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         if response.status_code != 200:
             PrintLog("Failed to fetch the changelog.", "WARNING")
             return
