@@ -417,22 +417,61 @@ def update_series_directory(series_dir):
     series_list = GetSeriesList()
     overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series') or 0)
 
+    VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.m4v'}
+
     for root, dirs, files in os.walk(series_dir):
         for dir_name in dirs:
+            series_folder = os.path.join(root, dir_name)
+            try:
+                entries = os.listdir(series_folder)
+            except OSError:
+                continue
+
+            # Categorise folder contents (files only, ignore sub-directories)
+            strm_files  = [e for e in entries if e.lower().endswith('.strm')]
+            video_files = [e for e in entries if os.path.splitext(e.lower())[1] in VIDEO_EXTS]
+            has_strm    = bool(strm_files)
+            has_video   = bool(video_files)
+
             matching_series = next((s for s in series_list if s['name'] == dir_name), None)
-            if matching_series:
-                if overwrite_series == 1:
-                    DownloadSeries(matching_series['series_id'])
-                    sleep(0.5)
-                else:
-                    # Count existing strm files — only call DownloadSeries if folder exists
-                    # process_episode will skip files that already exist
-                    series_folder = os.path.join(series_dir, dir_name)
-                    existing = set(f for f in os.listdir(series_folder) if f.endswith('.strm'))
-                    DownloadSeries(matching_series['series_id'], existing_files=existing)
-                    sleep(0.5)
-            else:
+
+            # ── Empty folder ─────────────────────────────────────────────────
+            if not entries:
+                PrintLog(f"update_series_directory: leftover empty folder: {dir_name}", "WARNING")
+                continue
+
+            # ── Mixed content (.strm + video) ─────────────────────────────────
+            if has_strm and has_video:
+                PrintLog(
+                    f"update_series_directory: {dir_name}: mixed .strm and video files — skipping to avoid duplicates",
+                    "WARNING"
+                )
+                continue
+
+            # ── Video-only folder ─────────────────────────────────────────────
+            if has_video and not has_strm:
+                if matching_series:
+                    PrintLog(
+                        f"update_series_directory: {dir_name}: external video files found, "
+                        f"provider also has this title — skipping to avoid duplicates",
+                        "WARNING"
+                    )
+                # No match → silent skip (external content unrelated to provider)
+                continue
+
+            # ── .strm-only folder (or folder with other non-video files) ─────
+            if not matching_series:
                 PrintLog(f"No matching series found for directory: {dir_name}", "WARNING")
+                continue
+
+            if overwrite_series == 1:
+                DownloadSeries(matching_series['series_id'])
+                sleep(0.5)
+            else:
+                # process_episode will skip files that already exist
+                existing = set(strm_files)
+                DownloadSeries(matching_series['series_id'], existing_files=existing)
+                sleep(0.5)
 
 def normalize_movie_name(name):
     """Strip year, quality tags, and normalize for matching."""
