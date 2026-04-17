@@ -140,6 +140,55 @@ def scheduled_system_tasks():
 
 
 
+_EPISODE_RE = re.compile(r'^(.+?)\s+S(\d+)\s+E(\d+)\s*$')
+
+
+def _parse_m3u_series():
+    """Parse original.m3u and return {series_name: [(season, episode, url), ...]}.
+
+    Reads only from disk — no network calls.
+    """
+    m3u_path = os.path.join(BASE_DIR, 'files', 'original.m3u')
+    if not os.path.exists(m3u_path):
+        PrintLog("_parse_m3u_series: original.m3u not found", "WARNING")
+        return {}
+    try:
+        m3u_playlist = playlist.loadf(m3u_path)
+    except Exception as e:
+        PrintLog(f"_parse_m3u_series: failed to load M3U: {e}", "ERROR")
+        return {}
+
+    series_episodes = {}
+    for channel in m3u_playlist:
+        name = channel.attributes.get('tvg-name') or channel.name or ''
+        m = _EPISODE_RE.match(name.strip())
+        if m:
+            series_name = m.group(1)
+            season  = m.group(2).zfill(2)
+            episode = m.group(3).zfill(2)
+            series_episodes.setdefault(series_name, []).append((season, episode, channel.url))
+
+    return series_episodes
+
+
+def _write_series_from_m3u(series_name, episodes, series_dir, overwrite, existing_files=None):
+    """Write .strm files for a series directly from parsed M3U episode data."""
+    series_folder = os.path.join(series_dir, series_name)
+    os.makedirs(series_folder, exist_ok=True)
+    written = 0
+    for season, episode, url in episodes:
+        strm_name = f"{series_name} S{season}E{episode}.strm"
+        if existing_files is not None and overwrite != 1 and strm_name in existing_files:
+            continue
+        strm_path = os.path.join(series_folder, strm_name)
+        if not os.path.exists(strm_path) or overwrite == 1:
+            with open(strm_path, 'w') as f:
+                f.write(url)
+            PrintLog(f"Created .strm file: {strm_name}", "NOTICE")
+            written += 1
+    return written
+
+
 def save_vod_cache():
     """Fetch and save full movies and series data from provider to local JSON cache files.
 
@@ -349,9 +398,8 @@ def is_download_needed(file_path, max_age_hours):
         return False
 
 def update_series_directory(series_dir):
-    from time import sleep
-    series_list = GetSeriesList()
     overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series') or 0)
+    m3u_series = _parse_m3u_series()
 
     VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.m4v'}
 
@@ -369,7 +417,7 @@ def update_series_directory(series_dir):
             has_strm    = bool(strm_files)
             has_video   = bool(video_files)
 
-            matching_series = next((s for s in series_list if s['name'] == dir_name), None)
+            m3u_episodes = m3u_series.get(dir_name)
 
             # ── Empty folder ─────────────────────────────────────────────────
             if not entries:
@@ -386,7 +434,7 @@ def update_series_directory(series_dir):
 
             # ── Video-only folder ─────────────────────────────────────────────
             if has_video and not has_strm:
-                if matching_series:
+                if m3u_episodes:
                     PrintLog(
                         f"update_series_directory: {dir_name}: external video files found, "
                         f"provider also has this title — skipping to avoid duplicates",
@@ -395,19 +443,13 @@ def update_series_directory(series_dir):
                 # No match → silent skip (external content unrelated to provider)
                 continue
 
-            # ── .strm-only folder (or folder with other non-video files) ─────
-            if not matching_series:
+            # ── .strm-only folder ────────────────────────────────────────────
+            if not m3u_episodes:
                 PrintLog(f"No matching series found for directory: {dir_name}", "WARNING")
                 continue
 
-            if overwrite_series == 1:
-                DownloadSeries(matching_series['series_id'], series_name_hint=dir_name)
-                sleep(0.5)
-            else:
-                # process_episode will skip files that already exist
-                existing = set(strm_files)
-                DownloadSeries(matching_series['series_id'], existing_files=existing, series_name_hint=dir_name)
-                sleep(0.5)
+            existing = set(strm_files) if overwrite_series != 1 else None
+            _write_series_from_m3u(dir_name, m3u_episodes, series_dir, overwrite_series, existing_files=existing)
 
 def normalize_movie_name(name):
     """Strip year, quality tags, and normalize for matching."""
@@ -1358,43 +1400,38 @@ def find_wanted_series_fuzzy(series_dir):
     if wanted_series is None:
         wanted_series = []
 
-    m3u_url = get_credential('url')
-    username, password = extract_credentials_from_url(m3u_url)
-    parsed_url = urlparse(m3u_url)
-    base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-
-    series_list = GetSeriesList()
+    m3u_series = _parse_m3u_series()
+    m3u_names = list(m3u_series.keys())
 
     for wanted in wanted_series.copy():
         PrintLog(f"Searching for wanted serie '{wanted}' (method: fuzzywuzzy)", "INFO")
-        best_match = None
+        best_match_name = None
         highest_similarity = 0
         most_recent_year = 0
 
         wanted_clean = re.sub(r'[^\w\s]', ' ', wanted.lower())
         wanted_words = set(wanted_clean.split())
 
-        for serie in series_list:
-            serie_name_stripped, year = strip_year(serie['name'])
-            serie_clean = re.sub(r'[^\w\s]', ' ', serie_name_stripped.lower())
-            serie_words = set(serie_clean.split())
+        for name in m3u_names:
+            name_stripped, year = strip_year(name)
+            name_clean = re.sub(r'[^\w\s]', ' ', name_stripped.lower())
+            name_words = set(name_clean.split())
 
-            if not wanted_words.issubset(serie_words):
+            if not wanted_words.issubset(name_words):
                 continue
 
-            similarity = fuzz.token_sort_ratio(wanted, serie_name_stripped)
+            similarity = fuzz.token_sort_ratio(wanted, name_stripped)
 
             if similarity >= similarity_threshold:
                 is_new_best = (similarity > highest_similarity or
                                (similarity == highest_similarity and year and year > most_recent_year))
-
                 if is_new_best and (year is None or year <= current_year):
-                    best_match = serie
+                    best_match_name = name
                     highest_similarity = similarity
                     most_recent_year = year if year else most_recent_year
 
-        if best_match:
-            DownloadSeries(best_match['series_id'])
+        if best_match_name:
+            _write_series_from_m3u(best_match_name, m3u_series[best_match_name], series_dir, overwrite_series)
             wanted_series.remove(wanted)
         else:
             PrintLog(f"No match found for '{wanted}'", "WARNING")
@@ -1404,17 +1441,18 @@ def find_wanted_series_fuzzy(series_dir):
 
 def find_wanted_series_string(series_dir):
     wanted_series = get_config_variable(CONFIG_PATH, 'wanted_series')
+    overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series') or 0)
     if wanted_series is None:
         wanted_series = []
 
-    series_list = GetSeriesList()
+    m3u_series = _parse_m3u_series()
 
     for wanted in wanted_series.copy():
         PrintLog(f"Searching for wanted serie '{wanted}' (method: string)", "NOTICE")
-        matches = [serie for serie in series_list if wanted.lower() in serie['name'].lower()]
+        matches = [name for name in m3u_series if wanted.lower() in name.lower()]
         found_match = False
-        for serie in matches:
-            DownloadSeries(serie['series_id'])
+        for name in matches:
+            _write_series_from_m3u(name, m3u_series[name], series_dir, overwrite_series)
             found_match = True
         if found_match:
             wanted_series.remove(wanted)
