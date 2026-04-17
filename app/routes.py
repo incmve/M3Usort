@@ -234,7 +234,9 @@ def save_vod_cache():
     try:
         cat_resp = requests.get(f"{base}&action=get_vod_categories", timeout=30)
         cat_resp.raise_for_status()
-        movie_cats = {str(c['category_id']): c['category_name'] for c in _safe_json(cat_resp)}
+        _cats = _safe_json(cat_resp)
+        _require_list_of_dicts(_cats, 'get_vod_categories')
+        movie_cats = {str(c['category_id']): c['category_name'] for c in _cats}
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to fetch movie categories: {e}", "WARNING")
         movie_cats = {}
@@ -243,6 +245,7 @@ def save_vod_cache():
         resp = requests.get(f"{base}&action=get_vod_streams", timeout=60)
         resp.raise_for_status()
         movies_data = _safe_json(resp)
+        _require_list_of_dicts(movies_data, 'get_vod_streams')
         for movie in movies_data:
             if not movie.get('category_name'):
                 movie['category_name'] = movie_cats.get(str(movie.get('category_id', '')), '')
@@ -274,7 +277,9 @@ def save_vod_cache():
     try:
         cat_resp = requests.get(f"{base}&action=get_series_categories", timeout=30)
         cat_resp.raise_for_status()
-        series_cats = {str(c['category_id']): c['category_name'] for c in _safe_json(cat_resp)}
+        _cats = _safe_json(cat_resp)
+        _require_list_of_dicts(_cats, 'get_series_categories')
+        series_cats = {str(c['category_id']): c['category_name'] for c in _cats}
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to fetch series categories: {e}", "WARNING")
         series_cats = {}
@@ -283,6 +288,7 @@ def save_vod_cache():
         resp = requests.get(f"{base}&action=get_series", timeout=60)
         resp.raise_for_status()
         series_data = _safe_json(resp)
+        _require_list_of_dicts(series_data, 'get_series')
         for serie in series_data:
             if not serie.get('category_name'):
                 serie['category_name'] = series_cats.get(str(serie.get('category_id', '')), '')
@@ -528,6 +534,14 @@ def _safe_json(response):
     if not response.content:
         raise ValueError(f"Empty response body from {response.url}")
     return response.json()
+
+
+def _require_list_of_dicts(data, label):
+    """Raise ValueError if data is not a non-empty list of dicts (i.e. malformed provider response)."""
+    if not isinstance(data, list):
+        raise ValueError(f"{label}: expected list, got {type(data).__name__}")
+    if data and not isinstance(data[0], dict):
+        raise ValueError(f"{label}: expected list of dicts, got list of {type(data[0]).__name__}")
 
 
 def _load_config_namespace():
