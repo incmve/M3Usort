@@ -165,7 +165,7 @@ def enrich_vod_cache():
                     try:
                         r = requests.get(f"{base}&action=get_vod_info&vod_id={movie.get('stream_id')}", timeout=5)
                         if r.status_code == 200:
-                            info = r.json().get('info', {})
+                            info = _safe_json(r).get('info', {})
                             movie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
                             movie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
                             movie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
@@ -193,7 +193,7 @@ def enrich_vod_cache():
                     try:
                         r = requests.get(f"{base}&action=get_series_info&series_id={serie.get('series_id')}", timeout=5)
                         if r.status_code == 200:
-                            info = r.json().get('info', {})
+                            info = _safe_json(r).get('info', {})
                             serie['tmdb_id'] = info.get('tmdb_id') or info.get('tmdb') or ''
                             serie['imdb_id'] = info.get('imdb_id') or info.get('imdb') or ''
                             serie['plot']    = info.get('plot') or info.get('description') or info.get('overview') or ''
@@ -210,25 +210,31 @@ def enrich_vod_cache():
         PrintLog(f"enrich_vod_cache: series failed: {e}", "ERROR")
 
 def save_vod_cache():
-    """Fetch and save full movies and series data from provider to local JSON cache files."""
+    """Fetch and save full movies and series data from provider to local JSON cache files.
+
+    Returns True if both caches were written successfully, False if either failed.
+    """
+    movies_ok = False
+    series_ok = False
+
     try:
         m3u_url = get_credential('url')
         if not m3u_url or '://' not in m3u_url or '/get.php' not in m3u_url:
             PrintLog("save_vod_cache: no valid M3U URL configured", "ERROR")
-            return
+            return False
         scheme, rest = m3u_url.split('://', 1)
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         base = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}"
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to parse URL: {e}", "ERROR")
-        return
+        return False
 
     # ── Movies ───────────────────────────────────────────────────────────────
     try:
         cat_resp = requests.get(f"{base}&action=get_vod_categories", timeout=30)
         cat_resp.raise_for_status()
-        movie_cats = {str(c['category_id']): c['category_name'] for c in cat_resp.json()}
+        movie_cats = {str(c['category_id']): c['category_name'] for c in _safe_json(cat_resp)}
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to fetch movie categories: {e}", "WARNING")
         movie_cats = {}
@@ -236,7 +242,7 @@ def save_vod_cache():
     try:
         resp = requests.get(f"{base}&action=get_vod_streams", timeout=60)
         resp.raise_for_status()
-        movies_data = resp.json()
+        movies_data = _safe_json(resp)
         for movie in movies_data:
             if not movie.get('category_name'):
                 movie['category_name'] = movie_cats.get(str(movie.get('category_id', '')), '')
@@ -260,6 +266,7 @@ def save_vod_cache():
         with open(movies_cache_path, 'w', encoding='utf-8') as f:
             json.dump(movies_data, f)
         PrintLog(f"Saved movies cache ({len(movies_data)} items)", "INFO")
+        movies_ok = True
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to save movies cache: {e}", "ERROR")
 
@@ -267,7 +274,7 @@ def save_vod_cache():
     try:
         cat_resp = requests.get(f"{base}&action=get_series_categories", timeout=30)
         cat_resp.raise_for_status()
-        series_cats = {str(c['category_id']): c['category_name'] for c in cat_resp.json()}
+        series_cats = {str(c['category_id']): c['category_name'] for c in _safe_json(cat_resp)}
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to fetch series categories: {e}", "WARNING")
         series_cats = {}
@@ -275,7 +282,7 @@ def save_vod_cache():
     try:
         resp = requests.get(f"{base}&action=get_series", timeout=60)
         resp.raise_for_status()
-        series_data = resp.json()
+        series_data = _safe_json(resp)
         for serie in series_data:
             if not serie.get('category_name'):
                 serie['category_name'] = series_cats.get(str(serie.get('category_id', '')), '')
@@ -302,8 +309,38 @@ def save_vod_cache():
         with open(series_cache_path, 'w', encoding='utf-8') as f:
             json.dump(series_data, f)
         PrintLog(f"Saved series cache ({len(series_data)} items)", "INFO")
+        series_ok = True
     except Exception as e:
         PrintLog(f"save_vod_cache: failed to save series cache: {e}", "ERROR")
+
+    return movies_ok and series_ok
+
+
+def _schedule_vod_cache_retry():
+    """Schedule a one-time retry of save_vod_cache in 15 minutes, unless one is already pending."""
+    if scheduler.get_job('VOD cache retry'):
+        return
+    run_at = datetime.utcnow() + timedelta(minutes=15)
+    try:
+        scheduler.add_job(
+            id='VOD cache retry',
+            func=_vod_cache_retry,
+            trigger='date',
+            run_date=run_at,
+        )
+        PrintLog("save_vod_cache: scheduled one-time retry in 15 minutes", "NOTICE")
+    except Exception as e:
+        PrintLog(f"save_vod_cache: could not schedule retry: {e}", "WARNING")
+
+
+def _vod_cache_retry():
+    """One-time retry of save_vod_cache. Does not schedule further retries on failure."""
+    PrintLog("save_vod_cache: running scheduled retry", "NOTICE")
+    ok = save_vod_cache()
+    if ok:
+        PrintLog("save_vod_cache: retry succeeded", "NOTICE")
+    else:
+        PrintLog("save_vod_cache: retry also failed — no further retries will be scheduled", "ERROR")
 
 def refresh_jellyfin():
     if get_config_variable(CONFIG_PATH, 'jellyfin_enabled') != "1":
@@ -327,7 +364,8 @@ def scheduled_vod_download():
     update_movies_directory(movies_dir)
     find_wanted_movies(movies_dir)
 
-    save_vod_cache()
+    if not save_vod_cache():
+        _schedule_vod_cache_retry()
     Thread(target=enrich_vod_cache, daemon=True).start()
     refresh_jellyfin()
 
@@ -444,6 +482,14 @@ def update_movies_directory(movies_dir):
 
 
 _config_cache = {}  # {path: (mtime, namespace)}
+
+
+def _safe_json(response):
+    """Parse JSON from a requests Response, raising a clear error when the body is empty."""
+    if not response.content:
+        raise ValueError(f"Empty response body from {response.url}")
+    return response.json()
+
 
 def _load_config_namespace():
     """Read and exec config.py, using an mtime-based cache to avoid repeated disk reads."""
@@ -706,7 +752,7 @@ def update_home_data():
             username, password = extract_credentials_from_url(m3u_url)
             api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
             response = requests.get(api_url, timeout=8)
-            user_info = response.json()['user_info']
+            user_info = _safe_json(response)['user_info']
             exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
             exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
             status = user_info.get('status')
@@ -810,7 +856,7 @@ def home():
             username, password = extract_credentials_from_url(m3u_url)
             api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
             response = requests.get(api_url, timeout=8)
-            user_info = response.json()['user_info']
+            user_info = _safe_json(response)['user_info']
             exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
             exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
             status = user_info.get('status')
@@ -895,7 +941,7 @@ def GetMoviesList():
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
         response = requests.get(api_url, timeout=30)
         response.raise_for_status()
-        movies_data = response.json()
+        movies_data = _safe_json(response)
         movies = [{'name': m['name'], 'stream_id': m['stream_id']} for m in movies_data]
     except Exception as e:
         PrintLog(f"Error fetching movies list: {e}", "ERROR")
@@ -925,7 +971,7 @@ def GetSeriesList():
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series&category_id=ALL"
         response = requests.get(api_url, timeout=30)
         response.raise_for_status()
-        series_data = response.json()
+        series_data = _safe_json(response)
         series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', '')} for s in series_data]
     except Exception as e:
         PrintLog(f"Error fetching series list: {e}", "ERROR")
@@ -946,7 +992,7 @@ def DownloadSeries(series_id, existing_files=None):
     try:
         response = requests.get(series_info_url, timeout=15)
         response.raise_for_status()
-        series_info = response.json()
+        series_info = _safe_json(response)
     except Exception as e:
         PrintLog(f"Error fetching series info for ID {series_id}: {e}", "ERROR")
         return
@@ -1507,7 +1553,7 @@ def _tmdb_lookup(name, media_type, api_key):
             timeout=5
         )
         if r.status_code == 200:
-            results = r.json().get('results', [])
+            results = _safe_json(r).get('results', [])
             if results:
                 tmdb_id = results[0].get('id')
                 poster = results[0].get('poster_path')
@@ -1547,7 +1593,7 @@ def get_vod_info(stream_id):
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_info&vod_id={stream_id}"
         response = requests.get(api_url, timeout=5)
         response.raise_for_status()
-        info = response.json().get('info', {})
+        info = _safe_json(response).get('info', {})
         tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
         imdb_id = info.get('imdb_id') or info.get('imdb') or imdb_id
         rating  = info.get('rating') or info.get('rating_5based') or rating
@@ -1597,7 +1643,7 @@ def get_series_info_meta(series_id):
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
         response = requests.get(api_url, timeout=5)
         response.raise_for_status()
-        info = response.json().get('info', {})
+        info = _safe_json(response).get('info', {})
         tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
         imdb_id = info.get('imdb_id') or info.get('imdb') or imdb_id
         rating  = info.get('rating') or info.get('rating_5based') or rating
@@ -2205,7 +2251,7 @@ def jellyfin_library():
         # Users
         users_resp = requests.get(f'{jellyfin_url}/Users', headers=headers, timeout=10)
         users_resp.raise_for_status()
-        users = [{'id': u['Id'], 'name': u['Name']} for u in users_resp.json() if not u.get('Policy', {}).get('IsDisabled')]
+        users = [{'id': u['Id'], 'name': u['Name']} for u in _safe_json(users_resp) if not u.get('Policy', {}).get('IsDisabled')]
         all_user_names = [u['name'] for u in users]
 
         movies_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
@@ -2213,14 +2259,14 @@ def jellyfin_library():
             'Fields': 'Path,Overview,ProductionYear,CommunityRating', 'Limit': 5000
         }, timeout=30)
         movies_resp.raise_for_status()
-        jf_movies = movies_resp.json().get('Items', [])
+        jf_movies = _safe_json(movies_resp).get('Items', [])
 
         series_resp = requests.get(f'{jellyfin_url}/Items', headers=headers, params={
             'IncludeItemTypes': 'Series', 'Recursive': 'true',
             'Fields': 'Path,Overview,ProductionYear,CommunityRating', 'Limit': 5000
         }, timeout=30)
         series_resp.raise_for_status()
-        jf_series = series_resp.json().get('Items', [])
+        jf_series = _safe_json(series_resp).get('Items', [])
 
         # Watch status: movies use IsPlayed on Movie, series use any watched Episode
         watched = {}
@@ -2231,7 +2277,7 @@ def jellyfin_library():
                     'IsPlayed': 'true', 'Fields': 'Id', 'Limit': 5000
                 }, timeout=20)
                 w.raise_for_status()
-                for item in w.json().get('Items', []):
+                for item in _safe_json(w).get('Items', []):
                     watched.setdefault(item['Id'], []).append(user['name'])
             except Exception:
                 pass
@@ -2241,7 +2287,7 @@ def jellyfin_library():
                     'IsPlayed': 'true', 'Fields': 'SeriesId', 'Limit': 5000
                 }, timeout=20)
                 w.raise_for_status()
-                for ep in w.json().get('Items', []):
+                for ep in _safe_json(w).get('Items', []):
                     sid = ep.get('SeriesId')
                     if sid and user['name'] not in watched.get(sid, []):
                         watched.setdefault(sid, []).append(user['name'])
@@ -2285,7 +2331,7 @@ def jellyfin_library():
                     r = requests.get(f'{jellyfin_url}/Shows/{serie["Id"]}/Episodes', headers=headers,
                                      params={'Fields': 'Path', 'Limit': 1}, timeout=8)
                     if r.status_code == 200:
-                        eps = r.json().get('Items', [])
+                        eps = _safe_json(r).get('Items', [])
                         if eps:
                             return serie['Id'], eps[0].get('Path', '').endswith('.strm')
                 except Exception:
@@ -2356,14 +2402,14 @@ def jellyfin_seasons(item_id):
         seasons_resp = requests.get(f'{jellyfin_url}/Shows/{item_id}/Seasons', headers=headers,
                                     params={'Fields': 'Path,IndexNumber'}, timeout=15)
         seasons_resp.raise_for_status()
-        seasons_raw = seasons_resp.json().get('Items', [])
+        seasons_raw = _safe_json(seasons_resp).get('Items', [])
 
         # Fetch ALL episodes in one request using SeriesId
         eps_resp = requests.get(f'{jellyfin_url}/Shows/{item_id}/Episodes', headers=headers,
                                 params={'Fields': 'Path,Overview,IndexNumber,ParentIndexNumber',
                                         'Limit': 2000}, timeout=20)
         eps_resp.raise_for_status()
-        all_episodes = eps_resp.json().get('Items', [])
+        all_episodes = _safe_json(eps_resp).get('Items', [])
 
         # Group episodes by season id
         # Jellyfin episodes include SeasonId directly
