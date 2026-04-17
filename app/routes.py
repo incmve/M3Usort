@@ -471,12 +471,12 @@ def update_series_directory(series_dir):
                 continue
 
             if overwrite_series == 1:
-                DownloadSeries(matching_series['series_id'])
+                DownloadSeries(matching_series['series_id'], series_name_hint=dir_name)
                 sleep(0.5)
             else:
                 # process_episode will skip files that already exist
                 existing = set(strm_files)
-                DownloadSeries(matching_series['series_id'], existing_files=existing)
+                DownloadSeries(matching_series['series_id'], existing_files=existing, series_name_hint=dir_name)
                 sleep(0.5)
 
 def normalize_movie_name(name):
@@ -1030,7 +1030,7 @@ def GetSeriesList():
         PrintLog(f"Error fetching series list: {e}", "ERROR")
     return series
 
-def DownloadSeries(series_id, existing_files=None):
+def DownloadSeries(series_id, existing_files=None, series_name_hint=None):
     series_dir = get_config_variable(CONFIG_PATH, 'series_dir')
     m3u_url = get_credential('url')
     username, password = extract_credentials_from_url(m3u_url)
@@ -1051,7 +1051,8 @@ def DownloadSeries(series_id, existing_files=None):
         return
 
     if not series_info.get('info'):
-        PrintLog(f"DownloadSeries: provider returned no info for series_id={series_id} (series may have been removed)", "WARNING")
+        label = f"'{series_name_hint}' (id={series_id})" if series_name_hint else f"series_id={series_id}"
+        PrintLog(f"DownloadSeries: provider returned no info for {label} (series may have been removed)", "WARNING")
         return
 
     series_name = series_info['info']['name']
