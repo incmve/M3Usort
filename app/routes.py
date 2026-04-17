@@ -1036,6 +1036,10 @@ def DownloadSeries(series_id, existing_files=None):
         PrintLog(f"Error fetching series info for ID {series_id}: {e}", "ERROR")
         return
 
+    if not series_info.get('info'):
+        PrintLog(f"DownloadSeries: provider returned no info for series_id={series_id} (series may have been removed)", "WARNING")
+        return
+
     series_name = series_info['info']['name']
 
     # Build expected episode filenames from API response
