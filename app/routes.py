@@ -2831,7 +2831,7 @@ def log():
             css_class = 'log-critical'
             entry_type = 'error'
         elif 'NOTICE' in metadata:
-            css_class = 'log-notice-strm' if 'Created .strm file' in message else 'log-notice'
+            css_class = 'log-notice-strm' if ('Created .strm file' in message or 'Adding new file' in message) else 'log-notice'
             entry_type = 'notice'
         else:
             css_class = 'log-info'
