@@ -2679,7 +2679,7 @@ def ansi_to_html_converter(text):
     text = ansi_escape.sub('', text)
     return text
 
-def get_log_lines(page, lines_per_page, hide_webserver_logs, search=''):
+def get_log_lines(hide_webserver_logs, search=''):
     log_file = f'{BASE_DIR}/logs/M3Usort.log'
     all_lines = []
 
@@ -2695,14 +2695,7 @@ def get_log_lines(page, lines_per_page, hide_webserver_logs, search=''):
         search_lower = search.lower()
         all_lines = [l for l in all_lines if search_lower in l.lower()]
 
-    total_pages = len(all_lines) // lines_per_page + (1 if len(all_lines) % lines_per_page > 0 else 0)
-
-    start_index = (page - 1) * lines_per_page
-    end_index = start_index + lines_per_page
-
-    page_lines = all_lines[start_index:end_index]
-
-    return page_lines, total_pages
+    return all_lines
 
 def json_flash(message, message_type):
     data = {
@@ -2796,13 +2789,14 @@ def log():
     hide_webserver_logs = get_config_variable(CONFIG_PATH, 'hide_webserver_logs')
     page = request.args.get('page', 1, type=int)
     search = request.args.get('q', '').strip()
+    active_types_str = request.args.get('types', 'info,warning,notice,error')
+    active_types = set(active_types_str.split(','))
     lines_per_page = 75
 
-    log_entries = []
+    all_lines = get_log_lines(hide_webserver_logs, search)
 
-    log_content, total_pages = get_log_lines(page, lines_per_page, hide_webserver_logs, search)
-
-    for line in log_content:
+    classified = []
+    for line in all_lines:
         parts = line.split(' ', 3)
         if len(parts) >= 4:
             metadata, message = parts[0] + ' ' + parts[1] + ' ' + parts[2], parts[3]
@@ -2811,26 +2805,39 @@ def log():
 
         if 'DEBUG' in metadata:
             css_class = 'log-debug'
+            entry_type = 'info'
         elif 'INFO' in metadata:
             css_class = 'log-info'
+            entry_type = 'info'
         elif 'WARNING' in metadata:
             css_class = 'log-warning'
+            entry_type = 'warning'
         elif 'ERROR' in metadata:
             css_class = 'log-error'
+            entry_type = 'error'
         elif 'CRITICAL' in metadata:
             css_class = 'log-critical'
+            entry_type = 'error'
         elif 'NOTICE' in metadata:
-            if 'Created .strm file' in message:
-                css_class = 'log-notice-strm'
-            else:
-                css_class = 'log-notice'
+            css_class = 'log-notice-strm' if 'Created .strm file' in message else 'log-notice'
+            entry_type = 'notice'
         else:
-            css_class = ''
+            css_class = 'log-info'
+            entry_type = 'info'
+
+        if entry_type not in active_types:
+            continue
 
         message = ansi_to_html_converter(message)
-        log_entries.append((metadata, message, css_class))
+        classified.append((metadata, message, css_class))
 
-    return render_template('log.html', log_entries=log_entries, current_page=page, total_pages=total_pages, search_query=search)
+    total_pages = len(classified) // lines_per_page + (1 if len(classified) % lines_per_page > 0 else 0)
+    start = (page - 1) * lines_per_page
+    log_entries = classified[start:start + lines_per_page]
+
+    return render_template('log.html', log_entries=log_entries, current_page=page,
+                           total_pages=total_pages, search_query=search,
+                           active_types=active_types_str)
 
 def is_cache_valid():
     if not GROUPS_CACHE['last_updated']:

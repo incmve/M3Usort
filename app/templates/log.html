@@ -3,22 +3,22 @@
 <div class="topbar">
     <span class="topbar-title">Log</span>
     <div class="topbar-right">
-        {% if current_page > 1 %}<a href="?page={{ current_page - 1 }}{% if search_query %}&q={{ search_query }}{% endif %}" class="topbar-btn">← Prev</a>{% endif %}
+        {% if current_page > 1 %}<a href="?page={{ current_page - 1 }}&q={{ search_query }}&types={{ active_types }}" class="topbar-btn">← Prev</a>{% endif %}
         <span class="topbar-pill">Page {{ current_page }} / {{ total_pages }}</span>
-        {% if current_page < total_pages %}<a href="?page={{ current_page + 1 }}{% if search_query %}&q={{ search_query }}{% endif %}" class="topbar-btn">Next →</a>{% endif %}
+        {% if current_page < total_pages %}<a href="?page={{ current_page + 1 }}&q={{ search_query }}&types={{ active_types }}" class="topbar-btn">Next →</a>{% endif %}
     </div>
 </div>
 <div class="page-content">
     <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap;">
-        <form method="get" style="display:flex; gap:6px; align-items:center;">
+        <form method="get" style="display:flex; gap:6px; align-items:center;" onsubmit="injectTypes(this)">
             <input type="text" class="filter-input" name="q" value="{{ search_query }}" placeholder="Search all logs..." style="width:260px;">
             <button type="submit" class="button" style="padding:4px 12px;">Search</button>
-            {% if search_query %}<a href="?" class="topbar-btn">Clear</a>{% endif %}
+            {% if search_query %}<a href="?types={{ active_types }}" class="topbar-btn">Clear</a>{% endif %}
         </form>
-        <label class="log-filter-label"><input type="checkbox" id="cb-info" checked onchange="applyFilters()"> <span style="color:#d0d3d8;">Info</span></label>
-        <label class="log-filter-label"><input type="checkbox" id="cb-warning" checked onchange="applyFilters()"> <span style="color:#b8902a;">Warning</span></label>
-        <label class="log-filter-label"><input type="checkbox" id="cb-notice" checked onchange="applyFilters()"> <span style="color:#3a8a5a;">Notice</span></label>
-        <label class="log-filter-label"><input type="checkbox" id="cb-error" checked onchange="applyFilters()"> <span style="color:#a04040;">Error</span></label>
+        <label class="log-filter-label"><input type="checkbox" id="cb-info" {% if 'info' in active_types %}checked{% endif %} onchange="applyFilters()"> <span style="color:#d0d3d8;">Info</span></label>
+        <label class="log-filter-label"><input type="checkbox" id="cb-warning" {% if 'warning' in active_types %}checked{% endif %} onchange="applyFilters()"> <span style="color:#b8902a;">Warning</span></label>
+        <label class="log-filter-label"><input type="checkbox" id="cb-notice" {% if 'notice' in active_types %}checked{% endif %} onchange="applyFilters()"> <span style="color:#3a8a5a;">Notice</span></label>
+        <label class="log-filter-label"><input type="checkbox" id="cb-error" {% if 'error' in active_types %}checked{% endif %} onchange="applyFilters()"> <span style="color:#a04040;">Error</span></label>
     </div>
     <div id="log-list">
         {% for metadata, message, css_class in log_entries %}
@@ -28,27 +28,31 @@
         {% endfor %}
     </div>
     <div style="display:flex; justify-content:space-between; margin-top:16px;">
-        {% if current_page > 1 %}<a href="?page={{ current_page - 1 }}{% if search_query %}&q={{ search_query }}{% endif %}" class="button">← Previous</a>{% else %}<span></span>{% endif %}
-        {% if current_page < total_pages %}<a href="?page={{ current_page + 1 }}{% if search_query %}&q={{ search_query }}{% endif %}" class="button">Next →</a>{% endif %}
+        {% if current_page > 1 %}<a href="?page={{ current_page - 1 }}&q={{ search_query }}&types={{ active_types }}" class="button">← Previous</a>{% else %}<span></span>{% endif %}
+        {% if current_page < total_pages %}<a href="?page={{ current_page + 1 }}&q={{ search_query }}&types={{ active_types }}" class="button">Next →</a>{% endif %}
     </div>
 </div>
 <script>
+function getTypes() {
+    const types = [];
+    if (document.getElementById('cb-info').checked) types.push('info');
+    if (document.getElementById('cb-warning').checked) types.push('warning');
+    if (document.getElementById('cb-notice').checked) types.push('notice');
+    if (document.getElementById('cb-error').checked) types.push('error');
+    return types;
+}
 function applyFilters() {
-    const showInfo = document.getElementById('cb-info').checked;
-    const showWarning = document.getElementById('cb-warning').checked;
-    const showNotice = document.getElementById('cb-notice').checked;
-    const showError = document.getElementById('cb-error').checked;
-    document.querySelectorAll('#log-list .log-entry').forEach(e => {
-        const isInfo = e.classList.contains('log-info');
-        const isWarning = e.classList.contains('log-warning');
-        const isNotice = e.classList.contains('log-notice') || e.classList.contains('log-notice-strm');
-        const isError = e.classList.contains('log-error') || e.classList.contains('log-critical');
-        if (isInfo && !showInfo) { e.style.display = 'none'; return; }
-        if (isWarning && !showWarning) { e.style.display = 'none'; return; }
-        if (isNotice && !showNotice) { e.style.display = 'none'; return; }
-        if (isError && !showError) { e.style.display = 'none'; return; }
-        e.style.display = '';
-    });
+    const params = new URLSearchParams(window.location.search);
+    params.set('types', getTypes().join(','));
+    params.delete('page');
+    window.location.href = '?' + params.toString();
+}
+function injectTypes(form) {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'types';
+    input.value = getTypes().join(',');
+    form.appendChild(input);
 }
 </script>
 {% endblock %}
