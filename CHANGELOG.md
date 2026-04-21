@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.3
+- Log page: search now works across the entire log (server-side) with correct pagination of results
+- Log page: Info / Warning / Notice / Error filter checkboxes; filtering is server-side and persists across page navigation
+- Log page: "NOTICE: Created .strm file" entries shown in blue
+- Jellyfin library refresh only triggered when files were actually downloaded
+- Update check now reads `app/__version__.py` from main branch instead of CHANGELOG.md
+
 ## 2.0.2
 - Drag-to-reorder nav sections (SortableJS), order saved across page loads
 - Clickable M3Usort logo returns to dashboard

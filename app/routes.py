@@ -3007,29 +3007,26 @@ def update_groups_cache():
 def check_for_app_updates():
     global UPDATE_AVAILABLE, UPDATE_VERSION
     try:
-        url = "https://raw.githubusercontent.com/incmve/M3Usort/refs/heads/main/CHANGELOG.md"
+        url = "https://raw.githubusercontent.com/incmve/M3Usort/refs/heads/main/app/__version__.py"
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            PrintLog("Failed to fetch the changelog.", "WARNING")
+            PrintLog("Failed to fetch __version__.py.", "WARNING")
             return
-        
-        changelog_content = response.text
-        version_pattern = r"## (\d+\.\d+\.\d+)"
-        matches = re.findall(version_pattern, changelog_content)
-        
-        if not matches:
-            PrintLog("No version found in changelog.", "WARNING")
+
+        match = re.search(r"__version__\s*=\s*['\"](\d+\.\d+\.\d+)['\"]", response.text)
+        if not match:
+            PrintLog("No version found in __version__.py.", "WARNING")
             return
-        
-        latest_version = matches[0]
-        PrintLog(f"Latest version in changelog: {latest_version}", "INFO")
+
+        latest_version = match.group(1)
+        PrintLog(f"Latest version: {latest_version}", "INFO")
         if version.parse(latest_version) > version.parse(VERSION):
             UPDATE_AVAILABLE = 1
             UPDATE_VERSION = latest_version
             PrintLog(f"Update available: {latest_version}", "WARNING")
         else:
             PrintLog("No update available, running latest version.", "INFO")
-    
+
     except Exception as e:
         PrintLog(f"Error checking for updates: {e}", "ERROR")
 
