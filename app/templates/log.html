@@ -15,6 +15,7 @@
             <button type="submit" class="button" style="padding:4px 12px;">Search</button>
             {% if search_query %}<a href="?" class="topbar-btn">Clear</a>{% endif %}
         </form>
+        <label class="log-filter-label"><input type="checkbox" id="cb-info" checked onchange="applyFilters()"> <span style="color:#d0d3d8;">Info</span></label>
         <label class="log-filter-label"><input type="checkbox" id="cb-warning" checked onchange="applyFilters()"> <span style="color:#b8902a;">Warning</span></label>
         <label class="log-filter-label"><input type="checkbox" id="cb-notice" checked onchange="applyFilters()"> <span style="color:#3a8a5a;">Notice</span></label>
         <label class="log-filter-label"><input type="checkbox" id="cb-error" checked onchange="applyFilters()"> <span style="color:#a04040;">Error</span></label>
@@ -33,13 +34,16 @@
 </div>
 <script>
 function applyFilters() {
+    const showInfo = document.getElementById('cb-info').checked;
     const showWarning = document.getElementById('cb-warning').checked;
     const showNotice = document.getElementById('cb-notice').checked;
     const showError = document.getElementById('cb-error').checked;
     document.querySelectorAll('#log-list .log-entry').forEach(e => {
+        const isInfo = e.classList.contains('log-info');
         const isWarning = e.classList.contains('log-warning');
         const isNotice = e.classList.contains('log-notice') || e.classList.contains('log-notice-strm');
         const isError = e.classList.contains('log-error') || e.classList.contains('log-critical');
+        if (isInfo && !showInfo) { e.style.display = 'none'; return; }
         if (isWarning && !showWarning) { e.style.display = 'none'; return; }
         if (isNotice && !showNotice) { e.style.display = 'none'; return; }
         if (isError && !showError) { e.style.display = 'none'; return; }
