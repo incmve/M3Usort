@@ -197,6 +197,8 @@
 .log-error { color: #a04040; }
 .log-critical { color: #a040a0; }
 .log-notice { color: #3a8a5a; }
+.log-notice-strm { color: #4aadcf; }
+.log-filter-label { color: #d0d3d8; font-size: 13px; cursor: pointer; user-select: none; }
 .page-link { color: #4aadcf; font-weight: 600; }
 
 /* ── Settings form ── */

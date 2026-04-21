@@ -2679,25 +2679,29 @@ def ansi_to_html_converter(text):
     text = ansi_escape.sub('', text)
     return text
 
-def get_log_lines(page, lines_per_page, hide_webserver_logs):
+def get_log_lines(page, lines_per_page, hide_webserver_logs, search=''):
     log_file = f'{BASE_DIR}/logs/M3Usort.log'
     all_lines = []
-    
+
     with open(log_file, 'r') as file:
         for line in file:
             if hide_webserver_logs == "1" and ('GET /' in line or 'POST /' in line):
                 continue
             all_lines.append(line.strip())
-    
+
     all_lines.reverse()
 
+    if search:
+        search_lower = search.lower()
+        all_lines = [l for l in all_lines if search_lower in l.lower()]
+
     total_pages = len(all_lines) // lines_per_page + (1 if len(all_lines) % lines_per_page > 0 else 0)
-    
+
     start_index = (page - 1) * lines_per_page
     end_index = start_index + lines_per_page
-    
+
     page_lines = all_lines[start_index:end_index]
-    
+
     return page_lines, total_pages
 
 def json_flash(message, message_type):
@@ -2791,11 +2795,12 @@ def file_browser_delete():
 def log():
     hide_webserver_logs = get_config_variable(CONFIG_PATH, 'hide_webserver_logs')
     page = request.args.get('page', 1, type=int)
+    search = request.args.get('q', '').strip()
     lines_per_page = 75
 
     log_entries = []
 
-    log_content, total_pages = get_log_lines(page, lines_per_page, hide_webserver_logs)
+    log_content, total_pages = get_log_lines(page, lines_per_page, hide_webserver_logs, search)
 
     for line in log_content:
         parts = line.split(' ', 3)
@@ -2815,14 +2820,17 @@ def log():
         elif 'CRITICAL' in metadata:
             css_class = 'log-critical'
         elif 'NOTICE' in metadata:
-            css_class = 'log-notice'
+            if 'Created .strm file' in message:
+                css_class = 'log-notice-strm'
+            else:
+                css_class = 'log-notice'
         else:
             css_class = ''
 
-        message = ansi_to_html_converter(message)        
+        message = ansi_to_html_converter(message)
         log_entries.append((metadata, message, css_class))
-    
-    return render_template('log.html', log_entries=log_entries, current_page=page, total_pages=total_pages)
+
+    return render_template('log.html', log_entries=log_entries, current_page=page, total_pages=total_pages, search_query=search)
 
 def is_cache_valid():
     if not GROUPS_CACHE['last_updated']:
