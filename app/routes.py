@@ -344,15 +344,16 @@ def refresh_jellyfin():
 def scheduled_vod_download():
     series_dir = get_config_variable(CONFIG_PATH, 'series_dir')
     update_series_directory(series_dir)
-    find_wanted_series(series_dir)
+    downloaded = find_wanted_series(series_dir)
 
     movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir')
     update_movies_directory(movies_dir)
-    find_wanted_movies(movies_dir)
+    downloaded += find_wanted_movies(movies_dir)
 
     if not save_vod_cache():
         _schedule_vod_cache_retry()
-    refresh_jellyfin()
+    if downloaded > 0:
+        refresh_jellyfin()
 
 def scheduled_renew_m3u():
     m3u_url = get_credential('url')
@@ -1379,16 +1380,18 @@ def strip_year(movie_name):
 def find_wanted_movies(movies_dir):
     match_type = get_config_variable(CONFIG_PATH, 'match_type')
     if match_type == "1" or match_type == None:
-        find_wanted_movies_string(movies_dir)
+        return find_wanted_movies_string(movies_dir)
     elif match_type == "2":
-        find_wanted_movies_fuzzy(movies_dir)
+        return find_wanted_movies_fuzzy(movies_dir)
+    return 0
 
 def find_wanted_series(series_dir):
     match_type = get_config_variable(CONFIG_PATH, 'match_type')
     if match_type == "1" or match_type == None:
-        find_wanted_series_string(series_dir)
+        return find_wanted_series_string(series_dir)
     elif match_type == "2":
-        find_wanted_series_fuzzy(series_dir)
+        return find_wanted_series_fuzzy(series_dir)
+    return 0
 
 
 def find_wanted_series_fuzzy(series_dir):
@@ -1396,6 +1399,7 @@ def find_wanted_series_fuzzy(series_dir):
     overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series'))
     current_year = datetime.now().year
     similarity_threshold = 75
+    written = 0
 
     if wanted_series is None:
         wanted_series = []
@@ -1431,17 +1435,19 @@ def find_wanted_series_fuzzy(series_dir):
                     most_recent_year = year if year else most_recent_year
 
         if best_match_name:
-            _write_series_from_m3u(best_match_name, m3u_series[best_match_name], series_dir, overwrite_series)
+            written += _write_series_from_m3u(best_match_name, m3u_series[best_match_name], series_dir, overwrite_series)
             wanted_series.remove(wanted)
         else:
             PrintLog(f"No match found for '{wanted}'", "WARNING")
 
     update_config_array(CONFIG_PATH, 'wanted_series', wanted_series)
+    return written
 
 
 def find_wanted_series_string(series_dir):
     wanted_series = get_config_variable(CONFIG_PATH, 'wanted_series')
     overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series') or 0)
+    written = 0
     if wanted_series is None:
         wanted_series = []
 
@@ -1452,19 +1458,21 @@ def find_wanted_series_string(series_dir):
         matches = [name for name in m3u_series if wanted.lower() in name.lower()]
         found_match = False
         for name in matches:
-            _write_series_from_m3u(name, m3u_series[name], series_dir, overwrite_series)
+            written += _write_series_from_m3u(name, m3u_series[name], series_dir, overwrite_series)
             found_match = True
         if found_match:
             wanted_series.remove(wanted)
         else:
             PrintLog(f"No match found for '{wanted}'", "NOTICE")
     update_config_array(CONFIG_PATH, 'wanted_series', wanted_series)
+    return written
 
 def find_wanted_movies_fuzzy(movies_dir):
     wanted_movies = get_config_variable(CONFIG_PATH, 'wanted_movies')
     overwrite_movies = int(get_config_variable(CONFIG_PATH, 'overwrite_movies'))
     current_year = datetime.now().year
     similarity_threshold = 75
+    written = 0
 
     if wanted_movies is None:
         wanted_movies = []
@@ -1513,22 +1521,24 @@ def find_wanted_movies_fuzzy(movies_dir):
                 os.makedirs(movie_dir_path, exist_ok=True)
                 strm_file_path = os.path.join(movie_dir_path, f"{best_match['name']}.strm")
                 strm_content = f"{base_url}/movie/{username}/{password}/{best_match['stream_id']}.mkv"
-                
+
                 with open(strm_file_path, 'w') as strm_file:
                     strm_file.write(strm_content)
                 PrintLog(f"Created .strm file for {best_match['name']}", "NOTICE")
                 wanted_movies.remove(wanted)
+                written += 1
             else:
                 PrintLog(f"No match found for '{wanted}'", "WARNING")
         else:
             PrintLog(f"No match found for '{wanted}'", "WARNING")
 
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
+    return written
 
 def find_wanted_movies_string(movies_dir):
     wanted_movies = get_config_variable(CONFIG_PATH, 'wanted_movies')
     overwrite_movies = int(get_config_variable(CONFIG_PATH, 'overwrite_movies'))
-    found_match = False
+    written = 0
     if wanted_movies == None:
         wanted_movies = []
 
@@ -1557,6 +1567,7 @@ def find_wanted_movies_string(movies_dir):
                 strm_file.write(strm_content)
             PrintLog(f"Created .strm file for {movie['name']}", "NOTICE")
             found_match = True
+            written += 1
 
         if found_match:
             wanted_movies.remove(wanted)
@@ -1564,6 +1575,7 @@ def find_wanted_movies_string(movies_dir):
             PrintLog(f"No match found for '{wanted}'", "NOTICE")
 
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
+    return written
 
 
 
