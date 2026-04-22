@@ -2797,7 +2797,7 @@ def file_browser_delete():
     return jsonify({'success': True})
 
 @main_bp.route('/changelog')
-@login_required
+@admin_required
 def changelog():
     changelog_path = os.path.join(BASE_DIR, 'CHANGELOG.md')
     try:
