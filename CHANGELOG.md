@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.3
+- Replace per-series API calls with M3U parsing: series updates and watchlist downloads now read from the already-cached M3U file instead of calling get_series_info per series — eliminates bulk API hammering on every scheduler run
+- Remove eager enrich_vod_cache background thread that hammered the provider with 8k+ individual get_vod_info calls; TMDB/plot data is now fetched on-demand when a user opens a movie or series, and written back to cache so subsequent opens are instant
+- Add safe JSON parsing helper (_safe_json) applied to all response.json() calls — empty provider responses now produce a clear error instead of a cryptic decode exception
+- Validate provider response structure: detect when the provider returns a dict (error response) instead of the expected list, log the endpoint and response content for diagnosis
+- Add one-time VOD cache retry: if save_vod_cache fails, a single retry is scheduled 15 minutes later via APScheduler; no retry is scheduled if one is already pending, and a failed retry does not schedule another
+- Guard against missing 'info' key in DownloadSeries: stale series IDs that the provider no longer recognises now log a WARNING with the series name and return cleanly instead of crashing the scheduler
+- Fix update_series_directory log noise: folders containing only video files (.mkv/.mp4/.avi/.m4v) are now silently skipped or warned appropriately based on whether the provider also has the title, mixed .strm+video folders are warned, empty folders are warned
+- Include series name alongside series_id in DownloadSeries no-info warning
+
 ## 2.0.2
 - Drag-to-reorder nav sections (SortableJS), order saved across page loads
 - Clickable M3Usort logo returns to dashboard
