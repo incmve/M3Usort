@@ -9,6 +9,11 @@
 - Guard against missing 'info' key in DownloadSeries: stale series IDs that the provider no longer recognises now log a WARNING with the series name and return cleanly instead of crashing the scheduler
 - Fix update_series_directory log noise: folders containing only video files (.mkv/.mp4/.avi/.m4v) are now silently skipped or warned appropriately based on whether the provider also has the title, mixed .strm+video folders are warned, empty folders are warned
 - Include series name alongside series_id in DownloadSeries no-info warning
+- Log page: search now works across the entire log (server-side) with correct pagination of results
+- Log page: Info / Warning / Notice / Error filter checkboxes; filtering is server-side and persists across page navigation
+- Log page: "NOTICE: Created .strm file" entries shown in blue
+- Jellyfin library refresh only triggered when files were actually downloaded
+- Update check now reads `app/__version__.py` from main branch instead of CHANGELOG.md
 
 ## 2.0.2
 - Drag-to-reorder nav sections (SortableJS), order saved across page loads

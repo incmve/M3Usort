@@ -344,15 +344,16 @@ def refresh_jellyfin():
 def scheduled_vod_download():
     series_dir = get_config_variable(CONFIG_PATH, 'series_dir')
     update_series_directory(series_dir)
-    find_wanted_series(series_dir)
+    downloaded = find_wanted_series(series_dir)
 
     movies_dir = get_config_variable(CONFIG_PATH, 'movies_dir')
     update_movies_directory(movies_dir)
-    find_wanted_movies(movies_dir)
+    downloaded += find_wanted_movies(movies_dir)
 
     if not save_vod_cache():
         _schedule_vod_cache_retry()
-    refresh_jellyfin()
+    if downloaded > 0:
+        refresh_jellyfin()
 
 def scheduled_renew_m3u():
     m3u_url = get_credential('url')
@@ -1379,16 +1380,18 @@ def strip_year(movie_name):
 def find_wanted_movies(movies_dir):
     match_type = get_config_variable(CONFIG_PATH, 'match_type')
     if match_type == "1" or match_type == None:
-        find_wanted_movies_string(movies_dir)
+        return find_wanted_movies_string(movies_dir)
     elif match_type == "2":
-        find_wanted_movies_fuzzy(movies_dir)
+        return find_wanted_movies_fuzzy(movies_dir)
+    return 0
 
 def find_wanted_series(series_dir):
     match_type = get_config_variable(CONFIG_PATH, 'match_type')
     if match_type == "1" or match_type == None:
-        find_wanted_series_string(series_dir)
+        return find_wanted_series_string(series_dir)
     elif match_type == "2":
-        find_wanted_series_fuzzy(series_dir)
+        return find_wanted_series_fuzzy(series_dir)
+    return 0
 
 
 def find_wanted_series_fuzzy(series_dir):
@@ -1396,6 +1399,7 @@ def find_wanted_series_fuzzy(series_dir):
     overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series'))
     current_year = datetime.now().year
     similarity_threshold = 75
+    written = 0
 
     if wanted_series is None:
         wanted_series = []
@@ -1431,17 +1435,19 @@ def find_wanted_series_fuzzy(series_dir):
                     most_recent_year = year if year else most_recent_year
 
         if best_match_name:
-            _write_series_from_m3u(best_match_name, m3u_series[best_match_name], series_dir, overwrite_series)
+            written += _write_series_from_m3u(best_match_name, m3u_series[best_match_name], series_dir, overwrite_series)
             wanted_series.remove(wanted)
         else:
             PrintLog(f"No match found for '{wanted}'", "WARNING")
 
     update_config_array(CONFIG_PATH, 'wanted_series', wanted_series)
+    return written
 
 
 def find_wanted_series_string(series_dir):
     wanted_series = get_config_variable(CONFIG_PATH, 'wanted_series')
     overwrite_series = int(get_config_variable(CONFIG_PATH, 'overwrite_series') or 0)
+    written = 0
     if wanted_series is None:
         wanted_series = []
 
@@ -1452,19 +1458,21 @@ def find_wanted_series_string(series_dir):
         matches = [name for name in m3u_series if wanted.lower() in name.lower()]
         found_match = False
         for name in matches:
-            _write_series_from_m3u(name, m3u_series[name], series_dir, overwrite_series)
+            written += _write_series_from_m3u(name, m3u_series[name], series_dir, overwrite_series)
             found_match = True
         if found_match:
             wanted_series.remove(wanted)
         else:
             PrintLog(f"No match found for '{wanted}'", "NOTICE")
     update_config_array(CONFIG_PATH, 'wanted_series', wanted_series)
+    return written
 
 def find_wanted_movies_fuzzy(movies_dir):
     wanted_movies = get_config_variable(CONFIG_PATH, 'wanted_movies')
     overwrite_movies = int(get_config_variable(CONFIG_PATH, 'overwrite_movies'))
     current_year = datetime.now().year
     similarity_threshold = 75
+    written = 0
 
     if wanted_movies is None:
         wanted_movies = []
@@ -1513,22 +1521,24 @@ def find_wanted_movies_fuzzy(movies_dir):
                 os.makedirs(movie_dir_path, exist_ok=True)
                 strm_file_path = os.path.join(movie_dir_path, f"{best_match['name']}.strm")
                 strm_content = f"{base_url}/movie/{username}/{password}/{best_match['stream_id']}.mkv"
-                
+
                 with open(strm_file_path, 'w') as strm_file:
                     strm_file.write(strm_content)
                 PrintLog(f"Created .strm file for {best_match['name']}", "NOTICE")
                 wanted_movies.remove(wanted)
+                written += 1
             else:
                 PrintLog(f"No match found for '{wanted}'", "WARNING")
         else:
             PrintLog(f"No match found for '{wanted}'", "WARNING")
 
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
+    return written
 
 def find_wanted_movies_string(movies_dir):
     wanted_movies = get_config_variable(CONFIG_PATH, 'wanted_movies')
     overwrite_movies = int(get_config_variable(CONFIG_PATH, 'overwrite_movies'))
-    found_match = False
+    written = 0
     if wanted_movies == None:
         wanted_movies = []
 
@@ -1557,6 +1567,7 @@ def find_wanted_movies_string(movies_dir):
                 strm_file.write(strm_content)
             PrintLog(f"Created .strm file for {movie['name']}", "NOTICE")
             found_match = True
+            written += 1
 
         if found_match:
             wanted_movies.remove(wanted)
@@ -1564,6 +1575,7 @@ def find_wanted_movies_string(movies_dir):
             PrintLog(f"No match found for '{wanted}'", "NOTICE")
 
     update_config_array(CONFIG_PATH, 'wanted_movies', wanted_movies)
+    return written
 
 
 
@@ -2679,26 +2691,23 @@ def ansi_to_html_converter(text):
     text = ansi_escape.sub('', text)
     return text
 
-def get_log_lines(page, lines_per_page, hide_webserver_logs):
+def get_log_lines(hide_webserver_logs, search=''):
     log_file = f'{BASE_DIR}/logs/M3Usort.log'
     all_lines = []
-    
+
     with open(log_file, 'r') as file:
         for line in file:
             if hide_webserver_logs == "1" and ('GET /' in line or 'POST /' in line):
                 continue
             all_lines.append(line.strip())
-    
+
     all_lines.reverse()
 
-    total_pages = len(all_lines) // lines_per_page + (1 if len(all_lines) % lines_per_page > 0 else 0)
-    
-    start_index = (page - 1) * lines_per_page
-    end_index = start_index + lines_per_page
-    
-    page_lines = all_lines[start_index:end_index]
-    
-    return page_lines, total_pages
+    if search:
+        search_lower = search.lower()
+        all_lines = [l for l in all_lines if search_lower in l.lower()]
+
+    return all_lines
 
 def json_flash(message, message_type):
     data = {
@@ -2791,13 +2800,15 @@ def file_browser_delete():
 def log():
     hide_webserver_logs = get_config_variable(CONFIG_PATH, 'hide_webserver_logs')
     page = request.args.get('page', 1, type=int)
+    search = request.args.get('q', '').strip()
+    active_types_str = request.args.get('types', 'info,warning,notice,error')
+    active_types = set(active_types_str.split(','))
     lines_per_page = 75
 
-    log_entries = []
+    all_lines = get_log_lines(hide_webserver_logs, search)
 
-    log_content, total_pages = get_log_lines(page, lines_per_page, hide_webserver_logs)
-
-    for line in log_content:
+    classified = []
+    for line in all_lines:
         parts = line.split(' ', 3)
         if len(parts) >= 4:
             metadata, message = parts[0] + ' ' + parts[1] + ' ' + parts[2], parts[3]
@@ -2806,23 +2817,39 @@ def log():
 
         if 'DEBUG' in metadata:
             css_class = 'log-debug'
+            entry_type = 'info'
         elif 'INFO' in metadata:
             css_class = 'log-info'
+            entry_type = 'info'
         elif 'WARNING' in metadata:
             css_class = 'log-warning'
+            entry_type = 'warning'
         elif 'ERROR' in metadata:
             css_class = 'log-error'
+            entry_type = 'error'
         elif 'CRITICAL' in metadata:
             css_class = 'log-critical'
+            entry_type = 'error'
         elif 'NOTICE' in metadata:
-            css_class = 'log-notice'
+            css_class = 'log-notice-strm' if ('Created .strm file' in message or 'Adding new file' in message) else 'log-notice'
+            entry_type = 'notice'
         else:
-            css_class = ''
+            css_class = 'log-info'
+            entry_type = 'info'
 
-        message = ansi_to_html_converter(message)        
-        log_entries.append((metadata, message, css_class))
-    
-    return render_template('log.html', log_entries=log_entries, current_page=page, total_pages=total_pages)
+        if entry_type not in active_types:
+            continue
+
+        message = ansi_to_html_converter(message)
+        classified.append((metadata, message, css_class))
+
+    total_pages = len(classified) // lines_per_page + (1 if len(classified) % lines_per_page > 0 else 0)
+    start = (page - 1) * lines_per_page
+    log_entries = classified[start:start + lines_per_page]
+
+    return render_template('log.html', log_entries=log_entries, current_page=page,
+                           total_pages=total_pages, search_query=search,
+                           active_types=active_types_str)
 
 def is_cache_valid():
     if not GROUPS_CACHE['last_updated']:
@@ -2980,29 +3007,26 @@ def update_groups_cache():
 def check_for_app_updates():
     global UPDATE_AVAILABLE, UPDATE_VERSION
     try:
-        url = "https://raw.githubusercontent.com/incmve/M3Usort/refs/heads/main/CHANGELOG.md"
+        url = "https://raw.githubusercontent.com/incmve/M3Usort/refs/heads/main/app/__version__.py"
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            PrintLog("Failed to fetch the changelog.", "WARNING")
+            PrintLog("Failed to fetch __version__.py.", "WARNING")
             return
-        
-        changelog_content = response.text
-        version_pattern = r"## (\d+\.\d+\.\d+)"
-        matches = re.findall(version_pattern, changelog_content)
-        
-        if not matches:
-            PrintLog("No version found in changelog.", "WARNING")
+
+        match = re.search(r"__version__\s*=\s*['\"](\d+\.\d+\.\d+)['\"]", response.text)
+        if not match:
+            PrintLog("No version found in __version__.py.", "WARNING")
             return
-        
-        latest_version = matches[0]
-        PrintLog(f"Latest version in changelog: {latest_version}", "INFO")
+
+        latest_version = match.group(1)
+        PrintLog(f"Latest version: {latest_version}", "INFO")
         if version.parse(latest_version) > version.parse(VERSION):
             UPDATE_AVAILABLE = 1
             UPDATE_VERSION = latest_version
             PrintLog(f"Update available: {latest_version}", "WARNING")
         else:
             PrintLog("No update available, running latest version.", "INFO")
-    
+
     except Exception as e:
         PrintLog(f"Error checking for updates: {e}", "ERROR")
 

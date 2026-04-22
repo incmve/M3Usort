@@ -82,6 +82,7 @@ Here you can change all the settings:
 - SMB Username / Password: Credentials for the share.
 - Daily scheduled backup: If set to Yes, a backup ZIP is written to the SMB share once a day.
 - Backup time: The time at which the daily backup runs (HH:MM, 24-hour format).
+- Backup Retention: Number of most recent backups to keep on the SMB share. Older ones are deleted automatically.
 
 ### Admin -> Backup & Restore
 Download a ZIP backup of your `config.py` at any time from the Settings page. You can restore from a `.zip` or a raw `.py` backup file — both via the Settings page and via the setup wizard on a fresh install. Credentials are encrypted using the `SECRET_KEY` from your `.env` file, so keep it consistent across restores.
@@ -93,7 +94,10 @@ M3Usort can write the backup ZIP directly to a network share (SMB/CIFS). Configu
 Here you can change the password for the admin and for downloading the playlists. On a fresh install, passwords are set via the setup wizard on first run.
 
 ### Admin -> Log
-Here you can view and search the logfile. Searching only works for the current page you are viewing. The logfile is located in M3USort/logs/M3USort.log
+Here you can view and search the logfile. Search works across the entire log, with correct pagination of results. You can filter by type using the Info / Warning / Notice / Error checkboxes. The logfile is located in M3USort/logs/M3USort.log
+
+### Admin -> File Browser
+Browse, navigate, and delete files in your configured movies and series directories. Supports shift-click range selection and multi-select with bulk delete.
 
 ### Groups -> Add Groups
 Select the channel groups you would like to save to the new playlist.
@@ -120,7 +124,7 @@ Select the movies you want to 'download'. Note: this will NOT download the movie
 Select the series you want to 'download'. Note: this will NOT download the series; it will only create a .strm file for each episode that has a link to the episode on the server of your IPTV provider. You still need an active subscription to watch this series. The .strm file can be used for projects like Jellyfin.
 
 ### VOD -> Start Download
-With this option, you can start the VOD download process immediately instead of waiting for the next scheduled runtime.
+With this option, you can start the VOD download process immediately instead of waiting for the next scheduled runtime. A 300-second cooldown is shown after triggering to prevent double-runs.
 
 ### Logout
 Take a wild guess...
@@ -130,6 +134,7 @@ Take a wild guess...
 
 ## Additional Notes
 
+- Nav sections are collapsible and their state is saved across page loads. Sections can be drag-to-reordered; the order is saved.
 - For URLs with special characters (e.g., "&", "?"), ensure they are correctly quoted when entering them via the setup wizard or Settings page to avoid parsing issues.
 - The `Requests` library is used for downloading the playlist, and `IPyTV` for parsing and generating M3U files.
 
