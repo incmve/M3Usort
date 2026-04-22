@@ -2796,6 +2796,18 @@ def file_browser_delete():
 
     return jsonify({'success': True})
 
+@main_bp.route('/changelog')
+@login_required
+def changelog():
+    changelog_path = os.path.join(BASE_DIR, 'CHANGELOG.md')
+    try:
+        with open(changelog_path, encoding='utf-8') as f:
+            content = f.read()
+    except Exception:
+        content = 'Changelog not available.'
+    return render_template('changelog.html', content=content)
+
+
 @main_bp.route('/log')
 def log():
     hide_webserver_logs = get_config_variable(CONFIG_PATH, 'hide_webserver_logs')

@@ -1,0 +1,24 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="topbar">
+    <span class="topbar-title">Changelog</span>
+</div>
+<div class="page-content">
+    <div class="info-block">
+        <pre id="changelog-content" style="white-space:pre-wrap; font-family:inherit; font-size:13px; color:#d0d0d0; line-height:1.6; margin:0; padding:16px;">{{ content }}</pre>
+    </div>
+</div>
+<script>
+// Minimal markdown: bold ## headings and - list items
+(function() {
+    var el = document.getElementById('changelog-content');
+    if (!el) return;
+    var html = el.textContent
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/^(## .+)$/gm, '<span style="color:#4aadcf;font-weight:600;font-size:15px;">$1</span>')
+        .replace(/^(# .+)$/gm,  '<span style="color:#e0e0e0;font-weight:700;font-size:17px;">$1</span>')
+        .replace(/^(- .+)$/gm,  '<span style="color:#b0b0b0;">$1</span>');
+    el.innerHTML = html;
+})();
+</script>
+{% endblock %}
