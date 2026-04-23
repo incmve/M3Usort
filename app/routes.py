@@ -246,8 +246,10 @@ def save_vod_cache():
                 for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
                     if prev.get(field):
                         movie[field] = prev[field]
-        with open(movies_cache_path, 'w', encoding='utf-8') as f:
+        tmp = movies_cache_path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(movies_data, f)
+        os.replace(tmp, movies_cache_path)
         PrintLog(f"Saved movies cache ({len(movies_data)} items)", "INFO")
         movies_ok = True
     except Exception as e:
@@ -292,8 +294,10 @@ def save_vod_cache():
                 # Preserve fixed TMDB cover
                 if prev.get('cover', '').startswith('https://image.tmdb'):
                     serie['cover'] = prev['cover']
-        with open(series_cache_path, 'w', encoding='utf-8') as f:
+        tmp = series_cache_path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(series_data, f)
+        os.replace(tmp, series_cache_path)
         PrintLog(f"Saved series cache ({len(series_data)} items)", "INFO")
         series_ok = True
     except Exception as e:
@@ -791,15 +795,17 @@ def update_home_data():
 
     movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
     series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
-    if os.path.exists(movies_cache_path):
+    try:
         with open(movies_cache_path, encoding='utf-8') as f:
             total_movies = len(json.load(f))
-    else:
+    except Exception as e:
+        logging.error(f"Error reading movies cache: {e}")
         total_movies = 0
-    if os.path.exists(series_cache_path):
+    try:
         with open(series_cache_path, encoding='utf-8') as f:
             total_series = len(json.load(f))
-    else:
+    except Exception as e:
+        logging.error(f"Error reading series cache: {e}")
         total_series = 0
 
     uptime_duration = current_time - app.app_start_time
@@ -895,15 +901,17 @@ def home():
 
     movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
     series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
-    if os.path.exists(movies_cache_path):
+    try:
         with open(movies_cache_path, encoding='utf-8') as f:
             total_movies = len(json.load(f))
-    else:
+    except Exception as e:
+        logging.error(f"Error reading movies cache: {e}")
         total_movies = 0
-    if os.path.exists(series_cache_path):
+    try:
         with open(series_cache_path, encoding='utf-8') as f:
             total_series = len(json.load(f))
-    else:
+    except Exception as e:
+        logging.error(f"Error reading series cache: {e}")
         total_series = 0
 
     uptime_duration = current_time - app.app_start_time
@@ -1661,8 +1669,10 @@ def get_vod_info(stream_id):
                     if plot:    m['plot']    = plot
                     if rating:  m['rating']  = rating
                     break
-            with open(movies_cache_path, 'w', encoding='utf-8') as f:
+            tmp = movies_cache_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(movies_data, f)
+            os.replace(tmp, movies_cache_path)
         except Exception:
             pass
 
@@ -1729,8 +1739,10 @@ def get_series_info_meta(series_id):
                     if plot:    s['plot']    = plot
                     if rating:  s['rating']  = rating
                     break
-            with open(series_cache_path, 'w', encoding='utf-8') as f:
+            tmp = series_cache_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(series_data, f)
+            os.replace(tmp, series_cache_path)
         except Exception:
             pass
 
