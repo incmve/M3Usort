@@ -4,21 +4,28 @@
     <span class="topbar-title">Changelog</span>
 </div>
 <div class="page-content">
-    <div class="info-block">
-        <pre id="changelog-content" style="white-space:pre-wrap; font-family:inherit; font-size:13px; color:#d0d0d0; line-height:1.6; margin:0; padding:16px;">{{ content }}</pre>
+    <div class="info-block" style="padding:20px;">
+        <div id="changelog-content"></div>
     </div>
 </div>
+<style>
+#changelog-content h1 { font-size:18px; color:#e0e0e0; margin:0 0 16px 0; }
+#changelog-content h2 { font-size:15px; color:#4aadcf; font-weight:600; margin:20px 0 8px 0; border-bottom:1px solid #1e1e1e; padding-bottom:4px; }
+#changelog-content ul { margin:0 0 8px 0; padding-left:20px; }
+#changelog-content li { font-size:13px; color:#b0b0b0; line-height:1.6; }
+#changelog-content code { background:#1a1a1a; padding:1px 5px; border-radius:3px; font-size:12px; color:#4aadcf; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
-// Minimal markdown: bold ## headings and - list items
-(function() {
-    var el = document.getElementById('changelog-content');
-    if (!el) return;
-    var html = el.textContent
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-        .replace(/^(## .+)$/gm, '<span style="color:#4aadcf;font-weight:600;font-size:15px;">$1</span>')
-        .replace(/^(# .+)$/gm,  '<span style="color:#e0e0e0;font-weight:700;font-size:17px;">$1</span>')
-        .replace(/^(- .+)$/gm,  '<span style="color:#b0b0b0;">$1</span>');
-    el.innerHTML = html;
-})();
+var raw = {{ content | tojson }};
+var el = document.getElementById('changelog-content');
+if (typeof marked !== 'undefined') {
+    el.innerHTML = marked.parse(raw);
+} else {
+    var pre = document.createElement('pre');
+    pre.style.cssText = 'white-space:pre-wrap;font-size:13px;color:#d0d0d0;line-height:1.6;';
+    pre.textContent = raw;
+    el.appendChild(pre);
+}
 </script>
 {% endblock %}
