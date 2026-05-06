@@ -798,14 +798,20 @@ def update_home_data():
     try:
         with open(movies_cache_path, encoding='utf-8') as f:
             total_movies = len(json.load(f))
+    except json.JSONDecodeError as e:
+        logging.error(f"movies_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
+        total_movies = 0
     except Exception as e:
-        logging.error(f"Error reading movies cache: {e}")
+        logging.error(f"Could not read movies_cache.json: {e}")
         total_movies = 0
     try:
         with open(series_cache_path, encoding='utf-8') as f:
             total_series = len(json.load(f))
+    except json.JSONDecodeError as e:
+        logging.error(f"series_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
+        total_series = 0
     except Exception as e:
-        logging.error(f"Error reading series cache: {e}")
+        logging.error(f"Could not read series_cache.json: {e}")
         total_series = 0
 
     uptime_duration = current_time - app.app_start_time
@@ -904,14 +910,20 @@ def home():
     try:
         with open(movies_cache_path, encoding='utf-8') as f:
             total_movies = len(json.load(f))
+    except json.JSONDecodeError as e:
+        logging.error(f"movies_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
+        total_movies = 0
     except Exception as e:
-        logging.error(f"Error reading movies cache: {e}")
+        logging.error(f"Could not read movies_cache.json: {e}")
         total_movies = 0
     try:
         with open(series_cache_path, encoding='utf-8') as f:
             total_series = len(json.load(f))
+    except json.JSONDecodeError as e:
+        logging.error(f"series_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
+        total_series = 0
     except Exception as e:
-        logging.error(f"Error reading series cache: {e}")
+        logging.error(f"Could not read series_cache.json: {e}")
         total_series = 0
 
     uptime_duration = current_time - app.app_start_time
@@ -2751,7 +2763,11 @@ def file_browser_list():
         # Return the root dirs themselves
         roots = []
         for r in allowed_roots:
-            roots.append({'name': r.split('/')[-1], 'path': r, 'type': 'dir', 'full_path': r})
+            try:
+                mtime = datetime.fromtimestamp(os.stat(r).st_mtime).strftime('%Y-%m-%d %H:%M')
+            except Exception:
+                mtime = None
+            roots.append({'name': r.split('/')[-1], 'path': r, 'type': 'dir', 'full_path': r, 'modified': mtime})
         return jsonify({'items': roots, 'path': ''})
 
     # Security: must be under an allowed root
