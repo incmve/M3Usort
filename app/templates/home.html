@@ -37,6 +37,11 @@
             <div class="stat-label" style="color:#5a3a7a;">Uptime</div>
             <div class="stat-value" id="uptime" style="color:#9a70cf; font-size:18px;">{{ uptime }}</div>
         </div>
+        <div class="stat-card" id="vpn-card" style="border-color:#1a2a2a; background:linear-gradient(135deg,#0a1818,#151515);">
+            <div class="stat-label" id="vpn-label" style="color:#2a6a6a;">VPN</div>
+            <div class="stat-value" id="vpn-ip" style="color:#4aadad; font-size:15px;">…</div>
+            <div class="stat-sub" id="vpn-location">checking</div>
+        </div>
     </div>
 
     <div class="info-block">
@@ -142,5 +147,66 @@ document.addEventListener("DOMContentLoaded", function() {
     fetchData();
     setInterval(fetchData, 60000);
 });
+</script>
+<script>
+(function() {
+    var card  = document.getElementById('vpn-card');
+    var label = document.getElementById('vpn-label');
+    var ipEl  = document.getElementById('vpn-ip');
+    var locEl = document.getElementById('vpn-location');
+
+    function setOk(ip, location) {
+        card.style.borderColor  = '#1a3a3a';
+        card.style.background   = 'linear-gradient(135deg,#0e2020,#151515)';
+        label.style.color       = '#2a7a7a';
+        ipEl.style.color        = '#4acfcf';
+        ipEl.textContent        = ip;
+        locEl.textContent       = location;
+    }
+    function setWarn(ip, msg) {
+        card.style.borderColor  = '#4a3010';
+        card.style.background   = 'linear-gradient(135deg,#201808,#151515)';
+        label.style.color       = '#8a6020';
+        ipEl.style.color        = '#c8a030';
+        ipEl.textContent        = ip;
+        locEl.textContent       = msg;
+    }
+    function setError(msg) {
+        card.style.borderColor  = '#4a1a1a';
+        card.style.background   = 'linear-gradient(135deg,#200e0e,#151515)';
+        label.style.color       = '#8a3030';
+        ipEl.style.color        = '#cf5050';
+        ipEl.textContent        = '✕';
+        locEl.textContent       = msg;
+    }
+    function isPrivate(ip) {
+        return /^10\./.test(ip) ||
+               /^192\.168\./.test(ip) ||
+               /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+    }
+
+    var ctrl = new AbortController();
+    var timer = setTimeout(function() { ctrl.abort(); }, 5000);
+
+    fetch('https://ipinfo.io/json', { signal: ctrl.signal })
+        .then(function(r) {
+            if (!r.ok) throw new Error('bad response');
+            return r.json();
+        })
+        .then(function(d) {
+            clearTimeout(timer);
+            var ip  = d.ip || '';
+            var loc = [d.city, d.country].filter(Boolean).join(', ') || '—';
+            if (isPrivate(ip)) {
+                setWarn(ip, 'Local IP — VPN may be down');
+            } else {
+                setOk(ip, loc);
+            }
+        })
+        .catch(function() {
+            clearTimeout(timer);
+            setError('Unknown — VPN may be down');
+        });
+})();
 </script>
 {% endblock %}
