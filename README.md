@@ -54,6 +54,7 @@ docker run -d \
 | `HOST_IP` | Yes | Your server's local IP, shown in the dashboard M3U URL. |
 | `TZ` | No | Timezone (e.g. `Europe/Amsterdam`). Affects scheduler times and log timestamps. |
 | `PUID` / `PGID` | No | User/group ID for file ownership. Defaults to `0` (root). |
+| `GLUETUN_URL` | No | Base URL of your Gluetun control server (e.g. `http://192.168.0.58:8001`). When set, a VPN stat card appears on the dashboard showing the public IP, city, and country. Card turns red if Gluetun is unreachable. |
 
 ## All the menu items
 
