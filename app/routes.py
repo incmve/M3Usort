@@ -735,6 +735,20 @@ def get_time_diff(file_path):
     else:
         return "not found"
 
+def _fetch_gluetun_vpn():
+    """Return (ip, city, country) from Gluetun, or (None, None, None) if not configured or unreachable."""
+    gluetun_url = os.environ.get('GLUETUN_URL', '').rstrip('/')
+    if not gluetun_url:
+        return None, None, None
+    try:
+        resp = requests.get(f"{gluetun_url}/v1/publicip/ip", timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get('public_ip'), data.get('city'), data.get('country')
+    except Exception:
+        return None, None, None
+
+
 @main_bp.route('/update_home_data')
 def update_home_data():
     current_time = datetime.now()
@@ -825,6 +839,11 @@ def update_home_data():
 
     version = f"{VERSION} - Please update to {UPDATE_VERSION}" if UPDATE_AVAILABLE == 1 else VERSION
 
+    gluetun_enabled = bool(os.environ.get('GLUETUN_URL'))
+    vpn_ip = vpn_city = vpn_country = None
+    if gluetun_enabled:
+        vpn_ip, vpn_city, vpn_country = _fetch_gluetun_vpn()
+
     return jsonify(
         update_available=UPDATE_AVAILABLE,
         next_m3u=next_m3u,
@@ -844,6 +863,10 @@ def update_home_data():
         max_connections=max_connections,
         total_movies=total_movies,
         total_series=total_series,
+        gluetun_enabled=gluetun_enabled,
+        vpn_ip=vpn_ip,
+        vpn_city=vpn_city,
+        vpn_country=vpn_country,
     )
 
 
@@ -937,6 +960,11 @@ def home():
 
     version = f"{VERSION} - Please update to {UPDATE_VERSION}" if UPDATE_AVAILABLE == 1 else VERSION
 
+    gluetun_enabled = bool(os.environ.get('GLUETUN_URL'))
+    vpn_ip = vpn_city = vpn_country = None
+    if gluetun_enabled:
+        vpn_ip, vpn_city, vpn_country = _fetch_gluetun_vpn()
+
     return render_template('home.html',
                            version=version,
                            update_available=UPDATE_AVAILABLE,
@@ -955,7 +983,11 @@ def home():
                            active_cons=active_cons,
                            max_connections=max_connections,
                            total_movies=total_movies,
-                           total_series=total_series)
+                           total_series=total_series,
+                           gluetun_enabled=gluetun_enabled,
+                           vpn_ip=vpn_ip,
+                           vpn_city=vpn_city,
+                           vpn_country=vpn_country)
 
 
 @app.route('/logout')

@@ -37,11 +37,19 @@
             <div class="stat-label" style="color:#5a3a7a;">Uptime</div>
             <div class="stat-value" id="uptime" style="color:#9a70cf; font-size:18px;">{{ uptime }}</div>
         </div>
-        <div class="stat-card" id="vpn-card" style="border-color:#1a2a2a; background:linear-gradient(135deg,#0a1818,#151515);">
-            <div class="stat-label" id="vpn-label" style="color:#2a6a6a;">VPN</div>
-            <div class="stat-value" id="vpn-ip" style="color:#4aadad; font-size:15px;">…</div>
-            <div class="stat-sub" id="vpn-location">checking</div>
+        {% if gluetun_enabled %}
+        <div class="stat-card" id="vpn-card"
+             style="border-color:{% if vpn_ip %}#1a3a3a{% else %}#4a1a1a{% endif %};
+                    background:linear-gradient(135deg,{% if vpn_ip %}#0e2020{% else %}#200e0e{% endif %},#151515);">
+            <div class="stat-label" id="vpn-label" style="color:{% if vpn_ip %}#2a7a7a{% else %}#8a3030{% endif %};">VPN</div>
+            <div class="stat-value" id="vpn-ip" style="color:{% if vpn_ip %}#4acfcf{% else %}#cf5050{% endif %}; font-size:15px;">
+                {{ vpn_ip or '✕' }}
+            </div>
+            <div class="stat-sub" id="vpn-location">
+                {% if vpn_ip %}{{ [vpn_city, vpn_country] | select | join(', ') or '—' }}{% else %}VPN unavailable{% endif %}
+            </div>
         </div>
+        {% endif %}
     </div>
 
     <div class="info-block">
@@ -141,72 +149,34 @@ document.addEventListener("DOMContentLoaded", function() {
                 } else {
                     document.getElementById("version").textContent = data.version;
                 }
+                if (data.gluetun_enabled) {
+                    var vpnCard  = document.getElementById("vpn-card");
+                    var vpnLabel = document.getElementById("vpn-label");
+                    var vpnIp    = document.getElementById("vpn-ip");
+                    var vpnLoc   = document.getElementById("vpn-location");
+                    if (vpnCard) {
+                        if (data.vpn_ip) {
+                            vpnCard.style.borderColor = '#1a3a3a';
+                            vpnCard.style.background  = 'linear-gradient(135deg,#0e2020,#151515)';
+                            vpnLabel.style.color      = '#2a7a7a';
+                            vpnIp.style.color         = '#4acfcf';
+                            vpnIp.textContent         = data.vpn_ip;
+                            vpnLoc.textContent        = [data.vpn_city, data.vpn_country].filter(Boolean).join(', ') || '—';
+                        } else {
+                            vpnCard.style.borderColor = '#4a1a1a';
+                            vpnCard.style.background  = 'linear-gradient(135deg,#200e0e,#151515)';
+                            vpnLabel.style.color      = '#8a3030';
+                            vpnIp.style.color         = '#cf5050';
+                            vpnIp.textContent         = '✕';
+                            vpnLoc.textContent        = 'VPN unavailable';
+                        }
+                    }
+                }
             })
             .catch(e => console.error(e));
     }
     fetchData();
     setInterval(fetchData, 60000);
 });
-</script>
-<script>
-(function() {
-    var card  = document.getElementById('vpn-card');
-    var label = document.getElementById('vpn-label');
-    var ipEl  = document.getElementById('vpn-ip');
-    var locEl = document.getElementById('vpn-location');
-
-    function setOk(ip, location) {
-        card.style.borderColor  = '#1a3a3a';
-        card.style.background   = 'linear-gradient(135deg,#0e2020,#151515)';
-        label.style.color       = '#2a7a7a';
-        ipEl.style.color        = '#4acfcf';
-        ipEl.textContent        = ip;
-        locEl.textContent       = location;
-    }
-    function setWarn(ip, msg) {
-        card.style.borderColor  = '#4a3010';
-        card.style.background   = 'linear-gradient(135deg,#201808,#151515)';
-        label.style.color       = '#8a6020';
-        ipEl.style.color        = '#c8a030';
-        ipEl.textContent        = ip;
-        locEl.textContent       = msg;
-    }
-    function setError(msg) {
-        card.style.borderColor  = '#4a1a1a';
-        card.style.background   = 'linear-gradient(135deg,#200e0e,#151515)';
-        label.style.color       = '#8a3030';
-        ipEl.style.color        = '#cf5050';
-        ipEl.textContent        = '✕';
-        locEl.textContent       = msg;
-    }
-    function isPrivate(ip) {
-        return /^10\./.test(ip) ||
-               /^192\.168\./.test(ip) ||
-               /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
-    }
-
-    var ctrl = new AbortController();
-    var timer = setTimeout(function() { ctrl.abort(); }, 5000);
-
-    fetch('https://ipinfo.io/json', { signal: ctrl.signal })
-        .then(function(r) {
-            if (!r.ok) throw new Error('bad response');
-            return r.json();
-        })
-        .then(function(d) {
-            clearTimeout(timer);
-            var ip  = d.ip || '';
-            var loc = [d.city, d.country].filter(Boolean).join(', ') || '—';
-            if (isPrivate(ip)) {
-                setWarn(ip, 'Local IP — VPN may be down');
-            } else {
-                setOk(ip, loc);
-            }
-        })
-        .catch(function() {
-            clearTimeout(timer);
-            setError('Unknown — VPN may be down');
-        });
-})();
 </script>
 {% endblock %}
