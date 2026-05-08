@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.4
+- Fix .dockerignore excluding CHANGELOG.md (*.md rule): add !CHANGELOG.md exception so the file is baked into the image and the changelog page shows current content
+- Fix corrupt cache crash: wrap json.load() in home and update_home_data with try/except so a corrupt cache file returns 0 counts instead of a 500 error; use atomic writes (os.replace) for all four cache write sites to prevent partial files on interrupted writes
+- Improve cache error messages: distinguish json.JSONDecodeError from other read failures, log char position and instruction to press Start Download
+- Fix file browser root directories showing 'undefined' instead of a modified date
+- Add Gluetun VPN stat card to dashboard: reads GLUETUN_URL from environment, fetches /v1/publicip/ip server-side with 5s timeout in both home() and update_home_data(); card is teal on success, red when unreachable, hidden if GLUETUN_URL is not set
+- Re-download empty series folders: if update_series_directory finds an empty folder that matches a title in the M3U, it now re-writes the .strm files instead of just logging a warning
+- Re-download empty movie folders: if update_movies_directory finds an empty folder that matches a title in the movies cache, it now creates the .strm file instead of just logging a warning
+
 ## 2.0.3
 - Replace per-series API calls with M3U parsing: series updates and watchlist downloads now read from the already-cached M3U file instead of calling get_series_info per series — eliminates bulk API hammering on every scheduler run
 - Remove eager enrich_vod_cache background thread that hammered the provider with 8k+ individual get_vod_info calls; TMDB/plot data is now fetched on-demand when a user opens a movie or series, and written back to cache so subsequent opens are instant

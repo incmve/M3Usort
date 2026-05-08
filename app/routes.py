@@ -426,7 +426,11 @@ def update_series_directory(series_dir):
 
             # ── Empty folder ─────────────────────────────────────────────────
             if not entries:
-                PrintLog(f"update_series_directory: leftover empty folder: {dir_name}", "WARNING")
+                if m3u_episodes:
+                    PrintLog(f"Empty folder found for '{dir_name}', re-downloading", "WARNING")
+                    _write_series_from_m3u(dir_name, m3u_episodes, series_dir, overwrite_series)
+                else:
+                    PrintLog(f"Empty folder found for '{dir_name}', not in provider catalog", "WARNING")
                 continue
 
             # ── Mixed content (.strm + video) ─────────────────────────────────
@@ -484,6 +488,12 @@ def update_movies_directory(movies_dir):
 
     for root, dirs, files in os.walk(movies_dir):
         for dir_name in dirs:
+            movie_folder = os.path.join(movies_dir, dir_name)
+            try:
+                folder_contents = os.listdir(movie_folder)
+            except OSError:
+                continue
+
             # Try exact match first
             matching_movie = next((m for m in movies_list if m['name'] == dir_name), None)
 
@@ -492,8 +502,20 @@ def update_movies_directory(movies_dir):
                 norm_dir = normalize_movie_name(dir_name)
                 matching_movie = normalized_cache.get(norm_dir)
 
+            # ── Empty folder ─────────────────────────────────────────────────
+            if not folder_contents:
+                if matching_movie:
+                    PrintLog(f"Empty folder found for '{dir_name}', re-downloading", "WARNING")
+                    strm_file_path = os.path.join(movie_folder, f"{dir_name}.strm")
+                    strm_content = f"{base_url}/movie/{username}/{password}/{matching_movie['stream_id']}.mkv"
+                    with open(strm_file_path, 'w') as strm_file:
+                        strm_file.write(strm_content)
+                else:
+                    PrintLog(f"Empty folder found for '{dir_name}', not in provider catalog", "WARNING")
+                continue
+
             if matching_movie:
-                strm_file_path = os.path.join(movies_dir, dir_name, f"{dir_name}.strm")
+                strm_file_path = os.path.join(movie_folder, f"{dir_name}.strm")
                 if not os.path.exists(strm_file_path) or overwrite_movies == 1:
                     PrintLog(f"Adding new file: {strm_file_path}", "NOTICE")
                     strm_content = f"{base_url}/movie/{username}/{password}/{matching_movie['stream_id']}.mkv"
