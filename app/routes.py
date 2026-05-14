@@ -831,24 +831,33 @@ def update_home_data():
 
     movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
     series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    cutoff = datetime.now().timestamp() - 7 * 24 * 3600
     try:
         with open(movies_cache_path, encoding='utf-8') as f:
-            total_movies = len(json.load(f))
+            movies_data = json.load(f)
+        total_movies = len(movies_data)
+        new_movies_count = sum(1 for item in movies_data if int(item.get('added', 0)) >= cutoff)
     except json.JSONDecodeError as e:
         logging.error(f"movies_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
         total_movies = 0
+        new_movies_count = 0
     except Exception as e:
         logging.error(f"Could not read movies_cache.json: {e}")
         total_movies = 0
+        new_movies_count = 0
     try:
         with open(series_cache_path, encoding='utf-8') as f:
-            total_series = len(json.load(f))
+            series_data = json.load(f)
+        total_series = len(series_data)
+        new_series_count = sum(1 for item in series_data if int(item.get('added', 0)) >= cutoff)
     except json.JSONDecodeError as e:
         logging.error(f"series_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
         total_series = 0
+        new_series_count = 0
     except Exception as e:
         logging.error(f"Could not read series_cache.json: {e}")
         total_series = 0
+        new_series_count = 0
 
     uptime_duration = current_time - app.app_start_time
     total_seconds = int(uptime_duration.total_seconds())
@@ -885,6 +894,8 @@ def update_home_data():
         max_connections=max_connections,
         total_movies=total_movies,
         total_series=total_series,
+        new_movies_count=new_movies_count,
+        new_series_count=new_series_count,
         gluetun_enabled=gluetun_enabled,
         vpn_ip=vpn_ip,
         vpn_city=vpn_city,
@@ -952,24 +963,33 @@ def home():
 
     movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
     series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    cutoff = datetime.now().timestamp() - 7 * 24 * 3600
     try:
         with open(movies_cache_path, encoding='utf-8') as f:
-            total_movies = len(json.load(f))
+            movies_data = json.load(f)
+        total_movies = len(movies_data)
+        new_movies_count = sum(1 for item in movies_data if int(item.get('added', 0)) >= cutoff)
     except json.JSONDecodeError as e:
         logging.error(f"movies_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
         total_movies = 0
+        new_movies_count = 0
     except Exception as e:
         logging.error(f"Could not read movies_cache.json: {e}")
         total_movies = 0
+        new_movies_count = 0
     try:
         with open(series_cache_path, encoding='utf-8') as f:
-            total_series = len(json.load(f))
+            series_data = json.load(f)
+        total_series = len(series_data)
+        new_series_count = sum(1 for item in series_data if int(item.get('added', 0)) >= cutoff)
     except json.JSONDecodeError as e:
         logging.error(f"series_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
         total_series = 0
+        new_series_count = 0
     except Exception as e:
         logging.error(f"Could not read series_cache.json: {e}")
         total_series = 0
+        new_series_count = 0
 
     uptime_duration = current_time - app.app_start_time
     total_seconds = int(uptime_duration.total_seconds())
@@ -1006,6 +1026,8 @@ def home():
                            max_connections=max_connections,
                            total_movies=total_movies,
                            total_series=total_series,
+                           new_movies_count=new_movies_count,
+                           new_series_count=new_series_count,
                            gluetun_enabled=gluetun_enabled,
                            vpn_ip=vpn_ip,
                            vpn_city=vpn_city,

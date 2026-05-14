@@ -17,12 +17,12 @@
     <div class="stat-row">
         <div class="stat-card" style="border-color:#1a3a5c; background:linear-gradient(135deg,#0e1e30,#151515);">
             <div class="stat-label" style="color:#2a6a9a;">Movies</div>
-            <div class="stat-value" id="total_movies" style="color:#4aadcf;">{{ total_movies }}</div>
+            <div class="stat-value" style="color:#4aadcf;"><span id="total_movies">{{ total_movies }}</span>{% if new_movies_count > 0 %} <span id="new_movies_count" style="font-size:0.55em; color:#4acf8a;">(+{{ new_movies_count }})</span>{% else %}<span id="new_movies_count" style="display:none; font-size:0.55em; color:#4acf8a;"></span>{% endif %}</div>
             <div class="stat-sub">in cache</div>
         </div>
         <div class="stat-card" style="border-color:#1a3a2a; background:linear-gradient(135deg,#0e2018,#151515);">
             <div class="stat-label" style="color:#2a6a4a;">TV Shows</div>
-            <div class="stat-value" id="total_series" style="color:#4acf8a;">{{ total_series }}</div>
+            <div class="stat-value" style="color:#4acf8a;"><span id="total_series">{{ total_series }}</span>{% if new_series_count > 0 %} <span id="new_series_count" style="font-size:0.55em; color:#4acf8a;">(+{{ new_series_count }})</span>{% else %}<span id="new_series_count" style="display:none; font-size:0.55em; color:#4acf8a;"></span>{% endif %}</div>
             <div class="stat-sub">in cache</div>
         </div>
         <div class="stat-card {% if exp_date_days_left is defined and exp_date_days_left <= 30 %}warn{% endif %}"
@@ -131,6 +131,12 @@ document.addEventListener("DOMContentLoaded", function() {
                 document.getElementById("max_connections").textContent = data.max_connections;
                 document.getElementById("total_movies").textContent = data.total_movies;
                 document.getElementById("total_series").textContent = data.total_series;
+                const nmEl = document.getElementById("new_movies_count");
+                if (data.new_movies_count > 0) { nmEl.textContent = `(+${data.new_movies_count})`; nmEl.style.display = ''; }
+                else { nmEl.style.display = 'none'; }
+                const nsEl = document.getElementById("new_series_count");
+                if (data.new_series_count > 0) { nsEl.textContent = `(+${data.new_series_count})`; nsEl.style.display = ''; }
+                else { nsEl.style.display = 'none'; }
                 if (data.is_trial == 0) document.getElementById("is_trial").textContent = "No";
                 else if (data.is_trial == 1) document.getElementById("is_trial").textContent = "Yes";
                 const expEl = document.getElementById("exp_date_full");
