@@ -8,6 +8,7 @@
 - Add Gluetun VPN stat card to dashboard: reads GLUETUN_URL from environment, fetches /v1/publicip/ip server-side with 5s timeout in both home() and update_home_data(); card is teal on success, red when unreachable, hidden if GLUETUN_URL is not set
 - Re-download empty series folders: if update_series_directory finds an empty folder that matches a title in the M3U, it now re-writes the .strm files instead of just logging a warning
 - Re-download empty movie folders: if update_movies_directory finds an empty folder that matches a title in the movies cache, it now creates the .strm file instead of just logging a warning
+- Dashboard Movies and TV Shows cards now show items added in the last 7 days in green next to the total, e.g. "8881 (+5)"; omitted when zero
 
 ## 2.0.3
 - Replace per-series API calls with M3U parsing: series updates and watchlist downloads now read from the already-cached M3U file instead of calling get_series_info per series — eliminates bulk API hammering on every scheduler run
