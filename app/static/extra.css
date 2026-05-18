@@ -184,7 +184,7 @@
 .draggable-item { cursor: move; padding: 10px 14px; border: 1px solid #43454d; background: #383a40; margin-bottom: 4px; border-radius: 6px; display: flex; align-items: center; transition: background .1s; }
 .draggable-item:hover { background: #404249; }
 .drag-handle { margin-right: 12px; color: #80848e; user-select: none; }
-.delete-btn { border: none; background: none; cursor: pointer; color: #a04040; float: right; display: none; font-size: 1em; }
+.delete-btn { border: none; background: none; cursor: pointer; color: #a04040; margin-left: auto; display: none; font-size: 1em; }
 .draggable-item:hover .delete-btn { display: block; }
 
 /* ── Log viewer ── */
