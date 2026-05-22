@@ -60,11 +60,20 @@
 <script>
 var currentPlayer = null;
 
+function toProxyUrl(originalUrl) {
+    try {
+        var u = new URL(originalUrl);
+        return '/live/stream' + u.pathname;
+    } catch(e) {
+        return originalUrl;
+    }
+}
+
 function loadChannel(el) {
     document.querySelectorAll('.live-channel-item').forEach(function(i) { i.classList.remove('active'); });
     el.classList.add('active');
 
-    var url = el.dataset.url;
+    var url = toProxyUrl(el.dataset.url);
     var video = document.getElementById('live-player');
     var noMsg = document.getElementById('no-channel-msg');
 

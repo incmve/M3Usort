@@ -9,8 +9,9 @@ from threading import Thread
 from urllib.parse import urlparse
 from functools import wraps
 from flask import (
-    Blueprint, render_template, request, redirect, url_for, 
-    flash, session, send_from_directory, jsonify, abort, current_app as app
+    Blueprint, render_template, request, redirect, url_for,
+    flash, session, send_from_directory, jsonify, abort, current_app as app,
+    make_response, Response, stream_with_context
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from ipytv import playlist
@@ -1458,7 +1459,31 @@ def live():
                     pending_extinf = None
     except FileNotFoundError:
         flash("No sorted playlist found. Please rebuild the M3U first.", "warning")
-    return render_template('live.html', channels=channels)
+    resp = make_response(render_template('live.html', channels=channels))
+    resp.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-eval' https://cdnjs.cloudflare.com; "
+        "img-src * data:; "
+        "media-src 'self' blob:; "
+        "connect-src 'self';"
+    )
+    return resp
+
+
+@main_bp.route('/live/stream/<path:stream_path>')
+def live_stream_proxy(stream_path):
+    upstream_url = f'http://iptvproxy:8080/{stream_path}'
+    try:
+        upstream = requests.get(upstream_url, stream=True, timeout=15)
+        content_type = upstream.headers.get('Content-Type', 'video/mp2t')
+        def generate():
+            for chunk in upstream.iter_content(chunk_size=8192):
+                if chunk:
+                    yield chunk
+        return Response(stream_with_context(generate()), content_type=content_type)
+    except Exception as e:
+        PrintLog(f"live_stream_proxy: upstream fetch failed for {upstream_url}: {e}", "ERROR")
+        abort(502)
 
 
 @main_bp.route('/refresh_vod_cache')
