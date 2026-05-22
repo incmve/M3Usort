@@ -2679,7 +2679,7 @@ def groups():
             config_content = file.read()
         config_namespace = {}
         exec(config_content, {}, config_namespace)
-        m3u_url = config_namespace.get('url')
+        m3u_url = get_credential('url')
 
         if not m3u_url:
             raise ValueError("M3U URL not found in the configuration.")
