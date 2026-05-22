@@ -122,7 +122,7 @@ img.live-ch-logo.broken + .live-ch-logo-ph { display: flex; }
 }
 </style>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mpegts.js/1.7.3/mpegts.min.js"></script>
+<script src="{{ url_for('static', filename='mpegts.min.js') }}"></script>
 <script>
 (function () {
     var currentPlayer = null;
