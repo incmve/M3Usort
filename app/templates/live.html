@@ -1,14 +1,19 @@
 {% extends 'layout.html' %}
 {% block title %}Live TV — M3Usort{% endblock %}
 {% block content %}
-<div class="topbar"><span class="topbar-title">Live TV</span><span class="topbar-sep">·</span><span class="topbar-sub" id="live-channel-count">{{ channels|length }} channels</span></div>
+<div class="topbar">
+    <span class="topbar-title">Live TV</span>
+    <span class="topbar-sep">·</span>
+    <span class="topbar-sub">{{ channels|length }} channels</span>
+</div>
 <div class="live-wrap">
-    <div class="live-channel-list" id="channel-list">
+    <div class="live-channel-list">
         {% if channels %}
         {% for ch in channels %}
         <div class="live-channel-item" data-url="{{ ch.url }}" onclick="loadChannel(this)">
             {% if ch.logo %}
-            <img class="live-ch-logo" src="{{ ch.logo }}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+            <img class="live-ch-logo" src="{{ ch.logo }}"
+                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
             <div class="live-ch-logo-ph" style="display:none;">📺</div>
             {% else %}
             <div class="live-ch-logo-ph">📺</div>
@@ -17,43 +22,106 @@
         </div>
         {% endfor %}
         {% else %}
-        <div style="padding:24px; font-size:13px; color:#80848e;">No live channels found. Rebuild the M3U playlist first.</div>
+        <div style="padding:20px 12px; font-size:13px; color:#80848e;">
+            No live channels found. Rebuild the M3U playlist first.
+        </div>
         {% endif %}
     </div>
-    <div class="live-player-area" id="player-area">
+    <div class="live-player-area">
         <div id="no-channel-msg">
-            <div style="font-size:32px; margin-bottom:12px;">📺</div>
-            <div style="font-size:14px; color:#80848e;">Select a channel to start watching</div>
+            <div style="font-size:36px; margin-bottom:10px;">📺</div>
+            <div style="font-size:13px;">Select a channel to start watching</div>
         </div>
-        <video id="live-player" style="display:none; width:100%; height:100%; background:#000;" controls></video>
+        <video id="live-player" controls></video>
     </div>
 </div>
 
 <style>
-.live-wrap { display:flex; height:calc(100vh - 50px); overflow:hidden; }
+/* Lock the page-wrapper to viewport height so the flex chain works */
+.page-wrapper { height: 100vh; overflow: hidden; }
+
+.live-wrap {
+    display: flex;
+    flex-direction: row;
+    /* topbar is 50px; flash-wrap is 0 height when empty */
+    height: calc(100vh - 50px);
+    overflow: hidden;
+}
+
+/* ── Channel list ── */
 .live-channel-list {
-    width:240px; min-width:240px; background:#2b2d31;
-    border-right:1px solid #1e1f22; overflow-y:auto; flex-shrink:0;
+    width: 220px;
+    min-width: 220px;
+    flex-shrink: 0;
+    background: #2b2d31;
+    border-right: 1px solid #1e1f22;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 .live-channel-item {
-    display:flex; align-items:center; gap:10px;
-    padding:9px 12px; cursor:pointer;
-    border-bottom:1px solid #1e1f22; transition:background .1s;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 10px;
+    cursor: pointer;
+    border-bottom: 1px solid #1e1f22;
+    transition: background .1s;
 }
-.live-channel-item:hover { background:#393c43; }
-.live-channel-item.active { background:#404249; border-left:3px solid #4aadcf; padding-left:9px; }
-.live-ch-logo { width:32px; height:32px; object-fit:contain; border-radius:3px; flex-shrink:0; }
+.live-channel-item:hover { background: #393c43; }
+.live-channel-item.active {
+    background: #404249;
+    border-left: 2px solid #4aadcf;
+    padding-left: 8px;
+}
+.live-ch-logo {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
 .live-ch-logo-ph {
-    width:32px; height:32px; flex-shrink:0;
-    display:flex; align-items:center; justify-content:center;
-    font-size:18px; background:#383a40; border-radius:3px;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    background: #383a40;
+    border-radius: 3px;
+    color: #80848e;
 }
-.live-ch-name { font-size:13px; color:#c9cdd3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.live-ch-name {
+    font-size: 13px;
+    color: #c9cdd3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ── Player area ── */
 .live-player-area {
-    flex:1; background:#0d0d0d; min-width:0;
-    display:flex; align-items:center; justify-content:center;
+    flex: 1;
+    min-width: 0;
+    background: #0d0d0d;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
-#no-channel-msg { text-align:center; color:#80848e; }
+#no-channel-msg {
+    text-align: center;
+    color: #80848e;
+}
+#live-player {
+    display: none;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+}
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mpegts.js/1.7.3/mpegts.min.js"></script>
@@ -81,7 +149,6 @@ function loadChannel(el) {
         try { currentPlayer.destroy(); } catch(e) {}
         currentPlayer = null;
     }
-
     video.pause();
     video.src = '';
 
