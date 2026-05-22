@@ -698,6 +698,8 @@ def require_auth():
         if debug == "yes":
             flash("Running in debug mode", "static")
 
+    if request.path.startswith('/live/stream/'):
+        return
     if not session.get('logged_in') and request.endpoint not in ['login', 'static']:
         return redirect(url_for('login'))
     
