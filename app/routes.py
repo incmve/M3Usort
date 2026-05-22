@@ -1462,7 +1462,8 @@ def live():
     resp = make_response(render_template('live.html', channels=channels))
     resp.headers['Content-Security-Policy'] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-eval' https://cdnjs.cloudflare.com; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline'; "
         "img-src * data:; "
         "media-src 'self' blob:; "
         "connect-src 'self';"

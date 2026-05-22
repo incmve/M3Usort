@@ -7,43 +7,36 @@
     <span class="topbar-sub">{{ channels|length }} channels</span>
 </div>
 <div class="live-wrap">
-    <div class="live-channel-list">
+    <div class="live-channel-list" id="channel-list">
         {% if channels %}
         {% for ch in channels %}
-        <div class="live-channel-item" data-url="{{ ch.url }}" onclick="loadChannel(this)">
+        <div class="live-channel-item" data-url="{{ ch.url }}">
             {% if ch.logo %}
-            <img class="live-ch-logo" src="{{ ch.logo }}"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-            <div class="live-ch-logo-ph" style="display:none;">📺</div>
-            {% else %}
+            <img class="live-ch-logo" src="{{ ch.logo }}">
             <div class="live-ch-logo-ph">📺</div>
+            {% else %}
+            <div class="live-ch-logo-ph live-ch-logo-ph--on">📺</div>
             {% endif %}
             <span class="live-ch-name">{{ ch.name }}</span>
         </div>
         {% endfor %}
         {% else %}
-        <div style="padding:20px 12px; font-size:13px; color:#80848e;">
-            No live channels found. Rebuild the M3U playlist first.
-        </div>
+        <div class="live-empty">No live channels found. Rebuild the M3U playlist first.</div>
         {% endif %}
     </div>
     <div class="live-player-area">
         <div id="no-channel-msg">
-            <div style="font-size:36px; margin-bottom:10px;">📺</div>
-            <div style="font-size:13px;">Select a channel to start watching</div>
+            <div class="live-no-ch-icon">📺</div>
+            <div class="live-no-ch-text">Select a channel to start watching</div>
         </div>
         <video id="live-player" controls></video>
     </div>
 </div>
 
 <style>
-/* Lock the page-wrapper to viewport height so the flex chain works */
-.page-wrapper { height: 100vh; overflow: hidden; }
-
 .live-wrap {
     display: flex;
     flex-direction: row;
-    /* topbar is 50px; flash-wrap is 0 height when empty */
     height: calc(100vh - 50px);
     overflow: hidden;
 }
@@ -80,11 +73,12 @@
     border-radius: 3px;
     flex-shrink: 0;
 }
+/* placeholder hidden by default; shown when img fails or no logo */
 .live-ch-logo-ph {
+    display: none;
     width: 32px;
     height: 32px;
     flex-shrink: 0;
-    display: flex;
     align-items: center;
     justify-content: center;
     font-size: 15px;
@@ -92,6 +86,10 @@
     border-radius: 3px;
     color: #80848e;
 }
+.live-ch-logo-ph--on { display: flex; }
+/* CSS sibling: when img gets .broken class, show following placeholder */
+img.live-ch-logo.broken { display: none; }
+img.live-ch-logo.broken + .live-ch-logo-ph { display: flex; }
 .live-ch-name {
     font-size: 13px;
     color: #c9cdd3;
@@ -99,21 +97,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.live-empty { padding: 20px 12px; font-size: 13px; color: #80848e; }
 
 /* ── Player area ── */
 .live-player-area {
     flex: 1;
     min-width: 0;
     background: #0d0d0d;
-    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
 }
-#no-channel-msg {
-    text-align: center;
-    color: #80848e;
-}
+#no-channel-msg { text-align: center; color: #80848e; }
+.live-no-ch-icon { font-size: 32px; margin-bottom: 12px; }
+.live-no-ch-text { font-size: 14px; }
 #live-player {
     display: none;
     position: absolute;
@@ -126,45 +124,63 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mpegts.js/1.7.3/mpegts.min.js"></script>
 <script>
-var currentPlayer = null;
+(function () {
+    var currentPlayer = null;
+    var channelList = document.getElementById('channel-list');
 
-function toProxyUrl(originalUrl) {
-    try {
-        var u = new URL(originalUrl);
-        return '/live/stream' + u.pathname;
-    } catch(e) {
-        return originalUrl;
+    /* ── Logo error handling via event delegation ── */
+    channelList.addEventListener('error', function (e) {
+        if (e.target.tagName === 'IMG' && e.target.classList.contains('live-ch-logo')) {
+            e.target.classList.add('broken');
+        }
+    }, true); /* capture=true required for error events */
+
+    /* ── Channel click via event delegation ── */
+    channelList.addEventListener('click', function (e) {
+        var item = e.target.closest('.live-channel-item');
+        if (item) loadChannel(item);
+    });
+
+    function toProxyUrl(originalUrl) {
+        try {
+            var u = new URL(originalUrl);
+            return '/live/stream' + u.pathname;
+        } catch (e) {
+            return originalUrl;
+        }
     }
-}
 
-function loadChannel(el) {
-    document.querySelectorAll('.live-channel-item').forEach(function(i) { i.classList.remove('active'); });
-    el.classList.add('active');
+    function loadChannel(el) {
+        document.querySelectorAll('.live-channel-item').forEach(function (i) {
+            i.classList.remove('active');
+        });
+        el.classList.add('active');
 
-    var url = toProxyUrl(el.dataset.url);
-    var video = document.getElementById('live-player');
-    var noMsg = document.getElementById('no-channel-msg');
+        var url = toProxyUrl(el.dataset.url);
+        var video = document.getElementById('live-player');
+        var noMsg = document.getElementById('no-channel-msg');
 
-    if (currentPlayer) {
-        try { currentPlayer.destroy(); } catch(e) {}
-        currentPlayer = null;
+        if (currentPlayer) {
+            try { currentPlayer.destroy(); } catch (e) {}
+            currentPlayer = null;
+        }
+        video.pause();
+        video.src = '';
+
+        noMsg.style.display = 'none';
+        video.style.display = 'block';
+
+        if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+            currentPlayer = mpegts.createPlayer({ type: 'mpegts', url: url, isLive: true });
+            currentPlayer.attachMediaElement(video);
+            currentPlayer.load();
+            currentPlayer.play().catch(function () {});
+        } else {
+            video.src = url;
+            video.load();
+            video.play().catch(function () {});
+        }
     }
-    video.pause();
-    video.src = '';
-
-    noMsg.style.display = 'none';
-    video.style.display = 'block';
-
-    if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-        currentPlayer = mpegts.createPlayer({ type: 'mpegts', url: url, isLive: true });
-        currentPlayer.attachMediaElement(video);
-        currentPlayer.load();
-        currentPlayer.play().catch(function() {});
-    } else {
-        video.src = url;
-        video.load();
-        video.play().catch(function() {});
-    }
-}
+})();
 </script>
 {% endblock %}
