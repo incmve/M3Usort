@@ -60,6 +60,15 @@
         </div>
     </div>
 
+    <div class="sidebar-section" data-sort="live">
+        <div class="sidebar-section-label collapsible" data-section="live">Live TV <span class="collapse-arrow">▾</span></div>
+        <div class="sidebar-section-items" data-section="live">
+            <a href="{{ url_for('main_bp.live') }}" class="sidebar-item {% if request.endpoint == 'main_bp.live' %}active{% endif %}">
+                <span class="si-icon">📡</span> Live TV
+            </a>
+        </div>
+    </div>
+
     {% if is_admin %}
     <div class="sidebar-section" data-sort="admin">
         <div class="sidebar-section-label collapsible" data-section="admin">Admin <span class="collapse-arrow">▾</span></div>

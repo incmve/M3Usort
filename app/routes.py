@@ -1433,6 +1433,34 @@ def new_today():
     return render_template('new.html', new_movies=new_movies, new_series=new_series, today=week_str, cache_age=cache_age)
 
 
+@main_bp.route('/live')
+def live():
+    output = get_config_variable(CONFIG_PATH, 'output') or 'sorted.m3u'
+    sorted_m3u_path = os.path.join(BASE_DIR, 'files', output)
+    channels = []
+    try:
+        with open(sorted_m3u_path, 'r', encoding='utf-8', errors='ignore') as f:
+            pending_extinf = None
+            for line in f:
+                line = line.rstrip('\r\n')
+                if line.startswith('#EXTINF'):
+                    pending_extinf = line
+                elif pending_extinf and not line.startswith('#') and line.strip():
+                    url = line.strip()
+                    if '/movie/' not in url and '/series/' not in url:
+                        name_m = re.search(r',(.+)$', pending_extinf)
+                        logo_m = re.search(r'tvg-logo="([^"]*)"', pending_extinf)
+                        name = name_m.group(1).strip() if name_m else ''
+                        logo = logo_m.group(1) if logo_m else ''
+                        channels.append({'name': name, 'logo': logo, 'url': url})
+                    pending_extinf = None
+                elif not line.startswith('#'):
+                    pending_extinf = None
+    except FileNotFoundError:
+        flash("No sorted playlist found. Please rebuild the M3U first.", "warning")
+    return render_template('live.html', channels=channels)
+
+
 @main_bp.route('/refresh_vod_cache')
 def refresh_vod_cache():
     Thread(target=save_vod_cache, daemon=True).start()

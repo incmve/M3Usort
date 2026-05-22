@@ -3,13 +3,22 @@
 <div class="topbar"><span class="topbar-title">Sort Channels</span></div>
 <div class="page-content">
     <form method="POST" action="{{ url_for('main_bp.save_reordered_channels') }}">
-        <div style="margin-bottom:16px;">
+        <div style="margin-bottom:16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
             <button type="submit" class="button button-primary">Save Order</button>
+            <button type="button" id="delete-selected-btn" class="button"
+                    style="display:none; background:#200e0e; color:#cf5a5a; border:1px solid #5c1a1a;"
+                    onclick="deleteSelected()">Delete selected</button>
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#9ba3af; cursor:pointer; margin-left:auto; user-select:none;">
+                <input type="checkbox" id="select-all"> Select all
+            </label>
         </div>
         <input type="hidden" id="channel_order" name="channel_order">
         <ul id="channels-list" style="margin:0; padding:0; list-style:none;">
             {% for channel_name in channel_names %}
             <li class="draggable-item" draggable="true" data-channel="{{ channel_name }}">
+                <input type="checkbox" class="ch-select"
+                       style="margin-right:8px; cursor:pointer; flex-shrink:0; accent-color:#4aadcf;"
+                       onclick="event.stopPropagation(); syncSelectAll();">
                 <span class="drag-handle">&#x2630;</span>
                 {{ channel_name }}
                 <a href="#" class="delete-btn" onclick="deleteItem(this)">✕</a>
@@ -21,24 +30,62 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     const list = document.getElementById('channels-list');
-    let dragging;
+    const selectAll = document.getElementById('select-all');
+    const deleteBtn = document.getElementById('delete-selected-btn');
+    let dragging = null;
+
     const updateOrder = () => {
         const order = Array.from(list.querySelectorAll('.draggable-item')).map(i => i.getAttribute('data-channel'));
         document.getElementById('channel_order').value = JSON.stringify(order);
     };
-    list.addEventListener('dragstart', e => { dragging = e.target; });
+
+    window.syncSelectAll = () => {
+        const all = list.querySelectorAll('.ch-select');
+        const checked = list.querySelectorAll('.ch-select:checked');
+        const anyChecked = checked.length > 0;
+        deleteBtn.style.display = anyChecked ? '' : 'none';
+        selectAll.indeterminate = anyChecked && checked.length < all.length;
+        selectAll.checked = all.length > 0 && checked.length === all.length;
+    };
+
+    selectAll.addEventListener('change', () => {
+        list.querySelectorAll('.ch-select').forEach(cb => { cb.checked = selectAll.checked; });
+        syncSelectAll();
+    });
+
+    window.deleteItem = btn => {
+        btn.closest('li').remove();
+        updateOrder();
+        syncSelectAll();
+    };
+
+    window.deleteSelected = () => {
+        list.querySelectorAll('.ch-select:checked').forEach(cb => cb.closest('li').remove());
+        updateOrder();
+        syncSelectAll();
+    };
+
+    list.addEventListener('dragstart', e => {
+        const item = e.target.closest('.draggable-item');
+        if (!item || e.target.tagName === 'INPUT') { e.preventDefault(); return; }
+        dragging = item;
+    });
+
     list.addEventListener('dragover', e => {
         e.preventDefault();
-        const after = Array.from(list.querySelectorAll('.draggable-item:not(.dragging)')).reduce((c, child) => {
+        if (!dragging) return;
+        const after = Array.from(list.querySelectorAll('.draggable-item')).reduce((c, child) => {
+            if (child === dragging) return c;
             const box = child.getBoundingClientRect();
-            const offset = e.clientY - box.top - box.height/2;
-            if (offset < 0 && offset > c.offset) return {offset, element: child};
+            const offset = e.clientY - box.top - box.height / 2;
+            if (offset < 0 && offset > c.offset) return { offset, element: child };
             return c;
-        }, {offset: Number.NEGATIVE_INFINITY}).element;
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
         if (after == null) list.appendChild(dragging); else list.insertBefore(dragging, after);
     });
-    list.addEventListener('dragend', updateOrder);
-    window.deleteItem = btn => { btn.closest('li').remove(); updateOrder(); };
+
+    list.addEventListener('dragend', () => { dragging = null; updateOrder(); });
+
     updateOrder();
 });
 </script>
