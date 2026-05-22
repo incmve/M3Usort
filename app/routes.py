@@ -1189,39 +1189,62 @@ def rebuildWeb():
 
 def rebuild():
     original_m3u_path = f'{BASE_DIR}/files/original.m3u'
-    output = get_config_variable(CONFIG_PATH, 'output')
-
     output_name = get_config_variable(CONFIG_PATH, 'output')
     output_path = os.path.join(BASE_DIR, 'files', output_name)
-    original_playlist = playlist.loadf(original_m3u_path)
     target_channel_names = get_config_variable(CONFIG_PATH, 'target_channel_names')
     desired_group_titles = get_config_variable(CONFIG_PATH, 'desired_group_titles')
     new_group_title = get_config_variable(CONFIG_PATH, 'new_group_title')
-    collected_channels = []
+
+    # Parse M3U line by line — playlist.loadf() hangs on large files (199k+ lines)
+    channels = []
+    try:
+        with open(original_m3u_path, 'r', encoding='utf-8', errors='ignore') as f:
+            pending_extinf = None
+            for line in f:
+                line = line.rstrip('\r\n')
+                if line.startswith('#EXTINF'):
+                    pending_extinf = line
+                elif pending_extinf and not line.startswith('#') and line.strip():
+                    name = pending_extinf.rsplit(',', 1)[-1].strip() if ',' in pending_extinf else ''
+                    m = re.search(r'group-title="([^"]*)"', pending_extinf)
+                    group = m.group(1) if m else ''
+                    channels.append({'name': name, 'group': group, 'extinf': pending_extinf, 'url': line.strip()})
+                    pending_extinf = None
+                elif not line.startswith('#'):
+                    pending_extinf = None
+    except Exception as e:
+        PrintLog(f"rebuild: failed to read M3U: {e}", "ERROR")
+        return
+
+    collected = []
+    collected_names = set()
+    target_set = set(target_channel_names)
 
     PrintLog("Processing specific target channels...", "INFO")
-    for name in target_channel_names:
-        if any(channel.name == name for channel in original_playlist):
-            channel = next((channel for channel in original_playlist if channel.name == name), None)
-            channel.attributes['group-title'] = new_group_title
-            collected_channels.append(channel)
-            PrintLog(f'Added "{name}" to new group "{new_group_title}".', "INFO")
+    for ch in channels:
+        if ch['name'] in target_set and ch['name'] not in collected_names:
+            new_extinf = re.sub(r'group-title="[^"]*"', f'group-title="{new_group_title}"', ch['extinf'])
+            collected.append({'extinf': new_extinf, 'url': ch['url']})
+            collected_names.add(ch['name'])
+            PrintLog(f'Added "{ch["name"]}" to new group "{new_group_title}".', "INFO")
 
     PrintLog("Filtering channels by desired group titles...", "INFO")
     for group_title in desired_group_titles:
         PrintLog(f"Adding group {group_title}", "INFO")
-        for channel in original_playlist:
-            if channel.attributes.get('group-title') == group_title and channel not in collected_channels:
-                collected_channels.append(channel)
+        for ch in channels:
+            if ch['group'] == group_title and ch['name'] not in collected_names:
+                collected.append({'extinf': ch['extinf'], 'url': ch['url']})
+                collected_names.add(ch['name'])
 
-    PrintLog(f"Total channels to be included in the new playlist: {len(collected_channels)}", "INFO")
+    PrintLog(f"Total channels to be included in the new playlist: {len(collected)}", "INFO")
 
-    new_playlist = M3UPlaylist()
-    new_playlist.append_channels(collected_channels)
-
-    with open(output_path, 'w', encoding='utf-8') as file:
-        content = new_playlist.to_m3u_plus_playlist()
-        file.write(content)
+    tmp_path = output_path + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        f.write('#EXTM3U\n')
+        for ch in collected:
+            f.write(ch['extinf'] + '\n')
+            f.write(ch['url'] + '\n')
+    os.replace(tmp_path, output_path)
     PrintLog(f'Exported the filtered and curated playlist to {output_path}', "INFO")
 
 @main_bp.route('/download')
@@ -1918,11 +1941,23 @@ def get_channels_for_selected_groups(selected_groups):
     if not os.path.exists(m3u_path):
         raise FileNotFoundError(f"The original M3U file at '{m3u_path}' was not found.")
     
-    m3u_playlist = playlist.loadf(m3u_path)
-    for channel in m3u_playlist:
-        if channel.attributes.get('group-title') in selected_groups:
-            all_channels.append(channel.name)
-    
+    selected_set = set(selected_groups)
+    with open(m3u_path, 'r', encoding='utf-8', errors='ignore') as f:
+        pending_extinf = None
+        for line in f:
+            line = line.rstrip('\r\n')
+            if line.startswith('#EXTINF'):
+                pending_extinf = line
+            elif pending_extinf and not line.startswith('#') and line.strip():
+                m = re.search(r'group-title="([^"]*)"', pending_extinf)
+                group = m.group(1) if m else ''
+                if group in selected_set:
+                    name = pending_extinf.rsplit(',', 1)[-1].strip() if ',' in pending_extinf else ''
+                    all_channels.append(name)
+                pending_extinf = None
+            elif not line.startswith('#'):
+                pending_extinf = None
+
     PrintLog(f"Channels to be added: {all_channels}", "INFO")
     return all_channels
 
