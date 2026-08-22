@@ -9,8 +9,9 @@ from threading import Thread
 from urllib.parse import urlparse
 from functools import wraps
 from flask import (
-    Blueprint, render_template, request, redirect, url_for, 
-    flash, session, send_from_directory, jsonify, abort, current_app as app
+    Blueprint, render_template, request, redirect, url_for,
+    flash, session, send_from_directory, jsonify, abort, current_app as app,
+    make_response, Response, stream_with_context
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from ipytv import playlist
@@ -697,6 +698,8 @@ def require_auth():
         if debug == "yes":
             flash("Running in debug mode", "static")
 
+    if request.path.startswith('/live/stream/'):
+        return
     if not session.get('logged_in') and request.endpoint not in ['login', 'static']:
         return redirect(url_for('login'))
     
@@ -831,24 +834,33 @@ def update_home_data():
 
     movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
     series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    cutoff = datetime.now().timestamp() - 7 * 24 * 3600
     try:
         with open(movies_cache_path, encoding='utf-8') as f:
-            total_movies = len(json.load(f))
+            movies_data = json.load(f)
+        total_movies = len(movies_data)
+        new_movies_count = sum(1 for item in movies_data if int(item.get('added', 0)) >= cutoff)
     except json.JSONDecodeError as e:
         logging.error(f"movies_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
         total_movies = 0
+        new_movies_count = 0
     except Exception as e:
         logging.error(f"Could not read movies_cache.json: {e}")
         total_movies = 0
+        new_movies_count = 0
     try:
         with open(series_cache_path, encoding='utf-8') as f:
-            total_series = len(json.load(f))
+            series_data = json.load(f)
+        total_series = len(series_data)
+        new_series_count = sum(1 for item in series_data if int(item.get('added', 0)) >= cutoff)
     except json.JSONDecodeError as e:
         logging.error(f"series_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
         total_series = 0
+        new_series_count = 0
     except Exception as e:
         logging.error(f"Could not read series_cache.json: {e}")
         total_series = 0
+        new_series_count = 0
 
     uptime_duration = current_time - app.app_start_time
     total_seconds = int(uptime_duration.total_seconds())
@@ -885,6 +897,8 @@ def update_home_data():
         max_connections=max_connections,
         total_movies=total_movies,
         total_series=total_series,
+        new_movies_count=new_movies_count,
+        new_series_count=new_series_count,
         gluetun_enabled=gluetun_enabled,
         vpn_ip=vpn_ip,
         vpn_city=vpn_city,
@@ -952,24 +966,33 @@ def home():
 
     movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
     series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    cutoff = datetime.now().timestamp() - 7 * 24 * 3600
     try:
         with open(movies_cache_path, encoding='utf-8') as f:
-            total_movies = len(json.load(f))
+            movies_data = json.load(f)
+        total_movies = len(movies_data)
+        new_movies_count = sum(1 for item in movies_data if int(item.get('added', 0)) >= cutoff)
     except json.JSONDecodeError as e:
         logging.error(f"movies_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
         total_movies = 0
+        new_movies_count = 0
     except Exception as e:
         logging.error(f"Could not read movies_cache.json: {e}")
         total_movies = 0
+        new_movies_count = 0
     try:
         with open(series_cache_path, encoding='utf-8') as f:
-            total_series = len(json.load(f))
+            series_data = json.load(f)
+        total_series = len(series_data)
+        new_series_count = sum(1 for item in series_data if int(item.get('added', 0)) >= cutoff)
     except json.JSONDecodeError as e:
         logging.error(f"series_cache.json is corrupted (truncated mid-write at char {e.pos}) — press 'Start Download' to rebuild it")
         total_series = 0
+        new_series_count = 0
     except Exception as e:
         logging.error(f"Could not read series_cache.json: {e}")
         total_series = 0
+        new_series_count = 0
 
     uptime_duration = current_time - app.app_start_time
     total_seconds = int(uptime_duration.total_seconds())
@@ -1006,6 +1029,8 @@ def home():
                            max_connections=max_connections,
                            total_movies=total_movies,
                            total_series=total_series,
+                           new_movies_count=new_movies_count,
+                           new_series_count=new_series_count,
                            gluetun_enabled=gluetun_enabled,
                            vpn_ip=vpn_ip,
                            vpn_city=vpn_city,
@@ -1167,39 +1192,62 @@ def rebuildWeb():
 
 def rebuild():
     original_m3u_path = f'{BASE_DIR}/files/original.m3u'
-    output = get_config_variable(CONFIG_PATH, 'output')
-
     output_name = get_config_variable(CONFIG_PATH, 'output')
     output_path = os.path.join(BASE_DIR, 'files', output_name)
-    original_playlist = playlist.loadf(original_m3u_path)
     target_channel_names = get_config_variable(CONFIG_PATH, 'target_channel_names')
     desired_group_titles = get_config_variable(CONFIG_PATH, 'desired_group_titles')
     new_group_title = get_config_variable(CONFIG_PATH, 'new_group_title')
-    collected_channels = []
+
+    # Parse M3U line by line — playlist.loadf() hangs on large files (199k+ lines)
+    channels = []
+    try:
+        with open(original_m3u_path, 'r', encoding='utf-8', errors='ignore') as f:
+            pending_extinf = None
+            for line in f:
+                line = line.rstrip('\r\n')
+                if line.startswith('#EXTINF'):
+                    pending_extinf = line
+                elif pending_extinf and not line.startswith('#') and line.strip():
+                    name = pending_extinf.rsplit(',', 1)[-1].strip() if ',' in pending_extinf else ''
+                    m = re.search(r'group-title="([^"]*)"', pending_extinf)
+                    group = m.group(1) if m else ''
+                    channels.append({'name': name, 'group': group, 'extinf': pending_extinf, 'url': line.strip()})
+                    pending_extinf = None
+                elif not line.startswith('#'):
+                    pending_extinf = None
+    except Exception as e:
+        PrintLog(f"rebuild: failed to read M3U: {e}", "ERROR")
+        return
+
+    collected = []
+    collected_names = set()
+    target_set = set(target_channel_names)
 
     PrintLog("Processing specific target channels...", "INFO")
-    for name in target_channel_names:
-        if any(channel.name == name for channel in original_playlist):
-            channel = next((channel for channel in original_playlist if channel.name == name), None)
-            channel.attributes['group-title'] = new_group_title
-            collected_channels.append(channel)
-            PrintLog(f'Added "{name}" to new group "{new_group_title}".', "INFO")
+    for ch in channels:
+        if ch['name'] in target_set and ch['name'] not in collected_names:
+            new_extinf = re.sub(r'group-title="[^"]*"', f'group-title="{new_group_title}"', ch['extinf'])
+            collected.append({'extinf': new_extinf, 'url': ch['url']})
+            collected_names.add(ch['name'])
+            PrintLog(f'Added "{ch["name"]}" to new group "{new_group_title}".', "INFO")
 
     PrintLog("Filtering channels by desired group titles...", "INFO")
     for group_title in desired_group_titles:
         PrintLog(f"Adding group {group_title}", "INFO")
-        for channel in original_playlist:
-            if channel.attributes.get('group-title') == group_title and channel not in collected_channels:
-                collected_channels.append(channel)
+        for ch in channels:
+            if ch['group'] == group_title and ch['name'] not in collected_names:
+                collected.append({'extinf': ch['extinf'], 'url': ch['url']})
+                collected_names.add(ch['name'])
 
-    PrintLog(f"Total channels to be included in the new playlist: {len(collected_channels)}", "INFO")
+    PrintLog(f"Total channels to be included in the new playlist: {len(collected)}", "INFO")
 
-    new_playlist = M3UPlaylist()
-    new_playlist.append_channels(collected_channels)
-
-    with open(output_path, 'w', encoding='utf-8') as file:
-        content = new_playlist.to_m3u_plus_playlist()
-        file.write(content)
+    tmp_path = output_path + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        f.write('#EXTM3U\n')
+        for ch in collected:
+            f.write(ch['extinf'] + '\n')
+            f.write(ch['url'] + '\n')
+    os.replace(tmp_path, output_path)
     PrintLog(f'Exported the filtered and curated playlist to {output_path}', "INFO")
 
 @main_bp.route('/download')
@@ -1386,6 +1434,60 @@ def new_today():
     new_series.sort(key=lambda x: x['added'], reverse=True)
 
     return render_template('new.html', new_movies=new_movies, new_series=new_series, today=week_str, cache_age=cache_age)
+
+
+@main_bp.route('/live')
+def live():
+    output = get_config_variable(CONFIG_PATH, 'output') or 'sorted.m3u'
+    sorted_m3u_path = os.path.join(BASE_DIR, 'files', output)
+    channels = []
+    try:
+        with open(sorted_m3u_path, 'r', encoding='utf-8', errors='ignore') as f:
+            pending_extinf = None
+            for line in f:
+                line = line.rstrip('\r\n')
+                if line.startswith('#EXTINF'):
+                    pending_extinf = line
+                elif pending_extinf and not line.startswith('#') and line.strip():
+                    url = line.strip()
+                    if '/movie/' not in url and '/series/' not in url:
+                        name_m = re.search(r',(.+)$', pending_extinf)
+                        logo_m = re.search(r'tvg-logo="([^"]*)"', pending_extinf)
+                        name = name_m.group(1).strip() if name_m else ''
+                        logo = logo_m.group(1) if logo_m else ''
+                        channels.append({'name': name, 'logo': logo, 'url': url})
+                    pending_extinf = None
+                elif not line.startswith('#'):
+                    pending_extinf = None
+    except FileNotFoundError:
+        flash("No sorted playlist found. Please rebuild the M3U first.", "warning")
+    resp = make_response(render_template('live.html', channels=channels))
+    resp.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src * data:; "
+        "media-src 'self' blob:; "
+        "connect-src 'self';"
+    )
+    return resp
+
+
+@main_bp.route('/live/stream/<path:stream_path>')
+def live_stream_proxy(stream_path):
+    upstream_url = f'http://iptvproxy:8080/{stream_path}'
+    try:
+        upstream = requests.get(upstream_url, stream=True, timeout=15)
+        content_type = upstream.headers.get('Content-Type', 'video/mp2t')
+        def generate():
+            for chunk in upstream.iter_content(chunk_size=8192):
+                if chunk:
+                    yield chunk
+        return Response(stream_with_context(generate()), content_type=content_type)
+    except Exception as e:
+        PrintLog(f"live_stream_proxy: upstream fetch failed for {upstream_url}: {e}", "ERROR")
+        abort(502)
 
 
 @main_bp.route('/refresh_vod_cache')
@@ -1896,11 +1998,23 @@ def get_channels_for_selected_groups(selected_groups):
     if not os.path.exists(m3u_path):
         raise FileNotFoundError(f"The original M3U file at '{m3u_path}' was not found.")
     
-    m3u_playlist = playlist.loadf(m3u_path)
-    for channel in m3u_playlist:
-        if channel.attributes.get('group-title') in selected_groups:
-            all_channels.append(channel.name)
-    
+    selected_set = set(selected_groups)
+    with open(m3u_path, 'r', encoding='utf-8', errors='ignore') as f:
+        pending_extinf = None
+        for line in f:
+            line = line.rstrip('\r\n')
+            if line.startswith('#EXTINF'):
+                pending_extinf = line
+            elif pending_extinf and not line.startswith('#') and line.strip():
+                m = re.search(r'group-title="([^"]*)"', pending_extinf)
+                group = m.group(1) if m else ''
+                if group in selected_set:
+                    name = pending_extinf.rsplit(',', 1)[-1].strip() if ',' in pending_extinf else ''
+                    all_channels.append(name)
+                pending_extinf = None
+            elif not line.startswith('#'):
+                pending_extinf = None
+
     PrintLog(f"Channels to be added: {all_channels}", "INFO")
     return all_channels
 
@@ -2657,7 +2771,7 @@ def groups():
             config_content = file.read()
         config_namespace = {}
         exec(config_content, {}, config_namespace)
-        m3u_url = config_namespace.get('url')
+        m3u_url = get_credential('url')
 
         if not m3u_url:
             raise ValueError("M3U URL not found in the configuration.")

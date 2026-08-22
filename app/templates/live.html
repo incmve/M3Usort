@@ -1,0 +1,186 @@
+{% extends 'layout.html' %}
+{% block title %}Live TV — M3Usort{% endblock %}
+{% block content %}
+<div class="topbar">
+    <span class="topbar-title">Live TV</span>
+    <span class="topbar-sep">·</span>
+    <span class="topbar-sub">{{ channels|length }} channels</span>
+</div>
+<div class="live-wrap">
+    <div class="live-channel-list" id="channel-list">
+        {% if channels %}
+        {% for ch in channels %}
+        <div class="live-channel-item" data-url="{{ ch.url }}">
+            {% if ch.logo %}
+            <img class="live-ch-logo" src="{{ ch.logo }}">
+            <div class="live-ch-logo-ph">📺</div>
+            {% else %}
+            <div class="live-ch-logo-ph live-ch-logo-ph--on">📺</div>
+            {% endif %}
+            <span class="live-ch-name">{{ ch.name }}</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="live-empty">No live channels found. Rebuild the M3U playlist first.</div>
+        {% endif %}
+    </div>
+    <div class="live-player-area">
+        <div id="no-channel-msg">
+            <div class="live-no-ch-icon">📺</div>
+            <div class="live-no-ch-text">Select a channel to start watching</div>
+        </div>
+        <video id="live-player" controls></video>
+    </div>
+</div>
+
+<style>
+.live-wrap {
+    display: flex;
+    flex-direction: row;
+    height: calc(100vh - 50px);
+    overflow: hidden;
+}
+
+/* ── Channel list ── */
+.live-channel-list {
+    width: 220px;
+    min-width: 220px;
+    flex-shrink: 0;
+    background: #2b2d31;
+    border-right: 1px solid #1e1f22;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+.live-channel-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 10px;
+    cursor: pointer;
+    border-bottom: 1px solid #1e1f22;
+    transition: background .1s;
+}
+.live-channel-item:hover { background: #393c43; }
+.live-channel-item.active {
+    background: #404249;
+    border-left: 2px solid #4aadcf;
+    padding-left: 8px;
+}
+.live-ch-logo {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+/* placeholder hidden by default; shown when img fails or no logo */
+.live-ch-logo-ph {
+    display: none;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    background: #383a40;
+    border-radius: 3px;
+    color: #80848e;
+}
+.live-ch-logo-ph--on { display: flex; }
+/* CSS sibling: when img gets .broken class, show following placeholder */
+img.live-ch-logo.broken { display: none; }
+img.live-ch-logo.broken + .live-ch-logo-ph { display: flex; }
+.live-ch-name {
+    font-size: 13px;
+    color: #c9cdd3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.live-empty { padding: 20px 12px; font-size: 13px; color: #80848e; }
+
+/* ── Player area ── */
+.live-player-area {
+    flex: 1;
+    min-width: 0;
+    background: #0d0d0d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+#no-channel-msg { text-align: center; color: #80848e; }
+.live-no-ch-icon { font-size: 32px; margin-bottom: 12px; }
+.live-no-ch-text { font-size: 14px; }
+#live-player {
+    display: none;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+}
+</style>
+
+<script src="{{ url_for('static', filename='mpegts.min.js') }}"></script>
+<script>
+(function () {
+    var currentPlayer = null;
+    var channelList = document.getElementById('channel-list');
+
+    /* ── Logo error handling via event delegation ── */
+    channelList.addEventListener('error', function (e) {
+        if (e.target.tagName === 'IMG' && e.target.classList.contains('live-ch-logo')) {
+            e.target.classList.add('broken');
+        }
+    }, true); /* capture=true required for error events */
+
+    /* ── Channel click via event delegation ── */
+    channelList.addEventListener('click', function (e) {
+        var item = e.target.closest('.live-channel-item');
+        if (item) loadChannel(item);
+    });
+
+    function toProxyUrl(originalUrl) {
+        try {
+            var u = new URL(originalUrl);
+            return '/live/stream' + u.pathname;
+        } catch (e) {
+            return originalUrl;
+        }
+    }
+
+    function loadChannel(el) {
+        document.querySelectorAll('.live-channel-item').forEach(function (i) {
+            i.classList.remove('active');
+        });
+        el.classList.add('active');
+
+        var url = toProxyUrl(el.dataset.url);
+        var video = document.getElementById('live-player');
+        var noMsg = document.getElementById('no-channel-msg');
+
+        if (currentPlayer) {
+            try { currentPlayer.destroy(); } catch (e) {}
+            currentPlayer = null;
+        }
+        video.pause();
+        video.src = '';
+
+        noMsg.style.display = 'none';
+        video.style.display = 'block';
+
+        if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+            currentPlayer = mpegts.createPlayer({ type: 'mpegts', url: url, isLive: true });
+            currentPlayer.attachMediaElement(video);
+            currentPlayer.load();
+            currentPlayer.play().catch(function () {});
+        } else {
+            video.src = url;
+            video.load();
+            video.play().catch(function () {});
+        }
+    }
+})();
+</script>
+{% endblock %}

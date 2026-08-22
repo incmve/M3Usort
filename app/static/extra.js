@@ -141,6 +141,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function createAndDisplayFlashMessage(data, messageId) {
         var flashMessagesContainer = document.getElementById('flash-messages-container');
+        if (!flashMessagesContainer) {
+            flashMessagesContainer = document.createElement('div');
+            flashMessagesContainer.id = 'flash-messages-container';
+            document.body.prepend(flashMessagesContainer);
+        }
 
         // Create and append the client-side flash message
         var flashMessageDiv = document.createElement('div');

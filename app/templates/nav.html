@@ -60,6 +60,15 @@
         </div>
     </div>
 
+    <div class="sidebar-section" data-sort="live">
+        <div class="sidebar-section-label collapsible" data-section="live">Live TV <span class="collapse-arrow">▾</span></div>
+        <div class="sidebar-section-items" data-section="live">
+            <a href="{{ url_for('main_bp.live') }}" class="sidebar-item {% if request.endpoint == 'main_bp.live' %}active{% endif %}">
+                <span class="si-icon">📡</span> Live TV
+            </a>
+        </div>
+    </div>
+
     {% if is_admin %}
     <div class="sidebar-section" data-sort="admin">
         <div class="sidebar-section-label collapsible" data-section="admin">Admin <span class="collapse-arrow">▾</span></div>
@@ -110,7 +119,7 @@
 .sidebar-section.sortable-ghost { opacity:0.3; }
 .sidebar-section.sortable-drag { background:#1a1a2a; border-radius:6px; }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
 <script>
 (function() {
     // Restore saved section order
