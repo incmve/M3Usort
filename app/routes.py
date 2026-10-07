@@ -2489,6 +2489,9 @@ def enrich_cast_background():
         else:
             movies_data = []
         for movie in movies_data:
+            if isinstance(movie, dict) and not isinstance(movie.get('cast'), list):
+                movie.pop('cast', None)
+        for movie in movies_data:
             if not isinstance(movie, dict):
                 continue
             tmdb_id = movie.get('tmdb_id')
@@ -2512,6 +2515,9 @@ def enrich_cast_background():
             series_data = next((v for v in data.values() if isinstance(v, list)), [])
         else:
             series_data = []
+        for serie in series_data:
+            if isinstance(serie, dict) and not isinstance(serie.get('cast'), list):
+                serie.pop('cast', None)
         for serie in series_data:
             if not isinstance(serie, dict):
                 continue
