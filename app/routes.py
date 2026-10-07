@@ -2567,6 +2567,9 @@ def enrich_tmdb_background():
 
     try:
         m3u_url = get_credential('url')
+        if not m3u_url or '://' not in m3u_url or '/get.php' not in m3u_url:
+            PrintLog("TMDB enrichment: provider URL not configured or unsupported format", "ERROR")
+            return
         scheme, rest = m3u_url.split('://', 1)
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
@@ -3603,7 +3606,7 @@ def PrintLog(string, type):
     elif type == "NOTICE":
         logger.notice(string)
 
-    print(string)
+    print(string, flush=True)
 
 
 def update_groups_cache():
