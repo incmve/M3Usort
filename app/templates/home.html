@@ -25,7 +25,6 @@
             <div class="stat-value" style="color:#4acf8a;"><span id="total_series">{{ total_series }}</span>{% if new_series_count > 0 %} <span id="new_series_count" style="font-size:0.55em; color:#4acf8a;">(+{{ new_series_count }})</span>{% else %}<span id="new_series_count" style="display:none; font-size:0.55em; color:#4acf8a;"></span>{% endif %}</div>
             <div class="stat-sub">in cache</div>
         </div>
-        </div>
         <div class="stat-card {% if exp_date_days_left is defined and exp_date_days_left <= 30 %}warn{% endif %}"
             style="border-color:{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#4a3010{% else %}#2a2a1a{% endif %}; background:linear-gradient(135deg,{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#201808{% else %}#181810{% endif %},#151515);">
             <div class="stat-label" style="color:{% if exp_date_days_left is defined and exp_date_days_left <= 30 %}#8a6020{% else %}#6a6030{% endif %};">Subscription</div>
