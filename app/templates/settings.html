@@ -86,6 +86,20 @@
                 </div>
             </div>
         </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">TMDB Cast Enrichment</div>
+            <div class="settings-section-body">
+                <div style="display:inline-flex; gap:14px; align-items:flex-end; flex-wrap:wrap;">
+                    <div><label>{{ form.cast_enrich_enabled.label }}</label>{{ form.cast_enrich_enabled(class_="filter-select", style="width:160px;") }}</div>
+                    <div><label>{{ form.cast_enrich_time.label }}</label>{{ form.cast_enrich_time(class_="filter-input", style="width:130px; color-scheme:dark;", type="time") }}</div>
+                </div>
+                <div style="margin-top:12px;">
+                    <button type="button" class="button button-secondary" onclick="runCastEnrich()">Run now</button>
+                    <span id="cast-enrich-status" style="margin-left:10px; font-size:0.85em; color:#aaa;"></span>
+                </div>
+            </div>
+        </div>
         </div>
         <button type="submit" name="submit" class="button button-primary">Save Settings</button>
     </form>
@@ -138,6 +152,19 @@ function doSmbBackup(e) {
             msg.style.color = '#e06060';
             msg.textContent = '✗ Request failed';
         });
+}
+</script>
+
+<script>
+function runCastEnrich() {
+    const btn = event.target;
+    const status = document.getElementById('cast-enrich-status');
+    btn.disabled = true;
+    status.textContent = 'Starting...';
+    fetch('/run_cast_enrich', { method: 'POST' })
+        .then(r => r.json())
+        .then(() => { status.textContent = 'Running in background — check logs for progress.'; })
+        .catch(() => { status.textContent = 'Failed to start.'; btn.disabled = false; });
 }
 </script>
 </div>

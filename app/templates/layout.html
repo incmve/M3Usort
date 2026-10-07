@@ -75,6 +75,77 @@
     </div>
 </div>
 
+<!-- Actor Search Modal -->
+<div id="actorModal" class="modal">
+    <div class="modal-content" style="max-width:800px;">
+        <span class="close" onclick="closeActorModal()">&times;</span>
+        <div id="actor-modal-title" style="font-size:16px; font-weight:600; color:#e0e0e0; margin-bottom:14px;"></div>
+        <div id="actor-modal-empty" style="color:#888; font-size:13px; display:none;">No results found.</div>
+        <div id="actor-movies-section" style="display:none;">
+            <div style="font-size:12px; color:#80848e; margin-bottom:8px;">Movies</div>
+            <div class="poster-grid" id="actor-movies-grid" style="margin-bottom:18px;"></div>
+        </div>
+        <div id="actor-series-section" style="display:none;">
+            <div style="font-size:12px; color:#80848e; margin-bottom:8px;">Series</div>
+            <div class="poster-grid" id="actor-series-grid"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+function escapeActorHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function openActorSearch(personId, personName) {
+    const modal = document.getElementById('actorModal');
+    const moviesGrid = document.getElementById('actor-movies-grid');
+    const seriesGrid = document.getElementById('actor-series-grid');
+    const moviesSection = document.getElementById('actor-movies-section');
+    const seriesSection = document.getElementById('actor-series-section');
+    const emptyMsg = document.getElementById('actor-modal-empty');
+    document.getElementById('actor-modal-title').textContent = `Actor: ${personName}`;
+    moviesGrid.innerHTML = ''; seriesGrid.innerHTML = '';
+    moviesSection.style.display = 'none'; seriesSection.style.display = 'none'; emptyMsg.style.display = 'none';
+    modal.style.display = 'block';
+
+    fetch(`/search_by_actor/${personId}`)
+        .then(r => r.json())
+        .then(data => {
+            const movies = data.movies || [];
+            const series = data.series || [];
+            if (movies.length === 0 && series.length === 0) {
+                emptyMsg.style.display = 'block';
+                return;
+            }
+            if (movies.length) {
+                moviesSection.style.display = 'block';
+                movies.forEach(m => {
+                    const d = document.createElement('div');
+                    d.className = 'poster-card';
+                    d.innerHTML = `<div class="poster-img">${m.stream_icon ? `<img src="${m.stream_icon}" loading="lazy" onerror="this.style.display='none'">` : '🎬'}</div><div class="poster-name">${escapeActorHtml(m.name)}</div>`;
+                    if (m.tmdb_id) d.onclick = () => window.open(`https://www.themoviedb.org/movie/${m.tmdb_id}`, '_blank');
+                    moviesGrid.appendChild(d);
+                });
+            }
+            if (series.length) {
+                seriesSection.style.display = 'block';
+                series.forEach(s => {
+                    const d = document.createElement('div');
+                    d.className = 'poster-card';
+                    d.innerHTML = `<div class="poster-img">${s.cover ? `<img src="${s.cover}" loading="lazy" onerror="this.style.display='none'">` : '📺'}</div><div class="poster-name">${escapeActorHtml(s.name)}</div>`;
+                    if (s.tmdb_id) d.onclick = () => window.open(`https://www.themoviedb.org/tv/${s.tmdb_id}`, '_blank');
+                    seriesGrid.appendChild(d);
+                });
+            }
+        })
+        .catch(() => { emptyMsg.textContent = 'Failed to load results.'; emptyMsg.style.display = 'block'; });
+}
+function closeActorModal() { document.getElementById('actorModal').style.display = 'none'; }
+document.addEventListener('click', function(e) {
+    const t = e.target.closest('.cast-actor-link');
+    if (t) openActorSearch(parseInt(t.dataset.actorId, 10), t.dataset.actorName);
+});
+window.addEventListener('click', function(e) { if (e.target === document.getElementById('actorModal')) closeActorModal(); });
+</script>
+
 {% block scripts %}{% endblock %}
 <script src="{{ url_for('static', filename='extra.js') }}"></script>
 <script>

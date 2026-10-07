@@ -157,7 +157,13 @@ function renderModalInfo(data, title, type, modalLinks) {
         }
         descHtml += '</div>';
     }
-    modalLinks.innerHTML = metaHtml + btns + descHtml;
+    let castHtml = '';
+    if (data.cast && data.cast.length) {
+        castHtml = '<div style="margin-top:8px;border-top:1px solid #1e1e1e;padding-top:8px;font-size:12px;color:#888;">Cast: ' +
+            data.cast.map(c => `<span class="cast-actor-link" data-actor-id="${c.id}" data-actor-name="${escHtml(c.name)}" style="color:#4aadcf;cursor:pointer;margin-right:8px;">${escHtml(c.name)}</span>`).join('') +
+            '</div>';
+    }
+    modalLinks.innerHTML = metaHtml + btns + descHtml + castHtml;
 }
 function checkJellyfin(name, type) {
     const encoded = encodeURIComponent(name);

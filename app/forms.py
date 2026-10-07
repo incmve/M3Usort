@@ -28,5 +28,7 @@ class ConfigForm(FlaskForm):
     backup_scheduled = SelectField('Daily scheduled backup', choices=[('1', 'Yes'), ('0', 'No')], validators=[DataRequired()])
     backup_time = StringField('Backup time (HH:MM)', validators=[Optional()])
     backup_keep = IntegerField('Backups to keep', validators=[Optional(), NumberRange(min=1, max=99)])
+    cast_enrich_enabled = SelectField('Daily cast enrichment', choices=[('1', 'Yes'), ('0', 'No')], validators=[DataRequired()])
+    cast_enrich_time = StringField('Cast enrichment time (HH:MM)', validators=[Optional()])
     debug = SelectField('Debug mode', choices=[('no', 'No'), ('yes', 'Yes')], validators=[DataRequired()])
     submit = SubmitField('Save')

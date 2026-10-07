@@ -1782,10 +1782,28 @@ def _tmdb_lookup(name, media_type, api_key):
         pass
     return None, None
 
+def _tmdb_cast(tmdb_id, media_type, api_key):
+    """Fetch top-5 billed cast via TMDB credits API. media_type: 'movie' or 'tv'"""
+    if not api_key or not tmdb_id:
+        return []
+    try:
+        r = requests.get(
+            f'https://api.themoviedb.org/3/{media_type}/{tmdb_id}/credits',
+            params={'api_key': api_key},
+            timeout=5
+        )
+        if r.status_code == 200:
+            cast = _safe_json(r).get('cast', [])
+            return [{'name': c.get('name'), 'id': c.get('id')} for c in cast[:5]]
+    except Exception:
+        pass
+    return []
+
 @main_bp.route('/get_vod_info/<int:stream_id>')
 def get_vod_info(stream_id):
     # Check movies cache first
     tmdb_id = imdb_id = rating = plot = name = ''
+    cast = []
     try:
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
         if os.path.exists(movies_cache_path):
@@ -1798,8 +1816,24 @@ def get_vod_info(stream_id):
                 imdb_id = movie.get('imdb_id') or ''
                 rating  = movie.get('rating') or ''
                 plot    = movie.get('plot') or ''
+                cast    = movie.get('cast') or []
                 if tmdb_id:
-                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+                    if not cast:
+                        tmdb_api_key = get_credential('tmdb_api_key') or ''
+                        cast = _tmdb_cast(tmdb_id, 'movie', tmdb_api_key)
+                        if cast:
+                            try:
+                                for m in movies_data:
+                                    if m.get('stream_id') == stream_id:
+                                        m['cast'] = cast
+                                        break
+                                tmp = movies_cache_path + '.tmp'
+                                with open(tmp, 'w', encoding='utf-8') as f:
+                                    json.dump(movies_data, f)
+                                os.replace(tmp, movies_cache_path)
+                            except Exception:
+                                pass
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast})
     except Exception:
         pass
 
@@ -1828,8 +1862,13 @@ def get_vod_info(stream_id):
         tmdb_id, _ = _tmdb_lookup(name, 'movie', tmdb_api_key)
         tmdb_id = tmdb_id or ''
 
+    # Fetch cast from TMDB now that we have a tmdb_id
+    if tmdb_id and not cast:
+        tmdb_api_key = get_credential('tmdb_api_key') or ''
+        cast = _tmdb_cast(tmdb_id, 'movie', tmdb_api_key)
+
     # Write enriched data back to cache so the next request is served instantly
-    if any([tmdb_id, imdb_id, plot, rating]):
+    if any([tmdb_id, imdb_id, plot, rating, cast]):
         try:
             movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
             with open(movies_cache_path, encoding='utf-8') as f:
@@ -1840,6 +1879,7 @@ def get_vod_info(stream_id):
                     if imdb_id: m['imdb_id'] = imdb_id
                     if plot:    m['plot']    = plot
                     if rating:  m['rating']  = rating
+                    if cast:    m['cast']    = cast
                     break
             tmp = movies_cache_path + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
@@ -1848,12 +1888,13 @@ def get_vod_info(stream_id):
         except Exception:
             pass
 
-    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast})
 
 
 @main_bp.route('/get_series_info/<int:series_id>')
 def get_series_info_meta(series_id):
     tmdb_id = imdb_id = rating = plot = name = ''
+    cast = []
 
     # Check series cache first
     try:
@@ -1868,8 +1909,24 @@ def get_series_info_meta(series_id):
                 imdb_id = serie.get('imdb_id') or ''
                 rating  = serie.get('rating') or ''
                 plot    = serie.get('plot') or ''
+                cast    = serie.get('cast') or []
                 if tmdb_id:
-                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+                    if not cast:
+                        tmdb_api_key = get_credential('tmdb_api_key') or ''
+                        cast = _tmdb_cast(tmdb_id, 'tv', tmdb_api_key)
+                        if cast:
+                            try:
+                                for s in series_data:
+                                    if s.get('series_id') == series_id:
+                                        s['cast'] = cast
+                                        break
+                                tmp = series_cache_path + '.tmp'
+                                with open(tmp, 'w', encoding='utf-8') as f:
+                                    json.dump(series_data, f)
+                                os.replace(tmp, series_cache_path)
+                            except Exception:
+                                pass
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast})
     except Exception:
         pass
 
@@ -1898,8 +1955,13 @@ def get_series_info_meta(series_id):
         tmdb_id, _ = _tmdb_lookup(name, 'tv', tmdb_api_key)
         tmdb_id = tmdb_id or ''
 
+    # Fetch cast from TMDB now that we have a tmdb_id
+    if tmdb_id and not cast:
+        tmdb_api_key = get_credential('tmdb_api_key') or ''
+        cast = _tmdb_cast(tmdb_id, 'tv', tmdb_api_key)
+
     # Write enriched data back to cache so the next request is served instantly
-    if any([tmdb_id, imdb_id, plot, rating]):
+    if any([tmdb_id, imdb_id, plot, rating, cast]):
         try:
             series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
             with open(series_cache_path, encoding='utf-8') as f:
@@ -1910,6 +1972,7 @@ def get_series_info_meta(series_id):
                     if imdb_id: s['imdb_id'] = imdb_id
                     if plot:    s['plot']    = plot
                     if rating:  s['rating']  = rating
+                    if cast:    s['cast']    = cast
                     break
             tmp = series_cache_path + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
@@ -1918,7 +1981,47 @@ def get_series_info_meta(series_id):
         except Exception:
             pass
 
-    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast})
+
+
+@main_bp.route('/search_by_actor/<int:person_id>')
+def search_by_actor(person_id):
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    matched_movies = []
+    matched_series = []
+
+    try:
+        if os.path.exists(movies_cache_path):
+            with open(movies_cache_path, encoding='utf-8') as f:
+                movies_data = json.load(f)
+            for m in movies_data:
+                if any(c.get('id') == person_id for c in m.get('cast', [])):
+                    matched_movies.append({
+                        'name': m.get('name', ''),
+                        'stream_id': m.get('stream_id'),
+                        'stream_icon': m.get('stream_icon', ''),
+                        'tmdb_id': m.get('tmdb_id', '')
+                    })
+    except Exception as e:
+        PrintLog(f"search_by_actor: failed to read movies cache: {e}", "ERROR")
+
+    try:
+        if os.path.exists(series_cache_path):
+            with open(series_cache_path, encoding='utf-8') as f:
+                series_data = json.load(f)
+            for s in series_data:
+                if any(c.get('id') == person_id for c in s.get('cast', [])):
+                    matched_series.append({
+                        'name': s.get('name', ''),
+                        'series_id': s.get('series_id'),
+                        'cover': s.get('cover', ''),
+                        'tmdb_id': s.get('tmdb_id', '')
+                    })
+    except Exception as e:
+        PrintLog(f"search_by_actor: failed to read series cache: {e}", "ERROR")
+
+    return jsonify({'movies': matched_movies, 'series': matched_series})
 
 
 @main_bp.route('/check_jellyfin/<string:type>/<path:name>')
@@ -2085,6 +2188,8 @@ def settings():
         update_config_variable(CONFIG_PATH, 'backup_scheduled', form.backup_scheduled.data)
         update_config_variable(CONFIG_PATH, 'backup_time', form.backup_time.data or '02:00')
         update_config_variable(CONFIG_PATH, 'backup_keep', str(form.backup_keep.data) if form.backup_keep.data else '5')
+        update_config_variable(CONFIG_PATH, 'cast_enrich_enabled', form.cast_enrich_enabled.data)
+        update_config_variable(CONFIG_PATH, 'cast_enrich_time', form.cast_enrich_time.data or '02:00')
         update_config_variable(CONFIG_PATH, 'debug', form.debug.data)
 
         # Manage scheduled backup job
@@ -2102,6 +2207,22 @@ def settings():
                 scheduler.remove_job(id='SMB Backup scheduler')
             scheduler.add_job(id='SMB Backup scheduler', func=scheduled_smb_backup,
                               trigger='cron', hour=bh, minute=bm)
+
+        # Manage cast enrichment job
+        cast_job = scheduler.get_job('Cast Enrich scheduler')
+        if form.cast_enrich_enabled.data == '0':
+            if cast_job:
+                scheduler.remove_job(id='Cast Enrich scheduler')
+        else:
+            try:
+                t = form.cast_enrich_time.data or '02:00'
+                ch, cm = int(t.split(':')[0]), int(t.split(':')[1])
+            except Exception:
+                ch, cm = 2, 0
+            if cast_job:
+                scheduler.remove_job(id='Cast Enrich scheduler')
+            scheduler.add_job(id='Cast Enrich scheduler', func=enrich_cast_background,
+                              trigger='cron', hour=ch, minute=cm)
 
         job = scheduler.get_job('M3U Download scheduler')
         if job:
@@ -2161,6 +2282,8 @@ def settings():
         form.backup_scheduled.data = get_config_variable(CONFIG_PATH, 'backup_scheduled') or "0"
         form.backup_time.data = get_config_variable(CONFIG_PATH, 'backup_time') or "02:00"
         form.backup_keep.data = int(get_config_variable(CONFIG_PATH, 'backup_keep') or 5)
+        form.cast_enrich_enabled.data = get_config_variable(CONFIG_PATH, 'cast_enrich_enabled') or '0'
+        form.cast_enrich_time.data = get_config_variable(CONFIG_PATH, 'cast_enrich_time') or '02:00'
         form.debug.data = get_config_variable(CONFIG_PATH, 'debug') or "no"
 
     return render_template('settings.html', form=form)
@@ -2302,6 +2425,76 @@ def scheduled_smb_backup():
 
         # Cleanup only runs after a confirmed successful write
         _smb_cleanup(smbclient, smb_host, smb_share, smb_path, backup_keep)
+
+
+def enrich_cast_background():
+    """Scheduled job: fetch and cache top-5 billed cast for movies/series missing it."""
+    PrintLog("Cast enrichment: starting", "INFO")
+    tmdb_api_key = get_credential('tmdb_api_key') or ''
+    if not tmdb_api_key:
+        PrintLog("Cast enrichment: no TMDB API key configured", "WARNING")
+        return
+
+    def fetch_cast(tmdb_id, media_type):
+        """Fetch top-5 billed cast, retrying once after Retry-After on a 429."""
+        url = f'https://api.themoviedb.org/3/{media_type}/{tmdb_id}/credits'
+        try:
+            r = requests.get(url, params={'api_key': tmdb_api_key}, timeout=5)
+            if r.status_code == 429:
+                try:
+                    retry_after = int(r.headers.get('Retry-After', 5))
+                except (TypeError, ValueError):
+                    retry_after = 5
+                PrintLog(f"Cast enrichment: rate limited on {media_type}/{tmdb_id}, retrying after {retry_after}s", "WARNING")
+                sleep(retry_after)
+                r = requests.get(url, params={'api_key': tmdb_api_key}, timeout=5)
+            if r.status_code == 200:
+                cast = _safe_json(r).get('cast', [])
+                return [{'name': c.get('name'), 'id': c.get('id')} for c in cast[:5]]
+            PrintLog(f"Cast enrichment: failed to fetch {media_type}/{tmdb_id} (status {r.status_code}), skipping", "WARNING")
+        except Exception as e:
+            PrintLog(f"Cast enrichment: request failed for {media_type}/{tmdb_id}: {e}", "WARNING")
+        return []
+
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    try:
+        with open(movies_cache_path, encoding='utf-8') as f:
+            movies_data = json.load(f)
+        for movie in movies_data:
+            tmdb_id = movie.get('tmdb_id')
+            if tmdb_id and not movie.get('cast'):
+                movie['cast'] = fetch_cast(tmdb_id, 'movie')
+                sleep(0.1)
+        tmp = movies_cache_path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(movies_data, f)
+        os.replace(tmp, movies_cache_path)
+    except Exception as e:
+        PrintLog(f"Cast enrichment: failed to process movies cache: {e}", "ERROR")
+
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    try:
+        with open(series_cache_path, encoding='utf-8') as f:
+            series_data = json.load(f)
+        for serie in series_data:
+            tmdb_id = serie.get('tmdb_id')
+            if tmdb_id and not serie.get('cast'):
+                serie['cast'] = fetch_cast(tmdb_id, 'tv')
+                sleep(0.1)
+        tmp = series_cache_path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(series_data, f)
+        os.replace(tmp, series_cache_path)
+    except Exception as e:
+        PrintLog(f"Cast enrichment: failed to process series cache: {e}", "ERROR")
+
+    PrintLog("Cast enrichment: finished", "INFO")
+
+
+@main_bp.route('/run_cast_enrich', methods=['POST'])
+def run_cast_enrich():
+    Thread(target=enrich_cast_background, daemon=True).start()
+    return jsonify({'status': 'started'})
 
 
 @main_bp.route('/restore_config', methods=['POST'])
@@ -3135,6 +3328,16 @@ def startup_delayed():
                     else:
                         scheduler.add_job(id='VOD scheduler', func=scheduled_vod_download, trigger='interval', hours=scan_interval)
                 scheduler.add_job(id='System tasks scheduler', func=scheduled_system_tasks, trigger='interval', hours=1)
+
+                cast_enrich_enabled = get_config_variable(CONFIG_PATH, 'cast_enrich_enabled') or '0'
+                if cast_enrich_enabled == '1':
+                    try:
+                        t = get_config_variable(CONFIG_PATH, 'cast_enrich_time') or '02:00'
+                        ch, cm = int(t.split(':')[0]), int(t.split(':')[1])
+                    except Exception:
+                        ch, cm = 2, 0
+                    scheduler.add_job(id='Cast Enrich scheduler', func=enrich_cast_background,
+                                      trigger='cron', hour=ch, minute=cm)
 
                 match_type = get_config_variable(CONFIG_PATH, 'match_type')
                 PrintLog(f"match type is {match_type}", "NOTICE")
