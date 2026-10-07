@@ -248,6 +248,9 @@ def save_vod_cache():
                 for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
                     if prev.get(field):
                         movie[field] = prev[field]
+        for m in movies_data:
+            if not isinstance(m.get('cast'), list):
+                m.pop('cast', None)
         tmp = movies_cache_path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(movies_data, f)
@@ -299,6 +302,9 @@ def save_vod_cache():
             # Normalise 'added' — provider uses last_modified for series
             if not serie.get('added'):
                 serie['added'] = serie.get('last_modified', 0)
+        for s in series_data:
+            if not isinstance(s.get('cast'), list):
+                s.pop('cast', None)
         tmp = series_cache_path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(series_data, f)
@@ -2004,7 +2010,7 @@ def search_by_actor(person_id):
             for item in movies_data:
                 if not isinstance(item, dict):
                     continue
-                if any(c.get('id') == person_id for c in item.get('cast', [])):
+                if any(isinstance(c, dict) and c.get('id') == person_id for c in item.get('cast', [])):
                     matched_movies.append({
                         'name': item.get('name'),
                         'stream_id': item.get('stream_id'),
@@ -2027,7 +2033,7 @@ def search_by_actor(person_id):
             for item in series_data:
                 if not isinstance(item, dict):
                     continue
-                if any(c.get('id') == person_id for c in item.get('cast', [])):
+                if any(isinstance(c, dict) and c.get('id') == person_id for c in item.get('cast', [])):
                     matched_series.append({
                         'name': item.get('name'),
                         'series_id': item.get('series_id'),
@@ -2486,7 +2492,7 @@ def enrich_cast_background():
             if not isinstance(movie, dict):
                 continue
             tmdb_id = movie.get('tmdb_id')
-            if tmdb_id and 'cast' not in movie:
+            if tmdb_id and not movie.get('cast'):
                 movie['cast'] = fetch_cast(tmdb_id, 'movie')
                 sleep(0.1)
         tmp = movies_cache_path + '.tmp'
@@ -2510,7 +2516,7 @@ def enrich_cast_background():
             if not isinstance(serie, dict):
                 continue
             tmdb_id = serie.get('tmdb_id')
-            if tmdb_id and 'cast' not in serie:
+            if tmdb_id and not serie.get('cast'):
                 serie['cast'] = fetch_cast(tmdb_id, 'tv')
                 sleep(0.1)
         tmp = series_cache_path + '.tmp'
