@@ -2212,6 +2212,8 @@ def settings():
         update_config_variable(CONFIG_PATH, 'backup_keep', str(form.backup_keep.data) if form.backup_keep.data else '5')
         update_config_variable(CONFIG_PATH, 'cast_enrich_enabled', form.cast_enrich_enabled.data)
         update_config_variable(CONFIG_PATH, 'cast_enrich_time', form.cast_enrich_time.data or '02:00')
+        update_config_variable(CONFIG_PATH, 'tmdb_enrich_enabled', form.tmdb_enrich_enabled.data)
+        update_config_variable(CONFIG_PATH, 'tmdb_enrich_time', form.tmdb_enrich_time.data or '02:00')
         update_config_variable(CONFIG_PATH, 'debug', form.debug.data)
 
         # Manage scheduled backup job
@@ -2245,6 +2247,22 @@ def settings():
                 scheduler.remove_job(id='Cast Enrich scheduler')
             scheduler.add_job(id='Cast Enrich scheduler', func=enrich_cast_background,
                               trigger='cron', hour=ch, minute=cm)
+
+        # Manage TMDB ID enrichment job
+        tmdb_job = scheduler.get_job('TMDB Enrich scheduler')
+        if form.tmdb_enrich_enabled.data == '0':
+            if tmdb_job:
+                scheduler.remove_job(id='TMDB Enrich scheduler')
+        else:
+            try:
+                t = form.tmdb_enrich_time.data or '02:00'
+                th, tm = int(t.split(':')[0]), int(t.split(':')[1])
+            except Exception:
+                th, tm = 2, 0
+            if tmdb_job:
+                scheduler.remove_job(id='TMDB Enrich scheduler')
+            scheduler.add_job(id='TMDB Enrich scheduler', func=enrich_tmdb_background,
+                              trigger='cron', hour=th, minute=tm)
 
         job = scheduler.get_job('M3U Download scheduler')
         if job:
@@ -2306,6 +2324,8 @@ def settings():
         form.backup_keep.data = int(get_config_variable(CONFIG_PATH, 'backup_keep') or 5)
         form.cast_enrich_enabled.data = get_config_variable(CONFIG_PATH, 'cast_enrich_enabled') or '0'
         form.cast_enrich_time.data = get_config_variable(CONFIG_PATH, 'cast_enrich_time') or '02:00'
+        form.tmdb_enrich_enabled.data = get_config_variable(CONFIG_PATH, 'tmdb_enrich_enabled') or '0'
+        form.tmdb_enrich_time.data = get_config_variable(CONFIG_PATH, 'tmdb_enrich_time') or '02:00'
         form.debug.data = get_config_variable(CONFIG_PATH, 'debug') or "no"
 
     return render_template('settings.html', form=form)
@@ -2538,6 +2558,131 @@ def enrich_cast_background():
 @main_bp.route('/run_cast_enrich', methods=['POST'])
 def run_cast_enrich():
     Thread(target=enrich_cast_background, daemon=True).start()
+    return jsonify({'status': 'started'})
+
+
+def enrich_tmdb_background():
+    """Scheduled job: fetch tmdb_id/imdb_id/plot/rating from the provider for movies/series missing tmdb_id."""
+    PrintLog("TMDB enrichment: starting", "INFO")
+
+    try:
+        m3u_url = get_credential('url')
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
+        username, password = extract_credentials_from_url(m3u_url)
+        base = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}"
+    except Exception as e:
+        PrintLog(f"TMDB enrichment: failed to parse provider URL: {e}", "ERROR")
+        return
+
+    def fetch_info(action, id_param, item_id):
+        try:
+            api_url = f"{base}&action={action}&{id_param}={item_id}"
+            response = requests.get(api_url, timeout=5)
+            response.raise_for_status()
+            return _safe_json(response).get('info', {})
+        except Exception as e:
+            PrintLog(f"TMDB enrichment: request failed for {action} {item_id}: {e}", "WARNING")
+            return {}
+
+    def apply_info(item, info):
+        tmdb_id = info.get('tmdb_id') or info.get('tmdb') or ''
+        imdb_id = info.get('imdb_id') or info.get('imdb') or ''
+        rating  = info.get('rating') or info.get('rating_5based') or ''
+        plot    = info.get('plot') or info.get('description') or info.get('overview') or ''
+        if tmdb_id: item['tmdb_id'] = tmdb_id
+        if imdb_id: item['imdb_id'] = imdb_id
+        if plot:    item['plot']    = plot
+        if rating:  item['rating']  = rating
+
+    # ── Movies ───────────────────────────────────────────────────────────────
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    try:
+        with open(movies_cache_path, encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            movies_data = data
+        elif isinstance(data, dict):
+            movies_data = next((v for v in data.values() if isinstance(v, list)), [])
+        else:
+            movies_data = []
+        for movie in movies_data:
+            if isinstance(movie, dict) and not isinstance(movie.get('cast'), list):
+                movie.pop('cast', None)
+
+        def write_movies_cache():
+            tmp = movies_cache_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data if isinstance(data, dict) else movies_data, f)
+            os.replace(tmp, movies_cache_path)
+
+        processed = 0
+        for movie in movies_data:
+            if not isinstance(movie, dict) or movie.get('tmdb_id'):
+                continue
+            stream_id = movie.get('stream_id')
+            if not stream_id:
+                continue
+            info = fetch_info('get_vod_info', 'vod_id', stream_id)
+            apply_info(movie, info)
+            processed += 1
+            sleep(1)
+            if processed % 100 == 0:
+                PrintLog(f"TMDB enrichment: processed {processed} movies", "INFO")
+            if processed % 50 == 0:
+                write_movies_cache()
+        write_movies_cache()
+        PrintLog(f"TMDB enrichment: finished movies ({processed} processed)", "INFO")
+    except Exception as e:
+        PrintLog(f"TMDB enrichment: failed to process movies cache: {e}", "ERROR")
+
+    # ── Series ───────────────────────────────────────────────────────────────
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    try:
+        with open(series_cache_path, encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            series_data = data
+        elif isinstance(data, dict):
+            series_data = next((v for v in data.values() if isinstance(v, list)), [])
+        else:
+            series_data = []
+        for serie in series_data:
+            if isinstance(serie, dict) and not isinstance(serie.get('cast'), list):
+                serie.pop('cast', None)
+
+        def write_series_cache():
+            tmp = series_cache_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data if isinstance(data, dict) else series_data, f)
+            os.replace(tmp, series_cache_path)
+
+        processed = 0
+        for serie in series_data:
+            if not isinstance(serie, dict) or serie.get('tmdb_id'):
+                continue
+            series_id = serie.get('series_id')
+            if not series_id:
+                continue
+            info = fetch_info('get_series_info', 'series_id', series_id)
+            apply_info(serie, info)
+            processed += 1
+            sleep(1)
+            if processed % 100 == 0:
+                PrintLog(f"TMDB enrichment: processed {processed} series", "INFO")
+            if processed % 50 == 0:
+                write_series_cache()
+        write_series_cache()
+        PrintLog(f"TMDB enrichment: finished series ({processed} processed)", "INFO")
+    except Exception as e:
+        PrintLog(f"TMDB enrichment: failed to process series cache: {e}", "ERROR")
+
+    PrintLog("TMDB enrichment: finished", "INFO")
+
+
+@main_bp.route('/run_tmdb_enrich', methods=['POST'])
+def run_tmdb_enrich():
+    Thread(target=enrich_tmdb_background, daemon=True).start()
     return jsonify({'status': 'started'})
 
 
@@ -3382,6 +3527,16 @@ def startup_delayed():
                         ch, cm = 2, 0
                     scheduler.add_job(id='Cast Enrich scheduler', func=enrich_cast_background,
                                       trigger='cron', hour=ch, minute=cm)
+
+                tmdb_enrich_enabled = get_config_variable(CONFIG_PATH, 'tmdb_enrich_enabled') or '0'
+                if tmdb_enrich_enabled == '1':
+                    try:
+                        t = get_config_variable(CONFIG_PATH, 'tmdb_enrich_time') or '02:00'
+                        th, tm = int(t.split(':')[0]), int(t.split(':')[1])
+                    except Exception:
+                        th, tm = 2, 0
+                    scheduler.add_job(id='TMDB Enrich scheduler', func=enrich_tmdb_background,
+                                      trigger='cron', hour=th, minute=tm)
 
                 match_type = get_config_variable(CONFIG_PATH, 'match_type')
                 PrintLog(f"match type is {match_type}", "NOTICE")
