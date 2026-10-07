@@ -1995,14 +1995,14 @@ def search_by_actor(person_id):
         if os.path.exists(movies_cache_path):
             with open(movies_cache_path, encoding='utf-8') as f:
                 movies_data = json.load(f)
-            for m in movies_data:
-                if any(c.get('id') == person_id for c in m.get('cast', [])):
-                    matched_movies.append({
-                        'name': m.get('name', ''),
-                        'stream_id': m.get('stream_id'),
-                        'stream_icon': m.get('stream_icon', ''),
-                        'tmdb_id': m.get('tmdb_id', '')
-                    })
+            if isinstance(movies_data, dict):
+                movies_data = list(movies_data.values())
+            matched_movies = [
+                {'name': m.get('name'), 'stream_id': m.get('stream_id'),
+                 'stream_icon': m.get('stream_icon', ''), 'tmdb_id': m.get('tmdb_id', '')}
+                for m in movies_data
+                if any(c.get('id') == person_id for c in m.get('cast', []))
+            ]
     except Exception as e:
         PrintLog(f"search_by_actor: failed to read movies cache: {e}", "ERROR")
 
@@ -2010,14 +2010,14 @@ def search_by_actor(person_id):
         if os.path.exists(series_cache_path):
             with open(series_cache_path, encoding='utf-8') as f:
                 series_data = json.load(f)
-            for s in series_data:
-                if any(c.get('id') == person_id for c in s.get('cast', [])):
-                    matched_series.append({
-                        'name': s.get('name', ''),
-                        'series_id': s.get('series_id'),
-                        'cover': s.get('cover', ''),
-                        'tmdb_id': s.get('tmdb_id', '')
-                    })
+            if isinstance(series_data, dict):
+                series_data = list(series_data.values())
+            matched_series = [
+                {'name': s.get('name'), 'series_id': s.get('series_id'),
+                 'cover': s.get('cover', ''), 'tmdb_id': s.get('tmdb_id', '')}
+                for s in series_data
+                if any(c.get('id') == person_id for c in s.get('cast', []))
+            ]
     except Exception as e:
         PrintLog(f"search_by_actor: failed to read series cache: {e}", "ERROR")
 
