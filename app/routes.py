@@ -341,7 +341,7 @@ def refresh_jellyfin():
     if jellyfin_url and jellyfin_api_key:
         try:
             requests.post(f"{jellyfin_url}/Library/Refresh",
-                         headers={"X-Emby-Token": jellyfin_api_key})
+                         headers={"Authorization": f'MediaBrowser Token="{jellyfin_api_key}"', "Content-Type": "application/json"})
             PrintLog("Jellyfin library refresh triggered", "INFO")
         except Exception as e:
             PrintLog(f"Error refreshing Jellyfin: {e}", "ERROR")
@@ -2511,7 +2511,7 @@ def jellyfin_library():
         flash("Jellyfin is not configured. Please set the URL and API key in Settings.", "warning")
         return render_template('jellyfin_library.html', items=[], error=True, jellyfin_url='', jellyfin_api_key='')
 
-    headers = {'X-Emby-Token': jellyfin_api_key, 'Content-Type': 'application/json'}
+    headers = {'Authorization': f'MediaBrowser Token="{jellyfin_api_key}"', 'Content-Type': 'application/json'}
     jellyfin_url = jellyfin_url.rstrip('/')
 
     try:
@@ -2662,7 +2662,7 @@ def jellyfin_seasons(item_id):
 
     jellyfin_url = (get_config_variable(CONFIG_PATH, 'jellyfin_url') or '').rstrip('/')
     jellyfin_api_key = get_credential('jellyfin_api_key') or ''
-    headers = {'X-Emby-Token': jellyfin_api_key}
+    headers = {'Authorization': f'MediaBrowser Token="{jellyfin_api_key}"', 'Content-Type': 'application/json'}
 
     try:
         # Fetch seasons
@@ -2722,7 +2722,7 @@ def jellyfin_remove():
 
     jellyfin_url = (get_config_variable(CONFIG_PATH, 'jellyfin_url') or '').rstrip('/')
     jellyfin_api_key = get_credential('jellyfin_api_key') or ''
-    headers = {'X-Emby-Token': jellyfin_api_key}
+    headers = {'Authorization': f'MediaBrowser Token="{jellyfin_api_key}"', 'Content-Type': 'application/json'}
 
     errors = []
 
