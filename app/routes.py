@@ -1994,30 +1994,46 @@ def search_by_actor(person_id):
     try:
         if os.path.exists(movies_cache_path):
             with open(movies_cache_path, encoding='utf-8') as f:
-                movies_data = json.load(f)
-            if isinstance(movies_data, dict):
-                movies_data = list(movies_data.values())
-            matched_movies = [
-                {'name': m.get('name'), 'stream_id': m.get('stream_id'),
-                 'stream_icon': m.get('stream_icon', ''), 'tmdb_id': m.get('tmdb_id', '')}
-                for m in movies_data
-                if any(c.get('id') == person_id for c in m.get('cast', []))
-            ]
+                data = json.load(f)
+            if isinstance(data, list):
+                movies_data = data
+            elif isinstance(data, dict):
+                movies_data = next((v for v in data.values() if isinstance(v, list)), [])
+            else:
+                movies_data = []
+            for item in movies_data:
+                if not isinstance(item, dict):
+                    continue
+                if any(c.get('id') == person_id for c in item.get('cast', [])):
+                    matched_movies.append({
+                        'name': item.get('name'),
+                        'stream_id': item.get('stream_id'),
+                        'stream_icon': item.get('stream_icon', ''),
+                        'tmdb_id': item.get('tmdb_id', '')
+                    })
     except Exception as e:
         PrintLog(f"search_by_actor: failed to read movies cache: {e}", "ERROR")
 
     try:
         if os.path.exists(series_cache_path):
             with open(series_cache_path, encoding='utf-8') as f:
-                series_data = json.load(f)
-            if isinstance(series_data, dict):
-                series_data = list(series_data.values())
-            matched_series = [
-                {'name': s.get('name'), 'series_id': s.get('series_id'),
-                 'cover': s.get('cover', ''), 'tmdb_id': s.get('tmdb_id', '')}
-                for s in series_data
-                if any(c.get('id') == person_id for c in s.get('cast', []))
-            ]
+                data = json.load(f)
+            if isinstance(data, list):
+                series_data = data
+            elif isinstance(data, dict):
+                series_data = next((v for v in data.values() if isinstance(v, list)), [])
+            else:
+                series_data = []
+            for item in series_data:
+                if not isinstance(item, dict):
+                    continue
+                if any(c.get('id') == person_id for c in item.get('cast', [])):
+                    matched_series.append({
+                        'name': item.get('name'),
+                        'series_id': item.get('series_id'),
+                        'cover': item.get('cover', ''),
+                        'tmdb_id': item.get('tmdb_id', '')
+                    })
     except Exception as e:
         PrintLog(f"search_by_actor: failed to read series cache: {e}", "ERROR")
 
@@ -2459,15 +2475,23 @@ def enrich_cast_background():
     movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
     try:
         with open(movies_cache_path, encoding='utf-8') as f:
-            movies_data = json.load(f)
+            data = json.load(f)
+        if isinstance(data, list):
+            movies_data = data
+        elif isinstance(data, dict):
+            movies_data = next((v for v in data.values() if isinstance(v, list)), [])
+        else:
+            movies_data = []
         for movie in movies_data:
+            if not isinstance(movie, dict):
+                continue
             tmdb_id = movie.get('tmdb_id')
-            if tmdb_id and not movie.get('cast'):
+            if tmdb_id and 'cast' not in movie:
                 movie['cast'] = fetch_cast(tmdb_id, 'movie')
                 sleep(0.1)
         tmp = movies_cache_path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(movies_data, f)
+            json.dump(data if isinstance(data, dict) else movies_data, f)
         os.replace(tmp, movies_cache_path)
     except Exception as e:
         PrintLog(f"Cast enrichment: failed to process movies cache: {e}", "ERROR")
@@ -2475,15 +2499,23 @@ def enrich_cast_background():
     series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
     try:
         with open(series_cache_path, encoding='utf-8') as f:
-            series_data = json.load(f)
+            data = json.load(f)
+        if isinstance(data, list):
+            series_data = data
+        elif isinstance(data, dict):
+            series_data = next((v for v in data.values() if isinstance(v, list)), [])
+        else:
+            series_data = []
         for serie in series_data:
+            if not isinstance(serie, dict):
+                continue
             tmdb_id = serie.get('tmdb_id')
-            if tmdb_id and not serie.get('cast'):
+            if tmdb_id and 'cast' not in serie:
                 serie['cast'] = fetch_cast(tmdb_id, 'tv')
                 sleep(0.1)
         tmp = series_cache_path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(series_data, f)
+            json.dump(data if isinstance(data, dict) else series_data, f)
         os.replace(tmp, series_cache_path)
     except Exception as e:
         PrintLog(f"Cast enrichment: failed to process series cache: {e}", "ERROR")
