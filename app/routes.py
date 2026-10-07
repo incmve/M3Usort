@@ -227,6 +227,7 @@ def save_vod_cache():
         resp.raise_for_status()
         movies_data = _safe_json(resp)
         _require_list_of_dicts(movies_data, 'get_vod_streams')
+        
         for movie in movies_data:
             if not movie.get('category_name'):
                 movie['category_name'] = movie_cats.get(str(movie.get('category_id', '')), '')
@@ -295,6 +296,9 @@ def save_vod_cache():
                 # Preserve fixed TMDB cover
                 if prev.get('cover', '').startswith('https://image.tmdb'):
                     serie['cover'] = prev['cover']
+            # Normalise 'added' — provider uses last_modified for series
+            if not serie.get('added'):
+                serie['added'] = serie.get('last_modified', 0)
         tmp = series_cache_path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(series_data, f)
