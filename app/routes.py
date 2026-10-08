@@ -2561,8 +2561,12 @@ def run_cast_enrich():
     return jsonify({'status': 'started'})
 
 
+_tmdb_enrich_status = {'running': False, 'phase': '', 'processed': 0, 'total': 0}
+
 def enrich_tmdb_background():
     """Scheduled job: fetch tmdb_id/imdb_id/plot/rating from the provider for movies/series missing tmdb_id."""
+    global _tmdb_enrich_status
+    _tmdb_enrich_status = {'running': True, 'phase': 'starting', 'processed': 0, 'total': 0}
     PrintLog("TMDB enrichment: starting", "INFO")
 
     try:
@@ -2619,6 +2623,8 @@ def enrich_tmdb_background():
                 json.dump(data if isinstance(data, dict) else movies_data, f)
             os.replace(tmp, movies_cache_path)
 
+        movies_todo = sum(1 for m in movies_data if isinstance(m, dict) and not m.get('tmdb_id') and m.get('stream_id'))
+        _tmdb_enrich_status.update({'phase': 'movies', 'processed': 0, 'total': movies_todo})
         processed = 0
         for movie in movies_data:
             if not isinstance(movie, dict) or movie.get('tmdb_id'):
@@ -2629,6 +2635,7 @@ def enrich_tmdb_background():
             info = fetch_info('get_vod_info', 'vod_id', stream_id)
             apply_info(movie, info)
             processed += 1
+            _tmdb_enrich_status['processed'] = processed
             sleep(1)
             if processed % 100 == 0:
                 PrintLog(f"TMDB enrichment: processed {processed} movies", "INFO")
@@ -2660,6 +2667,8 @@ def enrich_tmdb_background():
                 json.dump(data if isinstance(data, dict) else series_data, f)
             os.replace(tmp, series_cache_path)
 
+        series_todo = sum(1 for s in series_data if isinstance(s, dict) and not s.get('tmdb_id') and s.get('series_id'))
+        _tmdb_enrich_status.update({'phase': 'series', 'processed': 0, 'total': series_todo})
         processed = 0
         for serie in series_data:
             if not isinstance(serie, dict) or serie.get('tmdb_id'):
@@ -2670,6 +2679,7 @@ def enrich_tmdb_background():
             info = fetch_info('get_series_info', 'series_id', series_id)
             apply_info(serie, info)
             processed += 1
+            _tmdb_enrich_status['processed'] = processed
             sleep(1)
             if processed % 100 == 0:
                 PrintLog(f"TMDB enrichment: processed {processed} series", "INFO")
@@ -2681,6 +2691,12 @@ def enrich_tmdb_background():
         PrintLog(f"TMDB enrichment: failed to process series cache: {e}", "ERROR")
 
     PrintLog("TMDB enrichment: finished", "INFO")
+    _tmdb_enrich_status['running'] = False
+
+
+@main_bp.route('/tmdb_enrich_status', methods=['GET'])
+def tmdb_enrich_status():
+    return jsonify(_tmdb_enrich_status)
 
 
 @main_bp.route('/run_tmdb_enrich', methods=['POST'])

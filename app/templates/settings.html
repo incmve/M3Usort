@@ -180,14 +180,44 @@ function runCastEnrich() {
         .then(() => { status.textContent = 'Running in background — check logs for progress.'; })
         .catch(() => { status.textContent = 'Failed to start.'; btn.disabled = false; });
 }
+let _tmdbPollInterval = null;
+function pollTmdbStatus(btn) {
+    fetch('/tmdb_enrich_status')
+        .then(r => r.json())
+        .then(d => {
+            const status = document.getElementById('tmdb-enrich-status');
+            if (d.running) {
+                const phase = d.phase === 'movies' ? 'Movies' : d.phase === 'series' ? 'Series' : d.phase;
+                const pct = d.total > 0 ? ` (${Math.round(d.processed/d.total*100)}%)` : '';
+                status.textContent = `${phase}: ${d.processed}/${d.total}${pct}`;
+            } else {
+                clearInterval(_tmdbPollInterval);
+                _tmdbPollInterval = null;
+                const status = document.getElementById('tmdb-enrich-status');
+                if (d.phase) {
+                    status.textContent = 'Done.';
+                    status.style.color = '#5abf7e';
+                } else {
+                    status.textContent = '';
+                }
+                btn.disabled = false;
+            }
+        })
+        .catch(() => {});
+}
 function runTmdbEnrich() {
     const btn = event.target;
     const status = document.getElementById('tmdb-enrich-status');
     btn.disabled = true;
     status.textContent = 'Starting...';
+    status.style.color = '#aaa';
     fetch('/run_tmdb_enrich', { method: 'POST' })
         .then(r => r.json())
-        .then(() => { status.textContent = 'Running in background — check logs for progress.'; })
+        .then(() => {
+            status.textContent = 'Running...';
+            if (_tmdbPollInterval) clearInterval(_tmdbPollInterval);
+            _tmdbPollInterval = setInterval(() => pollTmdbStatus(btn), 3000);
+        })
         .catch(() => { status.textContent = 'Failed to start.'; btn.disabled = false; });
 }
 </script>
