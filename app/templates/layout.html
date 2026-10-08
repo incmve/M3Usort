@@ -107,6 +107,32 @@ function _actorShowGrid() {
     document.getElementById('actor-grid-view').style.display = '';
 }
 
+function _actorConfirmAdd(type, name, id) {
+    // Reuse the global YES/NO modal, same as movies.html / series.html
+    const modal = document.getElementById('myModal');
+    const label = type === 'movie' ? 'Movie' : 'Serie';
+    document.getElementById('modal-text').textContent = `Add ${label} '${name}'?`;
+    document.getElementById('modal-image').innerHTML = '';
+    document.getElementById('modal-links').innerHTML = '';
+    modal.style.display = 'block';
+    const endpoint = type === 'movie' ? '/add_movie_to_server' : '/add_series_to_server';
+    const body = type === 'movie' ? {movieName: name, movieId: id} : {serieName: name, serieId: id};
+    document.getElementById('confirmBtn').onclick = function() {
+        modal.style.display = 'none';
+        fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+            .then(r => r.json())
+            .then(data => {
+                const el = document.getElementById('actor-detail-add-status');
+                if (el) { el.textContent = data.message || 'Added!'; el.style.color = '#5abf7e'; }
+            })
+            .catch(() => {
+                const el = document.getElementById('actor-detail-add-status');
+                if (el) { el.textContent = 'Failed.'; el.style.color = '#c04040'; }
+            });
+    };
+    document.getElementById('cancelBtn').onclick = function() { modal.style.display = 'none'; };
+}
+
 function _actorOpenDetail(id, name, icon, type) {
     const gridView = document.getElementById('actor-grid-view');
     const detailView = document.getElementById('actor-detail-view');
@@ -119,16 +145,18 @@ function _actorOpenDetail(id, name, icon, type) {
     detailInfo.innerHTML = '<span style="color:#555;font-size:12px;">Loading info...</span>';
     const url = type === 'movie' ? `/get_vod_info/${id}` : `/get_series_info/${id}`;
     fetch(url).then(r => r.json()).then(data => {
-        let metaHtml = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px;">';
+        let metaHtml = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px;">';
         if (data.rating) metaHtml += `<span style="color:#c8a030;font-weight:600;">★ ${parseFloat(data.rating).toFixed(1)}</span>`;
+        metaHtml += `<span id="actor-jf-status" style="font-size:12px;color:#888;">⏳ Checking Jellyfin...</span>`;
         metaHtml += '</div>';
-        let btns = '';
-        if (data.tmdb_id) { const t = type==='movie'?'movie':'tv'; btns += `<a href="https://www.themoviedb.org/${t}/${data.tmdb_id}" target="_blank" class="button" style="margin-right:6px;">TMDB</a>`; }
-        if (data.imdb_id) btns += `<a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button" style="margin-right:6px;">IMDB</a>`;
+        let btns = `<button onclick="_actorConfirmAdd('${type}', ${JSON.stringify(name)}, ${JSON.stringify(id)})" class="button button-primary" style="margin-right:6px;">+ Add</button>`;
+        btns += `<span id="actor-detail-add-status" style="font-size:12px;color:#aaa;vertical-align:middle;margin-left:6px;"></span>`;
+        if (data.tmdb_id) { const t = type==='movie'?'movie':'tv'; btns += ` <a href="https://www.themoviedb.org/${t}/${data.tmdb_id}" target="_blank" class="button" style="margin-right:6px;">TMDB</a>`; }
+        if (data.imdb_id) btns += ` <a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button" style="margin-right:6px;">IMDB</a>`;
         let descHtml = '';
         if (data.plot) {
             const short = data.plot.length > 180 ? data.plot.substring(0,180)+'...' : data.plot;
-            descHtml = `<div style="color:#777;line-height:1.5;border-top:1px solid #1e1e1e;padding-top:8px;margin-top:4px;font-size:13px;">${short}</div>`;
+            descHtml = `<div style="color:#777;line-height:1.5;border-top:1px solid #1e1e1e;padding-top:8px;margin-top:8px;font-size:13px;">${short}</div>`;
         }
         let castHtml = '';
         if (data.cast && data.cast.length) {
@@ -137,6 +165,15 @@ function _actorOpenDetail(id, name, icon, type) {
                 '</div>';
         }
         detailInfo.innerHTML = metaHtml + btns + descHtml + castHtml;
+        // Jellyfin check
+        const jfType = type === 'movie' ? 'movie' : 'series';
+        fetch(`/check_jellyfin/${jfType}/${encodeURIComponent(name)}`)
+            .then(r => r.json())
+            .then(d => {
+                const el = document.getElementById('actor-jf-status');
+                if (el) { el.textContent = d.exists ? '✅ In Jellyfin' : '❌ Not in Jellyfin'; el.style.color = d.exists ? '#5abf7e' : '#c04040'; }
+            })
+            .catch(() => { const el = document.getElementById('actor-jf-status'); if (el) el.style.display = 'none'; });
     }).catch(() => { detailInfo.innerHTML = '<span style="color:#888;">Failed to load info.</span>'; });
 }
 
