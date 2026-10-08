@@ -65,8 +65,32 @@
                     Get a free API key at <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:#4aadcf;">themoviedb.org</a>.
                 </div>
                 <div><label>{{ form.tmdb_api_key.label }}</label>{{ form.tmdb_api_key(class_="filter-input", style="width:100%", placeholder="TMDB API key (v3 auth)") }}</div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:20px;">
+                    <div>
+                        <div style="font-weight:600; font-size:13px; color:#ccc; margin-bottom:10px;">ID Enrichment</div>
+                        <div style="display:inline-flex; gap:14px; align-items:flex-end; flex-wrap:wrap;">
+                            <div><label>{{ form.tmdb_enrich_enabled.label }}</label>{{ form.tmdb_enrich_enabled(class_="filter-select", style="width:160px;") }}</div>
+                            <div><label>{{ form.tmdb_enrich_time.label }}</label>{{ form.tmdb_enrich_time(class_="filter-input", style="width:130px; color-scheme:dark;", type="time") }}</div>
+                        </div>
+                        <div style="margin-top:12px;">
+                            <button type="button" class="button button-secondary" onclick="runTmdbEnrich()">Run now</button>
+                            <span id="tmdb-enrich-status" style="margin-left:10px; font-size:0.85em; color:#aaa;"></span>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-weight:600; font-size:13px; color:#ccc; margin-bottom:10px;">Cast Enrichment</div>
+                        <div style="display:inline-flex; gap:14px; align-items:flex-end; flex-wrap:wrap;">
+                            <div><label>{{ form.cast_enrich_enabled.label }}</label>{{ form.cast_enrich_enabled(class_="filter-select", style="width:160px;") }}</div>
+                            <div><label>{{ form.cast_enrich_time.label }}</label>{{ form.cast_enrich_time(class_="filter-input", style="width:130px; color-scheme:dark;", type="time") }}</div>
+                        </div>
+                        <div style="margin-top:12px;">
+                            <button type="button" class="button button-secondary" onclick="runCastEnrich()">Run now</button>
+                            <span id="cast-enrich-status" style="margin-left:10px; font-size:0.85em; color:#aaa;"></span>
+                        </div>
+                    </div>
+                </div>
             </div>
-            </div>
+        </div>
 
         <div class="settings-section">
             <div class="settings-section-title">SMB Backup</div>
@@ -87,33 +111,6 @@
             </div>
         </div>
 
-        <div class="settings-section">
-            <div class="settings-section-title">TMDB Cast Enrichment</div>
-            <div class="settings-section-body">
-                <div style="display:inline-flex; gap:14px; align-items:flex-end; flex-wrap:wrap;">
-                    <div><label>{{ form.cast_enrich_enabled.label }}</label>{{ form.cast_enrich_enabled(class_="filter-select", style="width:160px;") }}</div>
-                    <div><label>{{ form.cast_enrich_time.label }}</label>{{ form.cast_enrich_time(class_="filter-input", style="width:130px; color-scheme:dark;", type="time") }}</div>
-                </div>
-                <div style="margin-top:12px;">
-                    <button type="button" class="button button-secondary" onclick="runCastEnrich()">Run now</button>
-                    <span id="cast-enrich-status" style="margin-left:10px; font-size:0.85em; color:#aaa;"></span>
-                </div>
-            </div>
-        </div>
-
-        <div class="settings-section">
-            <div class="settings-section-title">TMDB ID Enrichment</div>
-            <div class="settings-section-body">
-                <div style="display:inline-flex; gap:14px; align-items:flex-end; flex-wrap:wrap;">
-                    <div><label>{{ form.tmdb_enrich_enabled.label }}</label>{{ form.tmdb_enrich_enabled(class_="filter-select", style="width:160px;") }}</div>
-                    <div><label>{{ form.tmdb_enrich_time.label }}</label>{{ form.tmdb_enrich_time(class_="filter-input", style="width:130px; color-scheme:dark;", type="time") }}</div>
-                </div>
-                <div style="margin-top:12px;">
-                    <button type="button" class="button button-secondary" onclick="runTmdbEnrich()">Run now</button>
-                    <span id="tmdb-enrich-status" style="margin-left:10px; font-size:0.85em; color:#aaa;"></span>
-                </div>
-            </div>
-        </div>
         </div>
         <button type="submit" name="submit" class="button button-primary">Save Settings</button>
     </form>
