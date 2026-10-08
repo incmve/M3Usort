@@ -239,13 +239,13 @@ def save_vod_cache():
             try:
                 with open(movies_cache_path, encoding='utf-8') as f:
                     existing = json.load(f)
-                existing_info = {m['stream_id']: m for m in existing if m.get('tmdb_id') or m.get('plot')}
+                existing_info = {m['stream_id']: m for m in existing if m.get('tmdb_id') or m.get('plot') or m.get('cast')}
             except Exception:
                 pass
         for movie in movies_data:
             prev = existing_info.get(movie.get('stream_id'))
             if prev:
-                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
+                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating', 'cast'):
                     if prev.get(field):
                         movie[field] = prev[field]
         for m in movies_data:
@@ -287,13 +287,13 @@ def save_vod_cache():
             try:
                 with open(series_cache_path, encoding='utf-8') as f:
                     existing = json.load(f)
-                existing_info = {s['series_id']: s for s in existing if s.get('tmdb_id') or s.get('plot') or s.get('cover','').startswith('https://image.tmdb')}
+                existing_info = {s['series_id']: s for s in existing if s.get('tmdb_id') or s.get('plot') or s.get('cast') or s.get('cover','').startswith('https://image.tmdb')}
             except Exception:
                 pass
         for serie in series_data:
             prev = existing_info.get(serie.get('series_id'))
             if prev:
-                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
+                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating', 'cast'):
                     if prev.get(field):
                         serie[field] = prev[field]
                 # Preserve fixed TMDB cover
