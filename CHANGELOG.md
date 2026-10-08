@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.5
+- TMDB ID enrichment: bulk-fetch TMDB IDs for all movies and series via the Xtream Codes player API (`get_vod_info` / `get_series_info`); run manually from Settings or on a schedule
+- TMDB Cast enrichment: fetch top-5 billed cast members for all items that have a TMDB ID; run manually or on a schedule
+- Actor search: clicking an actor name in a movie or series modal opens a panel showing all movies and series in your library that actor appears in
+- Cast displayed in the "New this week" modal alongside the movie/series info
+- Live status indicator next to the TMDB ID Enrichment "Run now" button: shows phase (Movies/Series), items processed, total, and percentage in real time; turns green on completion
+- Search by actor name: the search box on the Movies and Series pages now matches actor names in addition to titles
+
 ## 2.0.4
 - Fix .dockerignore excluding CHANGELOG.md (*.md rule): add !CHANGELOG.md exception so the file is baked into the image and the changelog page shows current content
 - Fix corrupt cache crash: wrap json.load() in home and update_home_data with try/except so a corrupt cache file returns 0 counts instead of a 500 error; use atomic writes (os.replace) for all four cache write sites to prevent partial files on interrupted writes

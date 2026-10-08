@@ -76,6 +76,9 @@ Here you can change all the settings:
 - Movies Directory: Where to put the files for movies.
 - Overwrite Existing Movies: If set to Yes, it will recreate the movie file every time the interval runs.
 - Enable Jellyfin library refresh on VOD or TvShow fetch.
+- TMDB API Key: Required for cast enrichment. Get one free at themoviedb.org.
+- TMDB Cast Enrichment: Fetch the top-5 billed cast for every movie and series that has a TMDB ID. Can be run manually or on a daily schedule.
+- TMDB ID Enrichment: Bulk-fetch TMDB IDs for all movies and series in your library via the Xtream Codes player API. Can be run manually or on a daily schedule. A live counter shows progress while running.
 - Enable SMB Backup: If set to Yes, the SMB backup options become active.
 - SMB Host: IP address or hostname of the machine hosting the share.
 - SMB Share: The share name (e.g. `backups`).
@@ -119,10 +122,10 @@ After sorting channels and groups when you do not want to wait for the scheduled
 List all movies an shows that are new today - 6 days so you get a week overview.
 
 ### VOD -> Movies
-Select the movies you want to 'download'. Note: this will NOT download the movie; it will only create a .strm file that has a link to the movie on the server of your IPTV provider. You still need an active subscription to watch this movie. The .strm file can be used for projects like Jellyfin.
+Select the movies you want to 'download'. Note: this will NOT download the movie; it will only create a .strm file that has a link to the movie on the server of your IPTV provider. You still need an active subscription to watch this movie. The .strm file can be used for projects like Jellyfin. Opening a movie shows its rating, plot, TMDB/IMDB links, and cast. Searching by actor name is supported.
 
 ### VOD -> Series
-Select the series you want to 'download'. Note: this will NOT download the series; it will only create a .strm file for each episode that has a link to the episode on the server of your IPTV provider. You still need an active subscription to watch this series. The .strm file can be used for projects like Jellyfin.
+Select the series you want to 'download'. Note: this will NOT download the series; it will only create a .strm file for each episode that has a link to the episode on the server of your IPTV provider. You still need an active subscription to watch this series. The .strm file can be used for projects like Jellyfin. Opening a series shows its rating, plot, TMDB/IMDB links, and cast. Searching by actor name is supported.
 
 ### VOD -> Start Download
 With this option, you can start the VOD download process immediately instead of waiting for the next scheduled runtime. A 300-second cooldown is shown after triggering to prevent double-runs.
