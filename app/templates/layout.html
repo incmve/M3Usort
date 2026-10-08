@@ -138,7 +138,7 @@ function _actorOpenDetail(id, name, icon, type) {
         if (data.rating) metaHtml += `<span style="color:#c8a030;font-weight:600;">★ ${parseFloat(data.rating).toFixed(1)}</span>`;
         metaHtml += `<span id="actor-jf-status" style="font-size:12px;color:#888;">⏳ Checking Jellyfin...</span>`;
         metaHtml += '</div>';
-        let btns = `<button onclick="_actorDoAdd('${type}', ${JSON.stringify(name)}, ${JSON.stringify(id)})" class="button button-primary" style="margin-right:6px;">+ Add</button>`;
+        let btns = `<button id="actor-add-btn" class="button button-primary" style="margin-right:6px;">+ Add</button>`;
         btns += `<span id="actor-detail-add-status" style="font-size:12px;color:#aaa;vertical-align:middle;margin-left:6px;"></span>`;
         if (data.tmdb_id) { const t = type==='movie'?'movie':'tv'; btns += ` <a href="https://www.themoviedb.org/${t}/${data.tmdb_id}" target="_blank" class="button" style="margin-right:6px;">TMDB</a>`; }
         if (data.imdb_id) btns += ` <a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button" style="margin-right:6px;">IMDB</a>`;
@@ -154,6 +154,8 @@ function _actorOpenDetail(id, name, icon, type) {
                 '</div>';
         }
         detailInfo.innerHTML = metaHtml + btns + descHtml + castHtml;
+        // Wire Add button after DOM is set — avoids quote-escaping issues with inline onclick
+        document.getElementById('actor-add-btn').addEventListener('click', function() { _actorDoAdd(type, name, id); });
         // Jellyfin check
         const jfType = type === 'movie' ? 'movie' : 'series';
         fetch(`/check_jellyfin/${jfType}/${encodeURIComponent(name)}`)
