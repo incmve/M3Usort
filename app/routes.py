@@ -1346,7 +1346,7 @@ def series():
         try:
             with open(series_cache_path, 'r', encoding='utf-8') as f:
                 series_data = json.load(f)
-            series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', ''), 'category': s.get('category_name', ''), 'tmdb_id': s.get('tmdb_id') or s.get('tmdb') or '', 'imdb_id': s.get('imdb_id') or s.get('imdb') or '', 'plot': s.get('plot') or s.get('description') or s.get('overview') or '', 'rating': s.get('rating') or s.get('rating_5based') or ''} for s in series_data]
+            series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', ''), 'category': s.get('category_name', ''), 'tmdb_id': s.get('tmdb_id') or s.get('tmdb') or '', 'imdb_id': s.get('imdb_id') or s.get('imdb') or '', 'plot': s.get('plot') or s.get('description') or s.get('overview') or '', 'rating': s.get('rating') or s.get('rating_5based') or '', 'cast': s.get('cast') or []} for s in series_data]
             categories = sorted(set(s['category'] for s in series if s['category']))
         except Exception as e:
             PrintLog(f"Error reading series cache: {e}", "ERROR")
@@ -1370,7 +1370,7 @@ def movies():
         try:
             with open(movies_cache_path, 'r', encoding='utf-8') as f:
                 movies_data = json.load(f)
-            movies = [{'name': m['name'], 'stream_id': m['stream_id'], 'stream_icon': m.get('stream_icon', ''), 'category': m.get('category_name', ''), 'tmdb_id': m.get('tmdb_id') or m.get('tmdb') or '', 'imdb_id': m.get('imdb_id') or m.get('imdb') or '', 'plot': m.get('plot') or m.get('description') or m.get('overview') or '', 'rating': m.get('rating') or m.get('rating_5based') or ''} for m in movies_data]
+            movies = [{'name': m['name'], 'stream_id': m['stream_id'], 'stream_icon': m.get('stream_icon', ''), 'category': m.get('category_name', ''), 'tmdb_id': m.get('tmdb_id') or m.get('tmdb') or '', 'imdb_id': m.get('imdb_id') or m.get('imdb') or '', 'plot': m.get('plot') or m.get('description') or m.get('overview') or '', 'rating': m.get('rating') or m.get('rating_5based') or '', 'cast': m.get('cast') or []} for m in movies_data]
             categories = sorted(set(m['category'] for m in movies if m['category']))
         except Exception as e:
             PrintLog(f"Error reading movies cache: {e}", "ERROR")
