@@ -108,17 +108,19 @@ function _actorShowGrid() {
 }
 
 function _actorConfirmAdd(type, name, id) {
-    // Reuse the global YES/NO modal, same as movies.html / series.html
+    // Reuse the global YES/NO modal — but raise its z-index above actorModal (1000)
     const modal = document.getElementById('myModal');
     const label = type === 'movie' ? 'Movie' : 'Serie';
     document.getElementById('modal-text').textContent = `Add ${label} '${name}'?`;
     document.getElementById('modal-image').innerHTML = '';
     document.getElementById('modal-links').innerHTML = '';
+    modal.style.zIndex = '1100';
     modal.style.display = 'block';
     const endpoint = type === 'movie' ? '/add_movie_to_server' : '/add_series_to_server';
     const body = type === 'movie' ? {movieName: name, movieId: id} : {serieName: name, serieId: id};
+    const closeConfirm = () => { modal.style.display = 'none'; modal.style.zIndex = ''; };
     document.getElementById('confirmBtn').onclick = function() {
-        modal.style.display = 'none';
+        closeConfirm();
         fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
             .then(r => r.json())
             .then(data => {
@@ -130,7 +132,7 @@ function _actorConfirmAdd(type, name, id) {
                 if (el) { el.textContent = 'Failed.'; el.style.color = '#c04040'; }
             });
     };
-    document.getElementById('cancelBtn').onclick = function() { modal.style.display = 'none'; };
+    document.getElementById('cancelBtn').onclick = closeConfirm;
 }
 
 function _actorOpenDetail(id, name, icon, type) {
