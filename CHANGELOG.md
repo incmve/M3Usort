@@ -7,6 +7,7 @@
 - Cast displayed in the "New this week" modal alongside the movie/series info
 - Live status indicator next to the TMDB ID Enrichment "Run now" button: shows phase (Movies/Series), items processed, total, and percentage in real time; turns green on completion
 - Search by actor name: the search box on the Movies and Series pages now matches actor names in addition to titles
+- Actor detail view: clicking a movie or series poster in the actor results panel opens an inline detail view with rating, Jellyfin status, plot, cast, and an Add button — no longer opens TMDB externally
 
 ## 2.0.4
 - Fix .dockerignore excluding CHANGELOG.md (*.md rule): add !CHANGELOG.md exception so the file is baked into the image and the changelog page shows current content
