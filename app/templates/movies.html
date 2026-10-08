@@ -108,7 +108,8 @@ function filterMovies() {
     const cat = document.getElementById('category-filter').value;
     filteredMovies = ALL_MOVIES.filter(m => {
         const name = (m.name||'').toLowerCase();
-        const matchName = words.length === 0 || words.every(w => name.includes(w));
+        const castNames = (m.cast||[]).map(c=>(c.name||'').toLowerCase()).join(' ');
+        const matchName = words.length === 0 || words.every(w => name.includes(w) || castNames.includes(w));
         const matchCat = !cat || (m.category||'') === cat;
         return matchName && matchCat;
     });

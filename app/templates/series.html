@@ -98,7 +98,8 @@ function filterSeries() {
     const cat = document.getElementById('category-filter').value;
     filteredSeries = ALL_SERIES.filter(m => {
         const name = (m.name||'').toLowerCase();
-        const matchName = words.length === 0 || words.every(w => name.includes(w));
+        const castNames = (m.cast||[]).map(c=>(c.name||'').toLowerCase()).join(' ');
+        const matchName = words.length === 0 || words.every(w => name.includes(w) || castNames.includes(w));
         return matchName && (!cat || (m.category||'')===cat);
     });
     document.getElementById('count-bar').textContent = `${filteredSeries.length} series`;
