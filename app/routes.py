@@ -251,6 +251,7 @@ def save_vod_cache():
         for m in movies_data:
             if not isinstance(m.get('cast'), list):
                 m.pop('cast', None)
+        os.makedirs(os.path.dirname(movies_cache_path), exist_ok=True)
         tmp = movies_cache_path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(movies_data, f)
@@ -3520,25 +3521,27 @@ def startup_delayed():
                     update_groups_cache()
 
                 debug = get_config_variable(CONFIG_PATH, 'debug')
-                if debug == "yes":
-                    scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', minutes=max_age_before_download)
-                else:
-                    scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=max_age_before_download)
+                if not scheduler.get_job('M3U Download scheduler'):
+                    if debug == "yes":
+                        scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', minutes=max_age_before_download)
+                    else:
+                        scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=max_age_before_download)
 
                 m3u_url = get_credential('url')
                 enable_scheduler = get_config_variable(CONFIG_PATH, 'enable_scheduler')
 
-                if enable_scheduler == "1":
+                if enable_scheduler == "1" and not scheduler.get_job('VOD scheduler'):
                     scan_interval = int(get_config_variable(CONFIG_PATH, 'scan_interval'))
                     debug = get_config_variable(CONFIG_PATH, 'debug')
                     if debug == "yes":
                         scheduler.add_job(id='VOD scheduler', func=scheduled_vod_download, trigger='interval', minutes=scan_interval)
                     else:
                         scheduler.add_job(id='VOD scheduler', func=scheduled_vod_download, trigger='interval', hours=scan_interval)
-                scheduler.add_job(id='System tasks scheduler', func=scheduled_system_tasks, trigger='interval', hours=1)
+                if not scheduler.get_job('System tasks scheduler'):
+                    scheduler.add_job(id='System tasks scheduler', func=scheduled_system_tasks, trigger='interval', hours=1)
 
                 cast_enrich_enabled = get_config_variable(CONFIG_PATH, 'cast_enrich_enabled') or '0'
-                if cast_enrich_enabled == '1':
+                if cast_enrich_enabled == '1' and not scheduler.get_job('Cast Enrich scheduler'):
                     try:
                         t = get_config_variable(CONFIG_PATH, 'cast_enrich_time') or '02:00'
                         ch, cm = int(t.split(':')[0]), int(t.split(':')[1])
@@ -3548,7 +3551,7 @@ def startup_delayed():
                                       trigger='cron', hour=ch, minute=cm)
 
                 tmdb_enrich_enabled = get_config_variable(CONFIG_PATH, 'tmdb_enrich_enabled') or '0'
-                if tmdb_enrich_enabled == '1':
+                if tmdb_enrich_enabled == '1' and not scheduler.get_job('TMDB Enrich scheduler'):
                     try:
                         t = get_config_variable(CONFIG_PATH, 'tmdb_enrich_time') or '02:00'
                         th, tm = int(t.split(':')[0]), int(t.split(':')[1])
