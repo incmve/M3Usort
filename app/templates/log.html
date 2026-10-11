@@ -16,7 +16,7 @@
             <button type="submit" class="button" style="padding:4px 12px;">Search</button>
             {% if search_query %}<a href="?types={{ active_types }}&date={{ date_str }}" class="topbar-btn">Clear</a>{% endif %}
         </form>
-        <select class="filter-input" style="padding:4px 8px; cursor:pointer;" onchange="changeDate(this.value)">
+        <select class="filter-input" style="padding:4px 8px; cursor:pointer; width:auto;" onchange="changeDate(this.value)">
             <option value="today" {% if date_str == 'today' %}selected{% endif %}>Today</option>
             {% for d in available_dates %}
             <option value="{{ d }}" {% if date_str == d %}selected{% endif %}>{{ d }}</option>
