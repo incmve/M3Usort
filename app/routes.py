@@ -3410,6 +3410,16 @@ def changelog():
     return render_template('changelog.html', content=content)
 
 
+@main_bp.route('/log/download')
+@admin_required
+def log_download():
+    from flask import send_file
+    log_file = os.path.join(BASE_DIR, 'logs', 'M3Usort.log')
+    if not os.path.exists(log_file):
+        return "Log file not found", 404
+    return send_file(log_file, as_attachment=True, download_name='M3Usort.log', mimetype='text/plain')
+
+
 @main_bp.route('/log')
 def log():
     hide_webserver_logs = get_config_variable(CONFIG_PATH, 'hide_webserver_logs')

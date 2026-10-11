@@ -6,6 +6,7 @@
         {% if current_page > 1 %}<a href="?page={{ current_page - 1 }}&q={{ search_query }}&types={{ active_types }}" class="topbar-btn">← Prev</a>{% endif %}
         <span class="topbar-pill">Page {{ current_page }} / {{ total_pages }}</span>
         {% if current_page < total_pages %}<a href="?page={{ current_page + 1 }}&q={{ search_query }}&types={{ active_types }}" class="topbar-btn">Next →</a>{% endif %}
+        <a href="/log/download" class="topbar-btn" title="Download full log">↓ Download</a>
     </div>
 </div>
 <div class="page-content">
