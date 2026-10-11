@@ -3,19 +3,25 @@
 <div class="topbar">
     <span class="topbar-title">Log</span>
     <div class="topbar-right">
-        {% if current_page > 1 %}<a href="?page={{ current_page - 1 }}&q={{ search_query }}&types={{ active_types }}" class="topbar-btn">← Prev</a>{% endif %}
+        {% if current_page > 1 %}<a href="?page={{ current_page - 1 }}&q={{ search_query }}&types={{ active_types }}&date={{ date_str }}" class="topbar-btn">← Prev</a>{% endif %}
         <span class="topbar-pill">Page {{ current_page }} / {{ total_pages }}</span>
-        {% if current_page < total_pages %}<a href="?page={{ current_page + 1 }}&q={{ search_query }}&types={{ active_types }}" class="topbar-btn">Next →</a>{% endif %}
-        <a href="/log/download" class="topbar-btn" title="Download full log">↓ Download</a>
+        {% if current_page < total_pages %}<a href="?page={{ current_page + 1 }}&q={{ search_query }}&types={{ active_types }}&date={{ date_str }}" class="topbar-btn">Next →</a>{% endif %}
+        <a href="/log/download?date={{ date_str }}" class="topbar-btn" title="Download this day's log">↓ Download</a>
     </div>
 </div>
 <div class="page-content">
     <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap;">
-        <form method="get" style="display:flex; gap:6px; align-items:center;" onsubmit="injectTypes(this)">
-            <input type="text" class="filter-input" name="q" value="{{ search_query }}" placeholder="Search all logs..." style="width:260px;">
+        <form method="get" style="display:flex; gap:6px; align-items:center;" onsubmit="injectExtras(this)">
+            <input type="text" class="filter-input" name="q" value="{{ search_query }}" placeholder="Search logs..." style="width:220px;">
             <button type="submit" class="button" style="padding:4px 12px;">Search</button>
-            {% if search_query %}<a href="?types={{ active_types }}" class="topbar-btn">Clear</a>{% endif %}
+            {% if search_query %}<a href="?types={{ active_types }}&date={{ date_str }}" class="topbar-btn">Clear</a>{% endif %}
         </form>
+        <select class="filter-input" style="padding:4px 8px; cursor:pointer;" onchange="changeDate(this.value)">
+            <option value="today" {% if date_str == 'today' %}selected{% endif %}>Today</option>
+            {% for d in available_dates %}
+            <option value="{{ d }}" {% if date_str == d %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+        </select>
         <label class="log-filter-label"><input type="checkbox" id="cb-info" {% if 'info' in active_types %}checked{% endif %} onchange="applyFilters()"> <span style="color:#d0d3d8;">Info</span></label>
         <label class="log-filter-label"><input type="checkbox" id="cb-warning" {% if 'warning' in active_types %}checked{% endif %} onchange="applyFilters()"> <span style="color:#b8902a;">Warning</span></label>
         <label class="log-filter-label"><input type="checkbox" id="cb-notice" {% if 'notice' in active_types %}checked{% endif %} onchange="applyFilters()"> <span style="color:#3a8a5a;">Notice</span></label>
@@ -27,10 +33,13 @@
             <span class="log-metadata">{{ metadata }}</span> <span class="log-message">{{ message|safe }}</span>
         </div>
         {% endfor %}
+        {% if not log_entries %}
+        <div style="color:#888; padding:20px 0;">No log entries for this day.</div>
+        {% endif %}
     </div>
     <div style="display:flex; justify-content:space-between; margin-top:16px;">
-        {% if current_page > 1 %}<a href="?page={{ current_page - 1 }}&q={{ search_query }}&types={{ active_types }}" class="button">← Previous</a>{% else %}<span></span>{% endif %}
-        {% if current_page < total_pages %}<a href="?page={{ current_page + 1 }}&q={{ search_query }}&types={{ active_types }}" class="button">Next →</a>{% endif %}
+        {% if current_page > 1 %}<a href="?page={{ current_page - 1 }}&q={{ search_query }}&types={{ active_types }}&date={{ date_str }}" class="button">← Previous</a>{% else %}<span></span>{% endif %}
+        {% if current_page < total_pages %}<a href="?page={{ current_page + 1 }}&q={{ search_query }}&types={{ active_types }}&date={{ date_str }}" class="button">Next →</a>{% endif %}
     </div>
 </div>
 <script>
@@ -48,12 +57,23 @@ function applyFilters() {
     params.delete('page');
     window.location.href = '?' + params.toString();
 }
-function injectTypes(form) {
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'types';
-    input.value = getTypes().join(',');
-    form.appendChild(input);
+function injectExtras(form) {
+    const types = document.createElement('input');
+    types.type = 'hidden';
+    types.name = 'types';
+    types.value = getTypes().join(',');
+    form.appendChild(types);
+    const date = document.createElement('input');
+    date.type = 'hidden';
+    date.name = 'date';
+    date.value = '{{ date_str }}';
+    form.appendChild(date);
+}
+function changeDate(val) {
+    const params = new URLSearchParams(window.location.search);
+    params.set('date', val);
+    params.delete('page');
+    window.location.href = '?' + params.toString();
 }
 </script>
 {% endblock %}

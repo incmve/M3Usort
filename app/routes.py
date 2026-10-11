@@ -3289,11 +3289,40 @@ def ansi_to_html_converter(text):
     text = ansi_escape.sub('', text)
     return text
 
-def get_log_lines(hide_webserver_logs, search=''):
-    log_file = f'{BASE_DIR}/logs/M3Usort.log'
+def get_available_log_dates():
+    """Return sorted list of available log date strings (YYYY-MM-DD), newest first.
+    Today is represented as 'today'."""
+    import re
+    log_dir = os.path.join(BASE_DIR, 'logs')
+    dates = []
+    pattern = re.compile(r'^M3Usort\.log\.(\d{4}-\d{2}-\d{2})$')
+    try:
+        for name in os.listdir(log_dir):
+            m = pattern.match(name)
+            if m:
+                dates.append(m.group(1))
+    except Exception:
+        pass
+    dates.sort(reverse=True)
+    return dates
+
+
+def get_log_file_for_date(date_str):
+    """Return the log file path for a given date string (YYYY-MM-DD) or 'today'."""
+    log_dir = os.path.join(BASE_DIR, 'logs')
+    if not date_str or date_str == 'today':
+        return os.path.join(log_dir, 'M3Usort.log')
+    return os.path.join(log_dir, f'M3Usort.log.{date_str}')
+
+
+def get_log_lines(hide_webserver_logs, search='', date_str='today'):
+    log_file = get_log_file_for_date(date_str)
     all_lines = []
 
-    with open(log_file, 'r') as file:
+    if not os.path.exists(log_file):
+        return []
+
+    with open(log_file, 'r', encoding='utf-8', errors='replace') as file:
         for line in file:
             if hide_webserver_logs == "1" and ('GET /' in line or 'POST /' in line):
                 continue
@@ -3414,10 +3443,15 @@ def changelog():
 @admin_required
 def log_download():
     from flask import send_file
-    log_file = os.path.join(BASE_DIR, 'logs', 'M3Usort.log')
+    date_str = request.args.get('date', 'today')
+    log_file = get_log_file_for_date(date_str)
     if not os.path.exists(log_file):
         return "Log file not found", 404
-    return send_file(log_file, as_attachment=True, download_name='M3Usort.log', mimetype='text/plain')
+    if date_str and date_str != 'today':
+        download_name = f'M3Usort.log.{date_str}'
+    else:
+        download_name = 'M3Usort.log'
+    return send_file(log_file, as_attachment=True, download_name=download_name, mimetype='text/plain')
 
 
 @main_bp.route('/log')
@@ -3427,9 +3461,11 @@ def log():
     search = request.args.get('q', '').strip()
     active_types_str = request.args.get('types', 'info,warning,notice,error')
     active_types = set(active_types_str.split(','))
+    date_str = request.args.get('date', 'today')
     lines_per_page = 75
 
-    all_lines = get_log_lines(hide_webserver_logs, search)
+    available_dates = get_available_log_dates()
+    all_lines = get_log_lines(hide_webserver_logs, search, date_str)
 
     classified = []
     for line in all_lines:
@@ -3473,7 +3509,8 @@ def log():
 
     return render_template('log.html', log_entries=log_entries, current_page=page,
                            total_pages=total_pages, search_query=search,
-                           active_types=active_types_str)
+                           active_types=active_types_str, date_str=date_str,
+                           available_dates=available_dates)
 
 def is_cache_valid():
     if not GROUPS_CACHE['last_updated']:
