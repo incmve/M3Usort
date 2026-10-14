@@ -274,4 +274,9 @@
 
   .jf-table thead th:nth-child(3),
   .jf-table tbody td:nth-child(3) { display: none; }
+
+  .ntw-split { grid-template-columns: 1fr; }
+
+  .modal-body { flex-direction: column; }
+  #modal-image { width: 100%; }
 }
