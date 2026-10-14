@@ -1806,10 +1806,27 @@ def _tmdb_cast(tmdb_id, media_type, api_key):
         pass
     return []
 
+def _tmdb_poster(tmdb_id, media_type, api_key):
+    """Fetch poster_path for a known tmdb_id via TMDB details API."""
+    if not api_key or not tmdb_id:
+        return None
+    try:
+        r = requests.get(
+            f'https://api.themoviedb.org/3/{media_type}/{tmdb_id}',
+            params={'api_key': api_key},
+            timeout=5
+        )
+        if r.status_code == 200:
+            poster = _safe_json(r).get('poster_path')
+            return f'https://image.tmdb.org/t/p/w500{poster}' if poster else None
+    except Exception:
+        pass
+    return None
+
 @main_bp.route('/get_vod_info/<int:stream_id>')
 def get_vod_info(stream_id):
     # Check movies cache first
-    tmdb_id = imdb_id = rating = plot = name = ''
+    tmdb_id = imdb_id = rating = plot = name = poster_url = ''
     cast = []
     try:
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
@@ -1818,15 +1835,16 @@ def get_vod_info(stream_id):
                 movies_data = json.load(f)
             movie = next((m for m in movies_data if m.get('stream_id') == stream_id), None)
             if movie:
-                name = movie.get('name', '')
-                tmdb_id = movie.get('tmdb_id') or ''
-                imdb_id = movie.get('imdb_id') or ''
-                rating  = movie.get('rating') or ''
-                plot    = movie.get('plot') or ''
-                cast    = movie.get('cast') or []
+                name       = movie.get('name', '')
+                tmdb_id    = movie.get('tmdb_id') or ''
+                imdb_id    = movie.get('imdb_id') or ''
+                rating     = movie.get('rating') or ''
+                plot       = movie.get('plot') or ''
+                cast       = movie.get('cast') or []
+                poster_url = movie.get('poster_url') or ''
                 if tmdb_id:
+                    tmdb_api_key = get_credential('tmdb_api_key') or ''
                     if not cast:
-                        tmdb_api_key = get_credential('tmdb_api_key') or ''
                         cast = _tmdb_cast(tmdb_id, 'movie', tmdb_api_key)
                         if cast:
                             try:
@@ -1840,7 +1858,21 @@ def get_vod_info(stream_id):
                                 os.replace(tmp, movies_cache_path)
                             except Exception:
                                 pass
-                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast})
+                    if not poster_url:
+                        poster_url = _tmdb_poster(tmdb_id, 'movie', tmdb_api_key) or ''
+                        if poster_url:
+                            try:
+                                for m in movies_data:
+                                    if m.get('stream_id') == stream_id:
+                                        m['poster_url'] = poster_url
+                                        break
+                                tmp = movies_cache_path + '.tmp'
+                                with open(tmp, 'w', encoding='utf-8') as f:
+                                    json.dump(movies_data, f)
+                                os.replace(tmp, movies_cache_path)
+                            except Exception:
+                                pass
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
     except Exception:
         pass
 
@@ -1866,27 +1898,32 @@ def get_vod_info(stream_id):
     # If still no tmdb_id, try TMDB search by name
     if not tmdb_id and name:
         tmdb_api_key = get_credential('tmdb_api_key') or ''
-        tmdb_id, _ = _tmdb_lookup(name, 'movie', tmdb_api_key)
-        tmdb_id = tmdb_id or ''
+        tmdb_id, poster_url = _tmdb_lookup(name, 'movie', tmdb_api_key)
+        tmdb_id    = tmdb_id or ''
+        poster_url = poster_url or ''
 
-    # Fetch cast from TMDB now that we have a tmdb_id
-    if tmdb_id and not cast:
+    # Fetch cast and poster from TMDB now that we have a tmdb_id
+    if tmdb_id:
         tmdb_api_key = get_credential('tmdb_api_key') or ''
-        cast = _tmdb_cast(tmdb_id, 'movie', tmdb_api_key)
+        if not cast:
+            cast = _tmdb_cast(tmdb_id, 'movie', tmdb_api_key)
+        if not poster_url:
+            poster_url = _tmdb_poster(tmdb_id, 'movie', tmdb_api_key) or ''
 
     # Write enriched data back to cache so the next request is served instantly
-    if any([tmdb_id, imdb_id, plot, rating, cast]):
+    if any([tmdb_id, imdb_id, plot, rating, cast, poster_url]):
         try:
             movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
             with open(movies_cache_path, encoding='utf-8') as f:
                 movies_data = json.load(f)
             for m in movies_data:
                 if m.get('stream_id') == stream_id:
-                    if tmdb_id: m['tmdb_id'] = tmdb_id
-                    if imdb_id: m['imdb_id'] = imdb_id
-                    if plot:    m['plot']    = plot
-                    if rating:  m['rating']  = rating
-                    if cast:    m['cast']    = cast
+                    if tmdb_id:    m['tmdb_id']    = tmdb_id
+                    if imdb_id:    m['imdb_id']    = imdb_id
+                    if plot:       m['plot']       = plot
+                    if rating:     m['rating']     = rating
+                    if cast:       m['cast']       = cast
+                    if poster_url: m['poster_url'] = poster_url
                     break
             tmp = movies_cache_path + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
@@ -1895,12 +1932,12 @@ def get_vod_info(stream_id):
         except Exception:
             pass
 
-    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast})
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
 
 
 @main_bp.route('/get_series_info/<int:series_id>')
 def get_series_info_meta(series_id):
-    tmdb_id = imdb_id = rating = plot = name = ''
+    tmdb_id = imdb_id = rating = plot = name = poster_url = ''
     cast = []
 
     # Check series cache first
@@ -1911,15 +1948,16 @@ def get_series_info_meta(series_id):
                 series_data = json.load(f)
             serie = next((s for s in series_data if s.get('series_id') == series_id), None)
             if serie:
-                name    = serie.get('name', '')
-                tmdb_id = serie.get('tmdb_id') or ''
-                imdb_id = serie.get('imdb_id') or ''
-                rating  = serie.get('rating') or ''
-                plot    = serie.get('plot') or ''
-                cast    = serie.get('cast') or []
+                name       = serie.get('name', '')
+                tmdb_id    = serie.get('tmdb_id') or ''
+                imdb_id    = serie.get('imdb_id') or ''
+                rating     = serie.get('rating') or ''
+                plot       = serie.get('plot') or ''
+                cast       = serie.get('cast') or []
+                poster_url = serie.get('poster_url') or ''
                 if tmdb_id:
+                    tmdb_api_key = get_credential('tmdb_api_key') or ''
                     if not cast:
-                        tmdb_api_key = get_credential('tmdb_api_key') or ''
                         cast = _tmdb_cast(tmdb_id, 'tv', tmdb_api_key)
                         if cast:
                             try:
@@ -1933,7 +1971,21 @@ def get_series_info_meta(series_id):
                                 os.replace(tmp, series_cache_path)
                             except Exception:
                                 pass
-                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast})
+                    if not poster_url:
+                        poster_url = _tmdb_poster(tmdb_id, 'tv', tmdb_api_key) or ''
+                        if poster_url:
+                            try:
+                                for s in series_data:
+                                    if s.get('series_id') == series_id:
+                                        s['poster_url'] = poster_url
+                                        break
+                                tmp = series_cache_path + '.tmp'
+                                with open(tmp, 'w', encoding='utf-8') as f:
+                                    json.dump(series_data, f)
+                                os.replace(tmp, series_cache_path)
+                            except Exception:
+                                pass
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
     except Exception:
         pass
 
@@ -1959,27 +2011,32 @@ def get_series_info_meta(series_id):
     # If still no tmdb_id, search TMDB by name
     if not tmdb_id and name:
         tmdb_api_key = get_credential('tmdb_api_key') or ''
-        tmdb_id, _ = _tmdb_lookup(name, 'tv', tmdb_api_key)
-        tmdb_id = tmdb_id or ''
+        tmdb_id, poster_url = _tmdb_lookup(name, 'tv', tmdb_api_key)
+        tmdb_id    = tmdb_id or ''
+        poster_url = poster_url or ''
 
-    # Fetch cast from TMDB now that we have a tmdb_id
-    if tmdb_id and not cast:
+    # Fetch cast and poster from TMDB now that we have a tmdb_id
+    if tmdb_id:
         tmdb_api_key = get_credential('tmdb_api_key') or ''
-        cast = _tmdb_cast(tmdb_id, 'tv', tmdb_api_key)
+        if not cast:
+            cast = _tmdb_cast(tmdb_id, 'tv', tmdb_api_key)
+        if not poster_url:
+            poster_url = _tmdb_poster(tmdb_id, 'tv', tmdb_api_key) or ''
 
     # Write enriched data back to cache so the next request is served instantly
-    if any([tmdb_id, imdb_id, plot, rating, cast]):
+    if any([tmdb_id, imdb_id, plot, rating, cast, poster_url]):
         try:
             series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
             with open(series_cache_path, encoding='utf-8') as f:
                 series_data = json.load(f)
             for s in series_data:
                 if s.get('series_id') == series_id:
-                    if tmdb_id: s['tmdb_id'] = tmdb_id
-                    if imdb_id: s['imdb_id'] = imdb_id
-                    if plot:    s['plot']    = plot
-                    if rating:  s['rating']  = rating
-                    if cast:    s['cast']    = cast
+                    if tmdb_id:    s['tmdb_id']    = tmdb_id
+                    if imdb_id:    s['imdb_id']    = imdb_id
+                    if plot:       s['plot']       = plot
+                    if rating:     s['rating']     = rating
+                    if cast:       s['cast']       = cast
+                    if poster_url: s['poster_url'] = poster_url
                     break
             tmp = series_cache_path + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
@@ -1988,7 +2045,7 @@ def get_series_info_meta(series_id):
         except Exception:
             pass
 
-    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast})
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
 
 
 @main_bp.route('/search_by_actor/<int:person_id>')

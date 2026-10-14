@@ -162,13 +162,36 @@ function checkJellyfin(name, type) {
 function loadSerieInfo(serieId, cover, serieName) {
     const modalImage = document.getElementById('modal-image');
     const modalLinks = document.getElementById('modal-links');
-    modalImage.innerHTML = cover ? `<img src="${cover}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">` : '';
+    let img = null;
+    if (cover) {
+        img = document.createElement('img');
+        img.style.cssText = 'max-width:100%;max-height:260px;display:block;border-radius:6px;';
+        img.src = cover;
+        modalImage.innerHTML = '';
+        modalImage.appendChild(img);
+    } else {
+        modalImage.innerHTML = '';
+    }
     modalLinks.innerHTML = `<span style="color:#555;font-size:12px;">Loading info...</span>`;
     fetch(`{{ url_for('main_bp.get_series_info_meta', series_id=0) }}`.replace('/0', `/${serieId}`))
         .then(r => r.json())
         .then(data => {
             renderModalInfo(data, serieName, 'serie', modalLinks);
             checkJellyfin(serieName, 'serie');
+            if (data.poster_url) {
+                if (img) {
+                    img.onerror = () => { img.src = data.poster_url; img.onerror = null; };
+                    if (!img.complete || img.naturalWidth === 0) {
+                        img.src = img.src;
+                    }
+                } else {
+                    const fb = document.createElement('img');
+                    fb.style.cssText = 'max-width:100%;max-height:260px;display:block;border-radius:6px;';
+                    fb.src = data.poster_url;
+                    modalImage.innerHTML = '';
+                    modalImage.appendChild(fb);
+                }
+            }
         })
         .catch(() => { modalLinks.innerHTML = ''; });
 }
