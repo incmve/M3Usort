@@ -17,6 +17,12 @@
                     <option value="">All categories</option>
                     {% for cat in categories %}<option value="{{ cat }}">{{ cat }}</option>{% endfor %}
                 </select>
+                <select id="sort-select" class="filter-select" onchange="filterSeries()">
+                    <option value="name-asc">A–Z</option>
+                    <option value="name-desc">Z–A</option>
+                    <option value="date-desc">Newest first</option>
+                    <option value="date-asc">Oldest first</option>
+                </select>
                 <div class="view-toggle">
                     <button class="vt-btn" id="btn-list" onclick="setView('list')" title="List view">≡</button>
                     <button class="vt-btn active" id="btn-grid" onclick="setView('grid')" title="Poster view">⊞</button>
@@ -57,6 +63,14 @@ let filteredSeries = ALL_SERIES;
 let gridPage = 0, listPage = 0;
 let currentView = localStorage.getItem('series_view') || 'grid';
 
+function applySort(arr) {
+    const s = document.getElementById('sort-select').value;
+    if (s === 'name-desc') return [...arr].sort((a,b) => (b.name||'').localeCompare(a.name||''));
+    if (s === 'date-desc') return [...arr].sort((a,b) => (b.added||0) - (a.added||0));
+    if (s === 'date-asc')  return [...arr].sort((a,b) => (a.added||0) - (b.added||0));
+    return [...arr].sort((a,b) => (a.name||'').localeCompare(b.name||'')); // name-asc default
+}
+
 function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 function renderGrid(items, append) {
@@ -96,12 +110,12 @@ function setView(v) {
 function filterSeries() {
     const words = document.getElementById('search-bar').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
     const cat = document.getElementById('category-filter').value;
-    filteredSeries = ALL_SERIES.filter(m => {
+    filteredSeries = applySort(ALL_SERIES.filter(m => {
         const name = (m.name||'').toLowerCase();
         const castNames = (m.cast||[]).map(c=>(c.name||'').toLowerCase()).join(' ');
         const matchName = words.length === 0 || words.every(w => name.includes(w) || castNames.includes(w));
         return matchName && (!cat || (m.category||'')===cat);
-    });
+    }));
     document.getElementById('count-bar').textContent = `${filteredSeries.length} series`;
     renderGrid(filteredSeries, false);
     renderList(filteredSeries, false);

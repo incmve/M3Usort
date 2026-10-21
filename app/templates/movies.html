@@ -17,6 +17,12 @@
                     <option value="">All categories</option>
                     {% for cat in categories %}<option value="{{ cat }}">{{ cat }}</option>{% endfor %}
                 </select>
+                <select id="sort-select" class="filter-select" onchange="filterMovies()">
+                    <option value="name-asc">A–Z</option>
+                    <option value="name-desc">Z–A</option>
+                    <option value="date-desc">Newest first</option>
+                    <option value="date-asc">Oldest first</option>
+                </select>
                 <div class="view-toggle">
                     <button class="vt-btn" id="btn-list" onclick="setView('list')" title="List view">≡</button>
                     <button class="vt-btn active" id="btn-grid" onclick="setView('grid')" title="Poster view">⊞</button>
@@ -59,6 +65,14 @@ let filteredMovies = ALL_MOVIES;
 let gridPage = 0;
 let listPage = 0;
 let currentView = localStorage.getItem('movies_view') || 'grid';
+
+function applySort(arr) {
+    const s = document.getElementById('sort-select').value;
+    if (s === 'name-desc') return [...arr].sort((a,b) => (b.name||'').localeCompare(a.name||''));
+    if (s === 'date-desc') return [...arr].sort((a,b) => (b.added||0) - (a.added||0));
+    if (s === 'date-asc')  return [...arr].sort((a,b) => (a.added||0) - (b.added||0));
+    return [...arr].sort((a,b) => (a.name||'').localeCompare(b.name||'')); // name-asc default
+}
 
 function renderGrid(movies, append) {
     const grid = document.getElementById('movies-grid');
@@ -106,13 +120,13 @@ function setView(v) {
 function filterMovies() {
     const words = document.getElementById('search-bar').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
     const cat = document.getElementById('category-filter').value;
-    filteredMovies = ALL_MOVIES.filter(m => {
+    filteredMovies = applySort(ALL_MOVIES.filter(m => {
         const name = (m.name||'').toLowerCase();
         const castNames = (m.cast||[]).map(c=>(c.name||'').toLowerCase()).join(' ');
         const matchName = words.length === 0 || words.every(w => name.includes(w) || castNames.includes(w));
         const matchCat = !cat || (m.category||'') === cat;
         return matchName && matchCat;
-    });
+    }));
     document.getElementById('count-bar').textContent = `${filteredMovies.length} movies`;
     const tc = document.getElementById('total-count');
     if (tc) tc.textContent = `${ALL_MOVIES.length} movies`;
