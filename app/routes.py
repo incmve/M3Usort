@@ -39,6 +39,31 @@ logger = logging.getLogger(__name__)
 
 main_bp = Blueprint('main_bp', __name__)
 
+# ── Provider HTTP ────────────────────────────────────────────────────────────
+# The provider returns 403 Forbidden to the default "python-requests/x.y" User-Agent,
+# so every request to the Xtream provider must identify as a media player.
+# Override with the PROVIDER_USER_AGENT environment variable if the provider changes policy.
+PROVIDER_USER_AGENT = os.environ.get('PROVIDER_USER_AGENT', 'VLC/3.0.20 LibVLC/3.0.20')
+
+
+def provider_get(url, **kwargs):
+    """requests.get() for Xtream provider calls, with a player User-Agent.
+
+    Stateless wrapper (no shared Session) so it is safe from the scheduler and request threads.
+    """
+    headers = dict(kwargs.pop('headers', None) or {})
+    headers.setdefault('User-Agent', PROVIDER_USER_AGENT)
+    return requests.get(url, headers=headers, **kwargs)
+
+
+_CREDENTIAL_RE = re.compile(r'((?:username|password)=)[^&\s\'"]+', re.IGNORECASE)
+
+
+def _redact(text):
+    """Mask Xtream username/password query parameters before anything is logged."""
+    return _CREDENTIAL_RE.sub(r'\1***', str(text))
+
+
 @main_bp.app_template_filter('timestamp_to_date')
 def timestamp_to_date(ts):
     try:
@@ -213,7 +238,7 @@ def save_vod_cache():
 
     # ── Movies ───────────────────────────────────────────────────────────────
     try:
-        cat_resp = requests.get(f"{base}&action=get_vod_categories", timeout=30)
+        cat_resp = provider_get(f"{base}&action=get_vod_categories", timeout=30)
         cat_resp.raise_for_status()
         _cats = _safe_json(cat_resp)
         _require_list_of_dicts(_cats, 'get_vod_categories')
@@ -223,7 +248,7 @@ def save_vod_cache():
         movie_cats = {}
 
     try:
-        resp = requests.get(f"{base}&action=get_vod_streams", timeout=60)
+        resp = provider_get(f"{base}&action=get_vod_streams", timeout=60)
         resp.raise_for_status()
         movies_data = _safe_json(resp)
         _require_list_of_dicts(movies_data, 'get_vod_streams')
@@ -263,7 +288,7 @@ def save_vod_cache():
 
     # ── Series ───────────────────────────────────────────────────────────────
     try:
-        cat_resp = requests.get(f"{base}&action=get_series_categories", timeout=30)
+        cat_resp = provider_get(f"{base}&action=get_series_categories", timeout=30)
         cat_resp.raise_for_status()
         _cats = _safe_json(cat_resp)
         _require_list_of_dicts(_cats, 'get_series_categories')
@@ -273,7 +298,7 @@ def save_vod_cache():
         series_cats = {}
 
     try:
-        resp = requests.get(f"{base}&action=get_series", timeout=60)
+        resp = provider_get(f"{base}&action=get_series", timeout=60)
         resp.raise_for_status()
         series_data = _safe_json(resp)
         _require_list_of_dicts(series_data, 'get_series')
@@ -389,7 +414,7 @@ def file_hash(filepath):
 
 def download_m3u(url, output_path):
     try:
-        response = requests.get(url, timeout=30)
+        response = provider_get(url, timeout=30)
         response.raise_for_status()
         with open(output_path, 'w', encoding='utf-8') as file:
             file.write(response.text)
@@ -832,7 +857,7 @@ def update_home_data():
             domain_with_port, _ = rest.split('/get.php', 1)
             username, password = extract_credentials_from_url(m3u_url)
             api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
-            response = requests.get(api_url, timeout=8)
+            response = provider_get(api_url, timeout=8)
             user_info = _safe_json(response)['user_info']
             exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
             exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
@@ -964,7 +989,7 @@ def home():
             domain_with_port, _ = rest.split('/get.php', 1)
             username, password = extract_credentials_from_url(m3u_url)
             api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
-            response = requests.get(api_url, timeout=8)
+            response = provider_get(api_url, timeout=8)
             user_info = _safe_json(response)['user_info']
             exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
             exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
@@ -1076,7 +1101,7 @@ def GetMoviesList():
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
-        response = requests.get(api_url, timeout=30)
+        response = provider_get(api_url, timeout=30)
         response.raise_for_status()
         movies_data = _safe_json(response)
         movies = [{'name': m['name'], 'stream_id': m['stream_id']} for m in movies_data]
@@ -1106,7 +1131,7 @@ def GetSeriesList():
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series&category_id=ALL"
-        response = requests.get(api_url, timeout=30)
+        response = provider_get(api_url, timeout=30)
         response.raise_for_status()
         series_data = _safe_json(response)
         series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', '')} for s in series_data]
@@ -1127,7 +1152,7 @@ def DownloadSeries(series_id, existing_files=None, series_name_hint=None):
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     series_info_url = f"{base_url}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
     try:
-        response = requests.get(series_info_url, timeout=15)
+        response = provider_get(series_info_url, timeout=15)
         response.raise_for_status()
         series_info = _safe_json(response)
     except Exception as e:
@@ -1883,7 +1908,7 @@ def get_vod_info(stream_id):
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_info&vod_id={stream_id}"
-        response = requests.get(api_url, timeout=5)
+        response = provider_get(api_url, timeout=5)
         response.raise_for_status()
         info = _safe_json(response).get('info', {})
         tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
@@ -1996,7 +2021,7 @@ def get_series_info_meta(series_id):
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
-        response = requests.get(api_url, timeout=5)
+        response = provider_get(api_url, timeout=5)
         response.raise_for_status()
         info = _safe_json(response).get('info', {})
         tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
@@ -3716,6 +3741,7 @@ def startup_instant():
         MUST_CHANGE_PW = 1
 
 def PrintLog(string, type):
+    string = _redact(string)
     if type == "DEBUG":
         logging.debug(string)
     elif type == "INFO":
