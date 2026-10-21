@@ -2668,7 +2668,7 @@ def enrich_tmdb_background():
     def fetch_info(action, id_param, item_id):
         try:
             api_url = f"{base}&action={action}&{id_param}={item_id}"
-            response = requests.get(api_url, timeout=5)
+            response = provider_get(api_url, timeout=5)
             response.raise_for_status()
             return _safe_json(response).get('info', {})
         except Exception as e:
