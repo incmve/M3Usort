@@ -93,8 +93,10 @@
         </div>
         <div id="actor-detail-view" style="display:none;">
             <button onclick="_actorShowGrid()" class="button button-secondary" style="margin-bottom:14px;">← Back</button>
-            <div id="actor-detail-img" style="margin-bottom:12px;"></div>
-            <div id="actor-detail-info"></div>
+            <div style="display:flex;gap:16px;align-items:flex-start;">
+                <div id="actor-detail-img" style="flex-shrink:0;"></div>
+                <div id="actor-detail-info" style="flex:1;min-width:0;"></div>
+            </div>
         </div>
     </div>
 </div>
@@ -130,10 +132,12 @@ function _actorOpenDetail(id, name, icon, type) {
     document.getElementById('actor-modal-title').textContent = name;
     gridView.style.display = 'none';
     detailView.style.display = '';
-    detailImg.innerHTML = icon ? `<img src="${icon}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">` : '';
+    const imgStyle = 'width:150px;max-height:280px;display:block;border-radius:6px;object-fit:cover;';
+    detailImg.innerHTML = icon ? `<img src="${icon}" style="${imgStyle}" onerror="this.style.display='none'">` : '';
     detailInfo.innerHTML = '<span style="color:#555;font-size:12px;">Loading info...</span>';
     const url = type === 'movie' ? `/get_vod_info/${id}` : `/get_series_info/${id}`;
     fetch(url).then(r => r.json()).then(data => {
+        if (data.poster_url) detailImg.innerHTML = `<img src="${data.poster_url}" style="${imgStyle}" onerror="this.style.display='none'">`;
         let metaHtml = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px;">';
         if (data.rating) metaHtml += `<span style="color:#c8a030;font-weight:600;">★ ${parseFloat(data.rating).toFixed(1)}</span>`;
         metaHtml += `<span id="actor-jf-status" style="font-size:12px;color:#888;">⏳ Checking Jellyfin...</span>`;
