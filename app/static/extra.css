@@ -102,12 +102,14 @@
 
 /* ── Filter bar ── */
 .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
-.filter-input { background: #383a40; border: 1px solid #43454d; color: #f2f3f5; border-radius: 6px; padding: 6px 12px; font-size: 12px; flex: 1; min-width: 160px; transition: border-color .15s; }
+.filter-input { background: #383a40; border: 1px solid #43454d; color: #f2f3f5; border-radius: 6px; padding: 6px 12px; font-size: 12px; flex: 1; min-width: 160px; box-sizing: border-box; transition: border-color .15s; }
 .filter-input:focus { border-color: #188fb4; outline: 0; }
-.filter-select { background: #2b2d31; border: 1px solid #43454d; color: #f2f3f5; border-radius: 6px; padding: 6px 10px; font-size: 12px; transition: border-color .15s; }
+.filter-select { background: #2b2d31; border: 1px solid #43454d; color: #f2f3f5; border-radius: 6px; padding: 6px 10px; font-size: 12px; box-sizing: border-box; transition: border-color .15s; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%239ba3af' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; align-self: stretch; }
 .filter-select:focus { border-color: #188fb4; outline: 0; }
-.view-toggle { display: flex; align-items: stretch; background: #2b2d31; border: 1px solid #43454d; border-radius: 6px; overflow: hidden; margin-left: auto; }
-.vt-btn { display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #9ba3af; padding: 5px 12px; font-size: 13px; cursor: pointer; transition: background .1s, color .1s; line-height: 1; }
+.nsfw-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; background: #2a0a0a; border: 1px solid #6b1a1a; border-radius: 6px; padding: 0 10px; font-size: 12px; font-weight: 600; color: #c04040; white-space: nowrap; user-select: none; height: 36px; box-sizing: border-box; }
+.nsfw-toggle input[type=checkbox] { accent-color: #c04040; cursor: pointer; margin: 0; }
+.view-toggle { display: flex; align-items: center; background: #2b2d31; border: 1px solid #43454d; border-radius: 6px; overflow: hidden; margin-left: auto; height: 36px; box-sizing: border-box; }
+.vt-btn { display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #9ba3af; width: 36px; height: 36px; font-size: 15px; line-height: 1; cursor: pointer; transition: background .1s, color .1s; }
 .vt-btn.active { background: #404249; color: #f2f3f5; }
 
 /* ── Poster grid ── */
