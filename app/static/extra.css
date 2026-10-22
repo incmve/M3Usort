@@ -106,8 +106,8 @@
 .filter-input:focus { border-color: #188fb4; outline: 0; }
 .filter-select { background: #2b2d31; border: 1px solid #43454d; color: #f2f3f5; border-radius: 6px; padding: 6px 10px; font-size: 12px; transition: border-color .15s; }
 .filter-select:focus { border-color: #188fb4; outline: 0; }
-.view-toggle { display: flex; background: #2b2d31; border: 1px solid #43454d; border-radius: 6px; overflow: hidden; margin-left: auto; }
-.vt-btn { background: transparent; border: none; color: #9ba3af; padding: 5px 12px; font-size: 13px; cursor: pointer; transition: background .1s, color .1s; }
+.view-toggle { display: flex; align-items: stretch; background: #2b2d31; border: 1px solid #43454d; border-radius: 6px; overflow: hidden; margin-left: auto; }
+.vt-btn { display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #9ba3af; padding: 5px 12px; font-size: 13px; cursor: pointer; transition: background .1s, color .1s; line-height: 1; }
 .vt-btn.active { background: #404249; color: #f2f3f5; }
 
 /* ── Poster grid ── */
