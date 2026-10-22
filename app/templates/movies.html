@@ -23,12 +23,12 @@
                     <option value="date-desc">Newest first</option>
                     <option value="date-asc">Oldest first</option>
                 </select>
-                <label id="nsfw-toggle" title="Show/hide adult content" style="display:flex;align-items:center;gap:6px;cursor:pointer;background:#2a0a0a;border:1px solid #6b1a1a;border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;color:#c04040;white-space:nowrap;user-select:none;">
-                    <input type="checkbox" id="nsfw-checkbox" onchange="onNsfwToggle()" style="accent-color:#c04040;cursor:pointer;">
+                <label id="nsfw-toggle" class="nsfw-toggle" title="Show/hide adult content">
+                    <input type="checkbox" id="nsfw-checkbox" onchange="onNsfwToggle()">
                     NSFW
                 </label>
                 <div class="view-toggle">
-                    <button class="vt-btn" id="btn-list" onclick="setView('list')" title="List view">≡</button>
+                    <button class="vt-btn" id="btn-list" onclick="setView('list')" title="List view">☰</button>
                     <button class="vt-btn active" id="btn-grid" onclick="setView('grid')" title="Poster view">⊞</button>
                 </div>
             </div>
