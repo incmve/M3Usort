@@ -7,7 +7,8 @@
 - NSFW toggle on Movies page: dark red checkbox in filter bar hides adult content (category 145 — XXX FILMS) by default; state persisted per browser via localStorage
 - Fix mobile layout: `.ntw-split` two-column grid now collapses to single column on screens ≤768px
 - Fix mobile modal overflow: modal switches to column layout on narrow screens with poster going full width
-- Fix view-toggle button active state misalignment in filter bar
+- Fix filter-bar alignment: all elements (input, selects, NSFW toggle, view-toggle) now sit on the same baseline; root cause was Skeleton CSS setting non-zero margins/padding/height on form elements and buttons — reset with explicit overrides on `.filter-bar > *` and `.vt-btn`
+- Fix view-toggle button icons: replaced broken SVG paths with Unicode ☰ (list) and ⊞ (grid); active state now fills full button height
 
 ## 2.0.5
 - TMDB ID enrichment: bulk-fetch TMDB IDs for all movies and series via the Xtream Codes player API (`get_vod_info` / `get_series_info`); run manually from Settings or on a schedule
