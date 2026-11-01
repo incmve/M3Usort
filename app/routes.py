@@ -3740,7 +3740,8 @@ def startup_instant():
     hashed_admin_pw_from_config = get_config_variable(CONFIG_PATH, 'admin_password')
     hashed_playlist_pw_from_config = get_config_variable(CONFIG_PATH, 'playlist_password')
 
-    if check_password_hash(hashed_admin_pw_from_config, "IPTV") or check_password_hash(hashed_playlist_pw_from_config, "IPTV"):
+    if (hashed_admin_pw_from_config and check_password_hash(hashed_admin_pw_from_config, "IPTV")) or \
+       (hashed_playlist_pw_from_config and check_password_hash(hashed_playlist_pw_from_config, "IPTV")):
         MUST_CHANGE_PW = 1
 
 def PrintLog(string, type):
