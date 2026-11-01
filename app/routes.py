@@ -3724,8 +3724,11 @@ def startup_instant():
     if not current_url:
         internal_ip = get_internal_ip()
         port_number = get_config_variable(CONFIG_PATH, 'port_number')
-        new_url = "http://" + internal_ip + ":" + port_number + "/get.php?username=123&password=456&output=mpegts&type=m3u_plus"
-        set_credential('url', new_url)
+        if internal_ip and port_number:
+            new_url = "http://" + internal_ip + ":" + port_number + "/get.php?username=123&password=456&output=mpegts&type=m3u_plus"
+            set_credential('url', new_url)
+        else:
+            PrintLog("Could not determine internal IP or port — skipping default URL generation", "WARNING")
 
     files_dir = f'{BASE_DIR}/files'
     if not os.path.exists(files_dir):
