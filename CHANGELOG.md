@@ -8,6 +8,15 @@
 - Live status indicator next to the TMDB ID Enrichment "Run now" button: shows phase (Movies/Series), items processed, total, and percentage in real time; turns green on completion
 - Search by actor name: the search box on the Movies and Series pages now matches actor names in addition to titles
 - Actor detail view: clicking a movie or series poster in the actor results panel opens an inline detail view with rating, Jellyfin status, plot, cast, and an Add button — no longer opens TMDB externally
+- Fix Add button in actor detail view: raised myModal above actorModal, simplified to direct fetch, fixed JSON.stringify quote escaping in onclick attribute
+- Fix save_vod_cache() wiping cast data on every VOD scheduler run
+- Fix movies cache write failure and duplicate scheduler job registration
+- Log download button: download the current log file directly from the log page
+- Daily log rotation with date picker: logs rotate daily and a date picker lets you browse previous days
+- Fix log date dropdown width stretching the full row
+- TMDB poster fallback: movies and series with a missing stream icon now fall back to the TMDB poster
+- Fix mobile layout: ntw-split grid and modal now stack to a single column on narrow screens
+- Fix missing player User-Agent in provider calls: all Xtream provider requests now send the configured User-Agent; credentials masked in logs
 
 ## 2.0.4
 - Fix .dockerignore excluding CHANGELOG.md (*.md rule): add !CHANGELOG.md exception so the file is baked into the image and the changelog page shows current content
