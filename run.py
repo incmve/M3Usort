@@ -8,8 +8,7 @@ from app import create_app
 from time import sleep
 
 import logging
-from logging.handlers import RotatingFileHandler
-import logging
+import logging.handlers
 
 
 current_dir = os.path.dirname(os.path.realpath(__file__))
@@ -36,7 +35,9 @@ def setup_logging():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
-    handler = RotatingFileHandler(log_file, maxBytes=10000000, backupCount=5)
+    handler = logging.handlers.TimedRotatingFileHandler(
+        log_file, when='midnight', interval=1, backupCount=30, encoding='utf-8'
+    )
     logging.basicConfig(level=logging.INFO,
                         format='%(asctime)s %(levelname)s: %(message)s',
                         handlers=[handler])

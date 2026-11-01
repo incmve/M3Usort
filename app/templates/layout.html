@@ -75,6 +75,153 @@
     </div>
 </div>
 
+<!-- Actor Search Modal -->
+<div id="actorModal" class="modal">
+    <div class="modal-content" style="max-width:800px;">
+        <span class="close" onclick="closeActorModal()">&times;</span>
+        <div id="actor-modal-title" style="font-size:16px; font-weight:600; color:#e0e0e0; margin-bottom:14px;"></div>
+        <div id="actor-grid-view">
+            <div id="actor-modal-empty" style="color:#888; font-size:13px; display:none;">No results found.</div>
+            <div id="actor-movies-section" style="display:none;">
+                <div style="font-size:12px; color:#80848e; margin-bottom:8px;">Movies</div>
+                <div class="poster-grid" id="actor-movies-grid" style="margin-bottom:18px;"></div>
+            </div>
+            <div id="actor-series-section" style="display:none;">
+                <div style="font-size:12px; color:#80848e; margin-bottom:8px;">Series</div>
+                <div class="poster-grid" id="actor-series-grid"></div>
+            </div>
+        </div>
+        <div id="actor-detail-view" style="display:none;">
+            <button onclick="_actorShowGrid()" class="button button-secondary" style="margin-bottom:14px;">← Back</button>
+            <div id="actor-detail-img" style="margin-bottom:12px;"></div>
+            <div id="actor-detail-info"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+function escapeActorHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+function _actorShowGrid() {
+    document.getElementById('actor-detail-view').style.display = 'none';
+    document.getElementById('actor-grid-view').style.display = '';
+}
+
+function _actorDoAdd(type, name, id) {
+    const endpoint = type === 'movie' ? '/add_movie_to_server' : '/add_series_to_server';
+    const body = type === 'movie' ? {movieName: name, movieId: id} : {serieName: name, serieId: id};
+    fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+        .then(r => r.json())
+        .then(data => {
+            const el = document.getElementById('actor-detail-add-status');
+            if (el) { el.textContent = data.message || 'Added!'; el.style.color = '#5abf7e'; }
+        })
+        .catch(() => {
+            const el = document.getElementById('actor-detail-add-status');
+            if (el) { el.textContent = 'Failed.'; el.style.color = '#c04040'; }
+        });
+}
+
+function _actorOpenDetail(id, name, icon, type) {
+    const gridView = document.getElementById('actor-grid-view');
+    const detailView = document.getElementById('actor-detail-view');
+    const detailImg = document.getElementById('actor-detail-img');
+    const detailInfo = document.getElementById('actor-detail-info');
+    document.getElementById('actor-modal-title').textContent = name;
+    gridView.style.display = 'none';
+    detailView.style.display = '';
+    detailImg.innerHTML = icon ? `<img src="${icon}" style="max-width:100%;max-height:260px;display:block;border-radius:6px;">` : '';
+    detailInfo.innerHTML = '<span style="color:#555;font-size:12px;">Loading info...</span>';
+    const url = type === 'movie' ? `/get_vod_info/${id}` : `/get_series_info/${id}`;
+    fetch(url).then(r => r.json()).then(data => {
+        let metaHtml = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px;">';
+        if (data.rating) metaHtml += `<span style="color:#c8a030;font-weight:600;">★ ${parseFloat(data.rating).toFixed(1)}</span>`;
+        metaHtml += `<span id="actor-jf-status" style="font-size:12px;color:#888;">⏳ Checking Jellyfin...</span>`;
+        metaHtml += '</div>';
+        let btns = `<button id="actor-add-btn" class="button button-primary" style="margin-right:6px;">+ Add</button>`;
+        btns += `<span id="actor-detail-add-status" style="font-size:12px;color:#aaa;vertical-align:middle;margin-left:6px;"></span>`;
+        if (data.tmdb_id) { const t = type==='movie'?'movie':'tv'; btns += ` <a href="https://www.themoviedb.org/${t}/${data.tmdb_id}" target="_blank" class="button" style="margin-right:6px;">TMDB</a>`; }
+        if (data.imdb_id) btns += ` <a href="https://www.imdb.com/title/${data.imdb_id}" target="_blank" class="button" style="margin-right:6px;">IMDB</a>`;
+        let descHtml = '';
+        if (data.plot) {
+            const short = data.plot.length > 180 ? data.plot.substring(0,180)+'...' : data.plot;
+            descHtml = `<div style="color:#777;line-height:1.5;border-top:1px solid #1e1e1e;padding-top:8px;margin-top:8px;font-size:13px;">${short}</div>`;
+        }
+        let castHtml = '';
+        if (data.cast && data.cast.length) {
+            castHtml = '<div style="margin-top:8px;border-top:1px solid #1e1e1e;padding-top:8px;font-size:12px;color:#888;">Cast: ' +
+                data.cast.map(c => `<span class="cast-actor-link" data-actor-id="${c.id}" data-actor-name="${escapeActorHtml(c.name)}" style="color:#4aadcf;cursor:pointer;margin-right:8px;">${escapeActorHtml(c.name)}</span>`).join('') +
+                '</div>';
+        }
+        detailInfo.innerHTML = metaHtml + btns + descHtml + castHtml;
+        // Wire Add button after DOM is set — avoids quote-escaping issues with inline onclick
+        document.getElementById('actor-add-btn').addEventListener('click', function() { _actorDoAdd(type, name, id); });
+        // Jellyfin check
+        const jfType = type === 'movie' ? 'movie' : 'series';
+        fetch(`/check_jellyfin/${jfType}/${encodeURIComponent(name)}`)
+            .then(r => r.json())
+            .then(d => {
+                const el = document.getElementById('actor-jf-status');
+                if (el) { el.textContent = d.exists ? '✅ In Jellyfin' : '❌ Not in Jellyfin'; el.style.color = d.exists ? '#5abf7e' : '#c04040'; }
+            })
+            .catch(() => { const el = document.getElementById('actor-jf-status'); if (el) el.style.display = 'none'; });
+    }).catch(() => { detailInfo.innerHTML = '<span style="color:#888;">Failed to load info.</span>'; });
+}
+
+function openActorSearch(personId, personName) {
+    const modal = document.getElementById('actorModal');
+    const moviesGrid = document.getElementById('actor-movies-grid');
+    const seriesGrid = document.getElementById('actor-series-grid');
+    const moviesSection = document.getElementById('actor-movies-section');
+    const seriesSection = document.getElementById('actor-series-section');
+    const emptyMsg = document.getElementById('actor-modal-empty');
+    document.getElementById('actor-modal-title').textContent = `Actor: ${personName}`;
+    moviesGrid.innerHTML = ''; seriesGrid.innerHTML = '';
+    moviesSection.style.display = 'none'; seriesSection.style.display = 'none'; emptyMsg.style.display = 'none';
+    document.getElementById('actor-grid-view').style.display = '';
+    document.getElementById('actor-detail-view').style.display = 'none';
+    modal.style.display = 'block';
+
+    fetch(`/search_by_actor/${personId}`)
+        .then(r => r.json())
+        .then(data => {
+            const movies = data.movies || [];
+            const series = data.series || [];
+            if (movies.length === 0 && series.length === 0) {
+                emptyMsg.style.display = 'block';
+                return;
+            }
+            if (movies.length) {
+                moviesSection.style.display = 'block';
+                movies.forEach(m => {
+                    const d = document.createElement('div');
+                    d.className = 'poster-card';
+                    d.innerHTML = `<div class="poster-img">${m.stream_icon ? `<img src="${m.stream_icon}" loading="lazy" onerror="this.style.display='none'">` : '🎬'}</div><div class="poster-name">${escapeActorHtml(m.name)}</div>`;
+                    d.onclick = () => _actorOpenDetail(m.stream_id, m.name, m.stream_icon, 'movie');
+                    moviesGrid.appendChild(d);
+                });
+            }
+            if (series.length) {
+                seriesSection.style.display = 'block';
+                series.forEach(s => {
+                    const d = document.createElement('div');
+                    d.className = 'poster-card';
+                    d.innerHTML = `<div class="poster-img">${s.cover ? `<img src="${s.cover}" loading="lazy" onerror="this.style.display='none'">` : '📺'}</div><div class="poster-name">${escapeActorHtml(s.name)}</div>`;
+                    d.onclick = () => _actorOpenDetail(s.series_id, s.name, s.cover, 'series');
+                    seriesGrid.appendChild(d);
+                });
+            }
+        })
+        .catch(() => { emptyMsg.textContent = 'Failed to load results.'; emptyMsg.style.display = 'block'; });
+}
+function closeActorModal() { document.getElementById('actorModal').style.display = 'none'; }
+document.addEventListener('click', function(e) {
+    const t = e.target.closest('.cast-actor-link');
+    if (t) openActorSearch(parseInt(t.dataset.actorId, 10), t.dataset.actorName);
+});
+window.addEventListener('click', function(e) { if (e.target === document.getElementById('actorModal')) closeActorModal(); });
+</script>
+
 {% block scripts %}{% endblock %}
 <script src="{{ url_for('static', filename='extra.js') }}"></script>
 <script>

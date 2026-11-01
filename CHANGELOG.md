@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.5
+- TMDB ID enrichment: bulk-fetch TMDB IDs for all movies and series via the Xtream Codes player API (`get_vod_info` / `get_series_info`); run manually from Settings or on a schedule
+- TMDB Cast enrichment: fetch top-5 billed cast members for all items that have a TMDB ID; run manually or on a schedule
+- Actor search: clicking an actor name in a movie or series modal opens a panel showing all movies and series in your library that actor appears in
+- Cast displayed in the "New this week" modal alongside the movie/series info
+- Live status indicator next to the TMDB ID Enrichment "Run now" button: shows phase (Movies/Series), items processed, total, and percentage in real time; turns green on completion
+- Search by actor name: the search box on the Movies and Series pages now matches actor names in addition to titles
+- Actor detail view: clicking a movie or series poster in the actor results panel opens an inline detail view with rating, Jellyfin status, plot, cast, and an Add button — no longer opens TMDB externally
+- Fix Add button in actor detail view: raised myModal above actorModal, simplified to direct fetch, fixed JSON.stringify quote escaping in onclick attribute
+- Fix save_vod_cache() wiping cast data on every VOD scheduler run
+- Fix movies cache write failure and duplicate scheduler job registration
+- Log download button: download the current log file directly from the log page
+- Daily log rotation with date picker: logs rotate daily and a date picker lets you browse previous days
+- Fix log date dropdown width stretching the full row
+- TMDB poster fallback: movies and series with a missing stream icon now fall back to the TMDB poster
+- Fix mobile layout: ntw-split grid and modal now stack to a single column on narrow screens
+- Fix missing player User-Agent in provider calls: all Xtream provider requests now send the configured User-Agent; credentials masked in logs
+
 ## 2.0.4
 - Fix .dockerignore excluding CHANGELOG.md (*.md rule): add !CHANGELOG.md exception so the file is baked into the image and the changelog page shows current content
 - Fix corrupt cache crash: wrap json.load() in home and update_home_data with try/except so a corrupt cache file returns 0 counts instead of a 500 error; use atomic writes (os.replace) for all four cache write sites to prevent partial files on interrupted writes

@@ -39,6 +39,31 @@ logger = logging.getLogger(__name__)
 
 main_bp = Blueprint('main_bp', __name__)
 
+# ── Provider HTTP ────────────────────────────────────────────────────────────
+# The provider returns 403 Forbidden to the default "python-requests/x.y" User-Agent,
+# so every request to the Xtream provider must identify as a media player.
+# Override with the PROVIDER_USER_AGENT environment variable if the provider changes policy.
+PROVIDER_USER_AGENT = os.environ.get('PROVIDER_USER_AGENT', 'VLC/3.0.20 LibVLC/3.0.20')
+
+
+def provider_get(url, **kwargs):
+    """requests.get() for Xtream provider calls, with a player User-Agent.
+
+    Stateless wrapper (no shared Session) so it is safe from the scheduler and request threads.
+    """
+    headers = dict(kwargs.pop('headers', None) or {})
+    headers.setdefault('User-Agent', PROVIDER_USER_AGENT)
+    return requests.get(url, headers=headers, **kwargs)
+
+
+_CREDENTIAL_RE = re.compile(r'((?:username|password)=)[^&\s\'"]+', re.IGNORECASE)
+
+
+def _redact(text):
+    """Mask Xtream username/password query parameters before anything is logged."""
+    return _CREDENTIAL_RE.sub(r'\1***', str(text))
+
+
 @main_bp.app_template_filter('timestamp_to_date')
 def timestamp_to_date(ts):
     try:
@@ -213,7 +238,7 @@ def save_vod_cache():
 
     # ── Movies ───────────────────────────────────────────────────────────────
     try:
-        cat_resp = requests.get(f"{base}&action=get_vod_categories", timeout=30)
+        cat_resp = provider_get(f"{base}&action=get_vod_categories", timeout=30)
         cat_resp.raise_for_status()
         _cats = _safe_json(cat_resp)
         _require_list_of_dicts(_cats, 'get_vod_categories')
@@ -223,10 +248,11 @@ def save_vod_cache():
         movie_cats = {}
 
     try:
-        resp = requests.get(f"{base}&action=get_vod_streams", timeout=60)
+        resp = provider_get(f"{base}&action=get_vod_streams", timeout=60)
         resp.raise_for_status()
         movies_data = _safe_json(resp)
         _require_list_of_dicts(movies_data, 'get_vod_streams')
+        
         for movie in movies_data:
             if not movie.get('category_name'):
                 movie['category_name'] = movie_cats.get(str(movie.get('category_id', '')), '')
@@ -238,15 +264,19 @@ def save_vod_cache():
             try:
                 with open(movies_cache_path, encoding='utf-8') as f:
                     existing = json.load(f)
-                existing_info = {m['stream_id']: m for m in existing if m.get('tmdb_id') or m.get('plot')}
+                existing_info = {m['stream_id']: m for m in existing if m.get('tmdb_id') or m.get('plot') or m.get('cast')}
             except Exception:
                 pass
         for movie in movies_data:
             prev = existing_info.get(movie.get('stream_id'))
             if prev:
-                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
+                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating', 'cast'):
                     if prev.get(field):
                         movie[field] = prev[field]
+        for m in movies_data:
+            if not isinstance(m.get('cast'), list):
+                m.pop('cast', None)
+        os.makedirs(os.path.dirname(movies_cache_path), exist_ok=True)
         tmp = movies_cache_path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(movies_data, f)
@@ -258,7 +288,7 @@ def save_vod_cache():
 
     # ── Series ───────────────────────────────────────────────────────────────
     try:
-        cat_resp = requests.get(f"{base}&action=get_series_categories", timeout=30)
+        cat_resp = provider_get(f"{base}&action=get_series_categories", timeout=30)
         cat_resp.raise_for_status()
         _cats = _safe_json(cat_resp)
         _require_list_of_dicts(_cats, 'get_series_categories')
@@ -268,7 +298,7 @@ def save_vod_cache():
         series_cats = {}
 
     try:
-        resp = requests.get(f"{base}&action=get_series", timeout=60)
+        resp = provider_get(f"{base}&action=get_series", timeout=60)
         resp.raise_for_status()
         series_data = _safe_json(resp)
         _require_list_of_dicts(series_data, 'get_series')
@@ -283,18 +313,24 @@ def save_vod_cache():
             try:
                 with open(series_cache_path, encoding='utf-8') as f:
                     existing = json.load(f)
-                existing_info = {s['series_id']: s for s in existing if s.get('tmdb_id') or s.get('plot') or s.get('cover','').startswith('https://image.tmdb')}
+                existing_info = {s['series_id']: s for s in existing if s.get('tmdb_id') or s.get('plot') or s.get('cast') or s.get('cover','').startswith('https://image.tmdb')}
             except Exception:
                 pass
         for serie in series_data:
             prev = existing_info.get(serie.get('series_id'))
             if prev:
-                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating'):
+                for field in ('tmdb_id', 'imdb_id', 'plot', 'rating', 'cast'):
                     if prev.get(field):
                         serie[field] = prev[field]
                 # Preserve fixed TMDB cover
                 if prev.get('cover', '').startswith('https://image.tmdb'):
                     serie['cover'] = prev['cover']
+            # Normalise 'added' — provider uses last_modified for series
+            if not serie.get('added'):
+                serie['added'] = serie.get('last_modified', 0)
+        for s in series_data:
+            if not isinstance(s.get('cast'), list):
+                s.pop('cast', None)
         tmp = series_cache_path + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(series_data, f)
@@ -341,7 +377,7 @@ def refresh_jellyfin():
     if jellyfin_url and jellyfin_api_key:
         try:
             requests.post(f"{jellyfin_url}/Library/Refresh",
-                         headers={"X-Emby-Token": jellyfin_api_key})
+                         headers={"Authorization": f'MediaBrowser Token="{jellyfin_api_key}"', "Content-Type": "application/json"})
             PrintLog("Jellyfin library refresh triggered", "INFO")
         except Exception as e:
             PrintLog(f"Error refreshing Jellyfin: {e}", "ERROR")
@@ -378,7 +414,7 @@ def file_hash(filepath):
 
 def download_m3u(url, output_path):
     try:
-        response = requests.get(url, timeout=30)
+        response = provider_get(url, timeout=30)
         response.raise_for_status()
         with open(output_path, 'w', encoding='utf-8') as file:
             file.write(response.text)
@@ -821,7 +857,7 @@ def update_home_data():
             domain_with_port, _ = rest.split('/get.php', 1)
             username, password = extract_credentials_from_url(m3u_url)
             api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
-            response = requests.get(api_url, timeout=8)
+            response = provider_get(api_url, timeout=8)
             user_info = _safe_json(response)['user_info']
             exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
             exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
@@ -953,7 +989,7 @@ def home():
             domain_with_port, _ = rest.split('/get.php', 1)
             username, password = extract_credentials_from_url(m3u_url)
             api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_user_info"
-            response = requests.get(api_url, timeout=8)
+            response = provider_get(api_url, timeout=8)
             user_info = _safe_json(response)['user_info']
             exp_date_readable = datetime.utcfromtimestamp(int(user_info['exp_date'])).strftime('%Y-%m-%d')
             exp_date_days_left = (datetime.utcfromtimestamp(int(user_info['exp_date'])).date() - datetime.utcnow().date()).days
@@ -1065,7 +1101,7 @@ def GetMoviesList():
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_streams&category_id=ALL"
-        response = requests.get(api_url, timeout=30)
+        response = provider_get(api_url, timeout=30)
         response.raise_for_status()
         movies_data = _safe_json(response)
         movies = [{'name': m['name'], 'stream_id': m['stream_id']} for m in movies_data]
@@ -1095,7 +1131,7 @@ def GetSeriesList():
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series&category_id=ALL"
-        response = requests.get(api_url, timeout=30)
+        response = provider_get(api_url, timeout=30)
         response.raise_for_status()
         series_data = _safe_json(response)
         series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', '')} for s in series_data]
@@ -1116,7 +1152,7 @@ def DownloadSeries(series_id, existing_files=None, series_name_hint=None):
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     series_info_url = f"{base_url}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
     try:
-        response = requests.get(series_info_url, timeout=15)
+        response = provider_get(series_info_url, timeout=15)
         response.raise_for_status()
         series_info = _safe_json(response)
     except Exception as e:
@@ -1336,7 +1372,7 @@ def series():
         try:
             with open(series_cache_path, 'r', encoding='utf-8') as f:
                 series_data = json.load(f)
-            series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', ''), 'category': s.get('category_name', ''), 'tmdb_id': s.get('tmdb_id') or s.get('tmdb') or '', 'imdb_id': s.get('imdb_id') or s.get('imdb') or '', 'plot': s.get('plot') or s.get('description') or s.get('overview') or '', 'rating': s.get('rating') or s.get('rating_5based') or ''} for s in series_data]
+            series = [{'name': s['name'], 'series_id': s['series_id'], 'series_cover': s.get('cover', ''), 'category': s.get('category_name', ''), 'tmdb_id': s.get('tmdb_id') or s.get('tmdb') or '', 'imdb_id': s.get('imdb_id') or s.get('imdb') or '', 'plot': s.get('plot') or s.get('description') or s.get('overview') or '', 'rating': s.get('rating') or s.get('rating_5based') or '', 'cast': s.get('cast') or []} for s in series_data]
             categories = sorted(set(s['category'] for s in series if s['category']))
         except Exception as e:
             PrintLog(f"Error reading series cache: {e}", "ERROR")
@@ -1360,7 +1396,7 @@ def movies():
         try:
             with open(movies_cache_path, 'r', encoding='utf-8') as f:
                 movies_data = json.load(f)
-            movies = [{'name': m['name'], 'stream_id': m['stream_id'], 'stream_icon': m.get('stream_icon', ''), 'category': m.get('category_name', ''), 'tmdb_id': m.get('tmdb_id') or m.get('tmdb') or '', 'imdb_id': m.get('imdb_id') or m.get('imdb') or '', 'plot': m.get('plot') or m.get('description') or m.get('overview') or '', 'rating': m.get('rating') or m.get('rating_5based') or ''} for m in movies_data]
+            movies = [{'name': m['name'], 'stream_id': m['stream_id'], 'stream_icon': m.get('stream_icon', ''), 'category': m.get('category_name', ''), 'tmdb_id': m.get('tmdb_id') or m.get('tmdb') or '', 'imdb_id': m.get('imdb_id') or m.get('imdb') or '', 'plot': m.get('plot') or m.get('description') or m.get('overview') or '', 'rating': m.get('rating') or m.get('rating_5based') or '', 'cast': m.get('cast') or []} for m in movies_data]
             categories = sorted(set(m['category'] for m in movies if m['category']))
         except Exception as e:
             PrintLog(f"Error reading movies cache: {e}", "ERROR")
@@ -1778,10 +1814,45 @@ def _tmdb_lookup(name, media_type, api_key):
         pass
     return None, None
 
+def _tmdb_cast(tmdb_id, media_type, api_key):
+    """Fetch top-5 billed cast via TMDB credits API. media_type: 'movie' or 'tv'"""
+    if not api_key or not tmdb_id:
+        return []
+    try:
+        r = requests.get(
+            f'https://api.themoviedb.org/3/{media_type}/{tmdb_id}/credits',
+            params={'api_key': api_key},
+            timeout=5
+        )
+        if r.status_code == 200:
+            cast = _safe_json(r).get('cast', [])
+            return [{'name': c.get('name'), 'id': c.get('id')} for c in cast[:5]]
+    except Exception:
+        pass
+    return []
+
+def _tmdb_poster(tmdb_id, media_type, api_key):
+    """Fetch poster_path for a known tmdb_id via TMDB details API."""
+    if not api_key or not tmdb_id:
+        return None
+    try:
+        r = requests.get(
+            f'https://api.themoviedb.org/3/{media_type}/{tmdb_id}',
+            params={'api_key': api_key},
+            timeout=5
+        )
+        if r.status_code == 200:
+            poster = _safe_json(r).get('poster_path')
+            return f'https://image.tmdb.org/t/p/w500{poster}' if poster else None
+    except Exception:
+        pass
+    return None
+
 @main_bp.route('/get_vod_info/<int:stream_id>')
 def get_vod_info(stream_id):
     # Check movies cache first
-    tmdb_id = imdb_id = rating = plot = name = ''
+    tmdb_id = imdb_id = rating = plot = name = poster_url = ''
+    cast = []
     try:
         movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
         if os.path.exists(movies_cache_path):
@@ -1789,13 +1860,44 @@ def get_vod_info(stream_id):
                 movies_data = json.load(f)
             movie = next((m for m in movies_data if m.get('stream_id') == stream_id), None)
             if movie:
-                name = movie.get('name', '')
-                tmdb_id = movie.get('tmdb_id') or ''
-                imdb_id = movie.get('imdb_id') or ''
-                rating  = movie.get('rating') or ''
-                plot    = movie.get('plot') or ''
+                name       = movie.get('name', '')
+                tmdb_id    = movie.get('tmdb_id') or ''
+                imdb_id    = movie.get('imdb_id') or ''
+                rating     = movie.get('rating') or ''
+                plot       = movie.get('plot') or ''
+                cast       = movie.get('cast') or []
+                poster_url = movie.get('poster_url') or ''
                 if tmdb_id:
-                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+                    tmdb_api_key = get_credential('tmdb_api_key') or ''
+                    if not cast:
+                        cast = _tmdb_cast(tmdb_id, 'movie', tmdb_api_key)
+                        if cast:
+                            try:
+                                for m in movies_data:
+                                    if m.get('stream_id') == stream_id:
+                                        m['cast'] = cast
+                                        break
+                                tmp = movies_cache_path + '.tmp'
+                                with open(tmp, 'w', encoding='utf-8') as f:
+                                    json.dump(movies_data, f)
+                                os.replace(tmp, movies_cache_path)
+                            except Exception:
+                                pass
+                    if not poster_url:
+                        poster_url = _tmdb_poster(tmdb_id, 'movie', tmdb_api_key) or ''
+                        if poster_url:
+                            try:
+                                for m in movies_data:
+                                    if m.get('stream_id') == stream_id:
+                                        m['poster_url'] = poster_url
+                                        break
+                                tmp = movies_cache_path + '.tmp'
+                                with open(tmp, 'w', encoding='utf-8') as f:
+                                    json.dump(movies_data, f)
+                                os.replace(tmp, movies_cache_path)
+                            except Exception:
+                                pass
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
     except Exception:
         pass
 
@@ -1806,7 +1908,7 @@ def get_vod_info(stream_id):
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_vod_info&vod_id={stream_id}"
-        response = requests.get(api_url, timeout=5)
+        response = provider_get(api_url, timeout=5)
         response.raise_for_status()
         info = _safe_json(response).get('info', {})
         tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
@@ -1821,21 +1923,32 @@ def get_vod_info(stream_id):
     # If still no tmdb_id, try TMDB search by name
     if not tmdb_id and name:
         tmdb_api_key = get_credential('tmdb_api_key') or ''
-        tmdb_id, _ = _tmdb_lookup(name, 'movie', tmdb_api_key)
-        tmdb_id = tmdb_id or ''
+        tmdb_id, poster_url = _tmdb_lookup(name, 'movie', tmdb_api_key)
+        tmdb_id    = tmdb_id or ''
+        poster_url = poster_url or ''
+
+    # Fetch cast and poster from TMDB now that we have a tmdb_id
+    if tmdb_id:
+        tmdb_api_key = get_credential('tmdb_api_key') or ''
+        if not cast:
+            cast = _tmdb_cast(tmdb_id, 'movie', tmdb_api_key)
+        if not poster_url:
+            poster_url = _tmdb_poster(tmdb_id, 'movie', tmdb_api_key) or ''
 
     # Write enriched data back to cache so the next request is served instantly
-    if any([tmdb_id, imdb_id, plot, rating]):
+    if any([tmdb_id, imdb_id, plot, rating, cast, poster_url]):
         try:
             movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
             with open(movies_cache_path, encoding='utf-8') as f:
                 movies_data = json.load(f)
             for m in movies_data:
                 if m.get('stream_id') == stream_id:
-                    if tmdb_id: m['tmdb_id'] = tmdb_id
-                    if imdb_id: m['imdb_id'] = imdb_id
-                    if plot:    m['plot']    = plot
-                    if rating:  m['rating']  = rating
+                    if tmdb_id:    m['tmdb_id']    = tmdb_id
+                    if imdb_id:    m['imdb_id']    = imdb_id
+                    if plot:       m['plot']       = plot
+                    if rating:     m['rating']     = rating
+                    if cast:       m['cast']       = cast
+                    if poster_url: m['poster_url'] = poster_url
                     break
             tmp = movies_cache_path + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
@@ -1844,12 +1957,13 @@ def get_vod_info(stream_id):
         except Exception:
             pass
 
-    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
 
 
 @main_bp.route('/get_series_info/<int:series_id>')
 def get_series_info_meta(series_id):
-    tmdb_id = imdb_id = rating = plot = name = ''
+    tmdb_id = imdb_id = rating = plot = name = poster_url = ''
+    cast = []
 
     # Check series cache first
     try:
@@ -1859,13 +1973,44 @@ def get_series_info_meta(series_id):
                 series_data = json.load(f)
             serie = next((s for s in series_data if s.get('series_id') == series_id), None)
             if serie:
-                name    = serie.get('name', '')
-                tmdb_id = serie.get('tmdb_id') or ''
-                imdb_id = serie.get('imdb_id') or ''
-                rating  = serie.get('rating') or ''
-                plot    = serie.get('plot') or ''
+                name       = serie.get('name', '')
+                tmdb_id    = serie.get('tmdb_id') or ''
+                imdb_id    = serie.get('imdb_id') or ''
+                rating     = serie.get('rating') or ''
+                plot       = serie.get('plot') or ''
+                cast       = serie.get('cast') or []
+                poster_url = serie.get('poster_url') or ''
                 if tmdb_id:
-                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+                    tmdb_api_key = get_credential('tmdb_api_key') or ''
+                    if not cast:
+                        cast = _tmdb_cast(tmdb_id, 'tv', tmdb_api_key)
+                        if cast:
+                            try:
+                                for s in series_data:
+                                    if s.get('series_id') == series_id:
+                                        s['cast'] = cast
+                                        break
+                                tmp = series_cache_path + '.tmp'
+                                with open(tmp, 'w', encoding='utf-8') as f:
+                                    json.dump(series_data, f)
+                                os.replace(tmp, series_cache_path)
+                            except Exception:
+                                pass
+                    if not poster_url:
+                        poster_url = _tmdb_poster(tmdb_id, 'tv', tmdb_api_key) or ''
+                        if poster_url:
+                            try:
+                                for s in series_data:
+                                    if s.get('series_id') == series_id:
+                                        s['poster_url'] = poster_url
+                                        break
+                                tmp = series_cache_path + '.tmp'
+                                with open(tmp, 'w', encoding='utf-8') as f:
+                                    json.dump(series_data, f)
+                                os.replace(tmp, series_cache_path)
+                            except Exception:
+                                pass
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
     except Exception:
         pass
 
@@ -1876,7 +2021,7 @@ def get_series_info_meta(series_id):
         domain_with_port, _ = rest.split('/get.php', 1)
         username, password = extract_credentials_from_url(m3u_url)
         api_url = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}&action=get_series_info&series_id={series_id}"
-        response = requests.get(api_url, timeout=5)
+        response = provider_get(api_url, timeout=5)
         response.raise_for_status()
         info = _safe_json(response).get('info', {})
         tmdb_id = info.get('tmdb_id') or info.get('tmdb') or tmdb_id
@@ -1891,21 +2036,32 @@ def get_series_info_meta(series_id):
     # If still no tmdb_id, search TMDB by name
     if not tmdb_id and name:
         tmdb_api_key = get_credential('tmdb_api_key') or ''
-        tmdb_id, _ = _tmdb_lookup(name, 'tv', tmdb_api_key)
-        tmdb_id = tmdb_id or ''
+        tmdb_id, poster_url = _tmdb_lookup(name, 'tv', tmdb_api_key)
+        tmdb_id    = tmdb_id or ''
+        poster_url = poster_url or ''
+
+    # Fetch cast and poster from TMDB now that we have a tmdb_id
+    if tmdb_id:
+        tmdb_api_key = get_credential('tmdb_api_key') or ''
+        if not cast:
+            cast = _tmdb_cast(tmdb_id, 'tv', tmdb_api_key)
+        if not poster_url:
+            poster_url = _tmdb_poster(tmdb_id, 'tv', tmdb_api_key) or ''
 
     # Write enriched data back to cache so the next request is served instantly
-    if any([tmdb_id, imdb_id, plot, rating]):
+    if any([tmdb_id, imdb_id, plot, rating, cast, poster_url]):
         try:
             series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
             with open(series_cache_path, encoding='utf-8') as f:
                 series_data = json.load(f)
             for s in series_data:
                 if s.get('series_id') == series_id:
-                    if tmdb_id: s['tmdb_id'] = tmdb_id
-                    if imdb_id: s['imdb_id'] = imdb_id
-                    if plot:    s['plot']    = plot
-                    if rating:  s['rating']  = rating
+                    if tmdb_id:    s['tmdb_id']    = tmdb_id
+                    if imdb_id:    s['imdb_id']    = imdb_id
+                    if plot:       s['plot']       = plot
+                    if rating:     s['rating']     = rating
+                    if cast:       s['cast']       = cast
+                    if poster_url: s['poster_url'] = poster_url
                     break
             tmp = series_cache_path + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
@@ -1914,7 +2070,63 @@ def get_series_info_meta(series_id):
         except Exception:
             pass
 
-    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot})
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
+
+
+@main_bp.route('/search_by_actor/<int:person_id>')
+def search_by_actor(person_id):
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    matched_movies = []
+    matched_series = []
+
+    try:
+        if os.path.exists(movies_cache_path):
+            with open(movies_cache_path, encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                movies_data = data
+            elif isinstance(data, dict):
+                movies_data = next((v for v in data.values() if isinstance(v, list)), [])
+            else:
+                movies_data = []
+            for item in movies_data:
+                if not isinstance(item, dict):
+                    continue
+                if any(isinstance(c, dict) and c.get('id') == person_id for c in item.get('cast', [])):
+                    matched_movies.append({
+                        'name': item.get('name'),
+                        'stream_id': item.get('stream_id'),
+                        'stream_icon': item.get('stream_icon', ''),
+                        'tmdb_id': item.get('tmdb_id', '')
+                    })
+    except Exception as e:
+        PrintLog(f"search_by_actor: failed to read movies cache: {e}", "ERROR")
+
+    try:
+        if os.path.exists(series_cache_path):
+            with open(series_cache_path, encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                series_data = data
+            elif isinstance(data, dict):
+                series_data = next((v for v in data.values() if isinstance(v, list)), [])
+            else:
+                series_data = []
+            for item in series_data:
+                if not isinstance(item, dict):
+                    continue
+                if any(isinstance(c, dict) and c.get('id') == person_id for c in item.get('cast', [])):
+                    matched_series.append({
+                        'name': item.get('name'),
+                        'series_id': item.get('series_id'),
+                        'cover': item.get('cover', ''),
+                        'tmdb_id': item.get('tmdb_id', '')
+                    })
+    except Exception as e:
+        PrintLog(f"search_by_actor: failed to read series cache: {e}", "ERROR")
+
+    return jsonify({'movies': matched_movies, 'series': matched_series})
 
 
 @main_bp.route('/check_jellyfin/<string:type>/<path:name>')
@@ -2081,6 +2293,10 @@ def settings():
         update_config_variable(CONFIG_PATH, 'backup_scheduled', form.backup_scheduled.data)
         update_config_variable(CONFIG_PATH, 'backup_time', form.backup_time.data or '02:00')
         update_config_variable(CONFIG_PATH, 'backup_keep', str(form.backup_keep.data) if form.backup_keep.data else '5')
+        update_config_variable(CONFIG_PATH, 'cast_enrich_enabled', form.cast_enrich_enabled.data)
+        update_config_variable(CONFIG_PATH, 'cast_enrich_time', form.cast_enrich_time.data or '02:00')
+        update_config_variable(CONFIG_PATH, 'tmdb_enrich_enabled', form.tmdb_enrich_enabled.data)
+        update_config_variable(CONFIG_PATH, 'tmdb_enrich_time', form.tmdb_enrich_time.data or '02:00')
         update_config_variable(CONFIG_PATH, 'debug', form.debug.data)
 
         # Manage scheduled backup job
@@ -2098,6 +2314,38 @@ def settings():
                 scheduler.remove_job(id='SMB Backup scheduler')
             scheduler.add_job(id='SMB Backup scheduler', func=scheduled_smb_backup,
                               trigger='cron', hour=bh, minute=bm)
+
+        # Manage cast enrichment job
+        cast_job = scheduler.get_job('Cast Enrich scheduler')
+        if form.cast_enrich_enabled.data == '0':
+            if cast_job:
+                scheduler.remove_job(id='Cast Enrich scheduler')
+        else:
+            try:
+                t = form.cast_enrich_time.data or '02:00'
+                ch, cm = int(t.split(':')[0]), int(t.split(':')[1])
+            except Exception:
+                ch, cm = 2, 0
+            if cast_job:
+                scheduler.remove_job(id='Cast Enrich scheduler')
+            scheduler.add_job(id='Cast Enrich scheduler', func=enrich_cast_background,
+                              trigger='cron', hour=ch, minute=cm)
+
+        # Manage TMDB ID enrichment job
+        tmdb_job = scheduler.get_job('TMDB Enrich scheduler')
+        if form.tmdb_enrich_enabled.data == '0':
+            if tmdb_job:
+                scheduler.remove_job(id='TMDB Enrich scheduler')
+        else:
+            try:
+                t = form.tmdb_enrich_time.data or '02:00'
+                th, tm = int(t.split(':')[0]), int(t.split(':')[1])
+            except Exception:
+                th, tm = 2, 0
+            if tmdb_job:
+                scheduler.remove_job(id='TMDB Enrich scheduler')
+            scheduler.add_job(id='TMDB Enrich scheduler', func=enrich_tmdb_background,
+                              trigger='cron', hour=th, minute=tm)
 
         job = scheduler.get_job('M3U Download scheduler')
         if job:
@@ -2157,6 +2405,10 @@ def settings():
         form.backup_scheduled.data = get_config_variable(CONFIG_PATH, 'backup_scheduled') or "0"
         form.backup_time.data = get_config_variable(CONFIG_PATH, 'backup_time') or "02:00"
         form.backup_keep.data = int(get_config_variable(CONFIG_PATH, 'backup_keep') or 5)
+        form.cast_enrich_enabled.data = get_config_variable(CONFIG_PATH, 'cast_enrich_enabled') or '0'
+        form.cast_enrich_time.data = get_config_variable(CONFIG_PATH, 'cast_enrich_time') or '02:00'
+        form.tmdb_enrich_enabled.data = get_config_variable(CONFIG_PATH, 'tmdb_enrich_enabled') or '0'
+        form.tmdb_enrich_time.data = get_config_variable(CONFIG_PATH, 'tmdb_enrich_time') or '02:00'
         form.debug.data = get_config_variable(CONFIG_PATH, 'debug') or "no"
 
     return render_template('settings.html', form=form)
@@ -2298,6 +2550,242 @@ def scheduled_smb_backup():
 
         # Cleanup only runs after a confirmed successful write
         _smb_cleanup(smbclient, smb_host, smb_share, smb_path, backup_keep)
+
+
+def enrich_cast_background():
+    """Scheduled job: fetch and cache top-5 billed cast for movies/series missing it."""
+    PrintLog("Cast enrichment: starting", "INFO")
+    tmdb_api_key = get_credential('tmdb_api_key') or ''
+    if not tmdb_api_key:
+        PrintLog("Cast enrichment: no TMDB API key configured", "WARNING")
+        return
+
+    def fetch_cast(tmdb_id, media_type):
+        """Fetch top-5 billed cast, retrying once after Retry-After on a 429."""
+        url = f'https://api.themoviedb.org/3/{media_type}/{tmdb_id}/credits'
+        try:
+            r = requests.get(url, params={'api_key': tmdb_api_key}, timeout=5)
+            if r.status_code == 429:
+                try:
+                    retry_after = int(r.headers.get('Retry-After', 5))
+                except (TypeError, ValueError):
+                    retry_after = 5
+                PrintLog(f"Cast enrichment: rate limited on {media_type}/{tmdb_id}, retrying after {retry_after}s", "WARNING")
+                sleep(retry_after)
+                r = requests.get(url, params={'api_key': tmdb_api_key}, timeout=5)
+            if r.status_code == 200:
+                cast = _safe_json(r).get('cast', [])
+                return [{'name': c.get('name'), 'id': c.get('id')} for c in cast[:5]]
+            PrintLog(f"Cast enrichment: failed to fetch {media_type}/{tmdb_id} (status {r.status_code}), skipping", "WARNING")
+        except Exception as e:
+            PrintLog(f"Cast enrichment: request failed for {media_type}/{tmdb_id}: {e}", "WARNING")
+        return []
+
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    try:
+        with open(movies_cache_path, encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            movies_data = data
+        elif isinstance(data, dict):
+            movies_data = next((v for v in data.values() if isinstance(v, list)), [])
+        else:
+            movies_data = []
+        for movie in movies_data:
+            if isinstance(movie, dict) and not isinstance(movie.get('cast'), list):
+                movie.pop('cast', None)
+        for movie in movies_data:
+            if not isinstance(movie, dict):
+                continue
+            tmdb_id = movie.get('tmdb_id')
+            if tmdb_id and not movie.get('cast'):
+                movie['cast'] = fetch_cast(tmdb_id, 'movie')
+                sleep(0.1)
+        tmp = movies_cache_path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data if isinstance(data, dict) else movies_data, f)
+        os.replace(tmp, movies_cache_path)
+    except Exception as e:
+        PrintLog(f"Cast enrichment: failed to process movies cache: {e}", "ERROR")
+
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    try:
+        with open(series_cache_path, encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            series_data = data
+        elif isinstance(data, dict):
+            series_data = next((v for v in data.values() if isinstance(v, list)), [])
+        else:
+            series_data = []
+        for serie in series_data:
+            if isinstance(serie, dict) and not isinstance(serie.get('cast'), list):
+                serie.pop('cast', None)
+        for serie in series_data:
+            if not isinstance(serie, dict):
+                continue
+            tmdb_id = serie.get('tmdb_id')
+            if tmdb_id and not serie.get('cast'):
+                serie['cast'] = fetch_cast(tmdb_id, 'tv')
+                sleep(0.1)
+        tmp = series_cache_path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data if isinstance(data, dict) else series_data, f)
+        os.replace(tmp, series_cache_path)
+    except Exception as e:
+        PrintLog(f"Cast enrichment: failed to process series cache: {e}", "ERROR")
+
+    PrintLog("Cast enrichment: finished", "INFO")
+
+
+@main_bp.route('/run_cast_enrich', methods=['POST'])
+def run_cast_enrich():
+    Thread(target=enrich_cast_background, daemon=True).start()
+    return jsonify({'status': 'started'})
+
+
+_tmdb_enrich_status = {'running': False, 'phase': '', 'processed': 0, 'total': 0}
+
+def enrich_tmdb_background():
+    """Scheduled job: fetch tmdb_id/imdb_id/plot/rating from the provider for movies/series missing tmdb_id."""
+    global _tmdb_enrich_status
+    _tmdb_enrich_status = {'running': True, 'phase': 'starting', 'processed': 0, 'total': 0}
+    PrintLog("TMDB enrichment: starting", "INFO")
+
+    try:
+        m3u_url = get_credential('url')
+        if not m3u_url or '://' not in m3u_url or '/get.php' not in m3u_url:
+            PrintLog("TMDB enrichment: provider URL not configured or unsupported format", "ERROR")
+            return
+        scheme, rest = m3u_url.split('://', 1)
+        domain_with_port, _ = rest.split('/get.php', 1)
+        username, password = extract_credentials_from_url(m3u_url)
+        base = f"{scheme}://{domain_with_port}/player_api.php?username={username}&password={password}"
+    except Exception as e:
+        PrintLog(f"TMDB enrichment: failed to parse provider URL: {e}", "ERROR")
+        return
+
+    def fetch_info(action, id_param, item_id):
+        try:
+            api_url = f"{base}&action={action}&{id_param}={item_id}"
+            response = provider_get(api_url, timeout=5)
+            response.raise_for_status()
+            return _safe_json(response).get('info', {})
+        except Exception as e:
+            PrintLog(f"TMDB enrichment: request failed for {action} {item_id}: {e}", "WARNING")
+            return {}
+
+    def apply_info(item, info):
+        tmdb_id = info.get('tmdb_id') or info.get('tmdb') or ''
+        imdb_id = info.get('imdb_id') or info.get('imdb') or ''
+        rating  = info.get('rating') or info.get('rating_5based') or ''
+        plot    = info.get('plot') or info.get('description') or info.get('overview') or ''
+        if tmdb_id: item['tmdb_id'] = tmdb_id
+        if imdb_id: item['imdb_id'] = imdb_id
+        if plot:    item['plot']    = plot
+        if rating:  item['rating']  = rating
+
+    # ── Movies ───────────────────────────────────────────────────────────────
+    movies_cache_path = os.path.join(BASE_DIR, 'files', 'movies_cache.json')
+    try:
+        with open(movies_cache_path, encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            movies_data = data
+        elif isinstance(data, dict):
+            movies_data = next((v for v in data.values() if isinstance(v, list)), [])
+        else:
+            movies_data = []
+        for movie in movies_data:
+            if isinstance(movie, dict) and not isinstance(movie.get('cast'), list):
+                movie.pop('cast', None)
+
+        def write_movies_cache():
+            tmp = movies_cache_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data if isinstance(data, dict) else movies_data, f)
+            os.replace(tmp, movies_cache_path)
+
+        movies_todo = sum(1 for m in movies_data if isinstance(m, dict) and not m.get('tmdb_id') and m.get('stream_id'))
+        _tmdb_enrich_status.update({'phase': 'movies', 'processed': 0, 'total': movies_todo})
+        processed = 0
+        for movie in movies_data:
+            if not isinstance(movie, dict) or movie.get('tmdb_id'):
+                continue
+            stream_id = movie.get('stream_id')
+            if not stream_id:
+                continue
+            info = fetch_info('get_vod_info', 'vod_id', stream_id)
+            apply_info(movie, info)
+            processed += 1
+            _tmdb_enrich_status['processed'] = processed
+            sleep(1)
+            if processed % 100 == 0:
+                PrintLog(f"TMDB enrichment: processed {processed} movies", "INFO")
+            if processed % 50 == 0:
+                write_movies_cache()
+        write_movies_cache()
+        PrintLog(f"TMDB enrichment: finished movies ({processed} processed)", "INFO")
+    except Exception as e:
+        PrintLog(f"TMDB enrichment: failed to process movies cache: {e}", "ERROR")
+
+    # ── Series ───────────────────────────────────────────────────────────────
+    series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
+    try:
+        with open(series_cache_path, encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            series_data = data
+        elif isinstance(data, dict):
+            series_data = next((v for v in data.values() if isinstance(v, list)), [])
+        else:
+            series_data = []
+        for serie in series_data:
+            if isinstance(serie, dict) and not isinstance(serie.get('cast'), list):
+                serie.pop('cast', None)
+
+        def write_series_cache():
+            tmp = series_cache_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data if isinstance(data, dict) else series_data, f)
+            os.replace(tmp, series_cache_path)
+
+        series_todo = sum(1 for s in series_data if isinstance(s, dict) and not s.get('tmdb_id') and s.get('series_id'))
+        _tmdb_enrich_status.update({'phase': 'series', 'processed': 0, 'total': series_todo})
+        processed = 0
+        for serie in series_data:
+            if not isinstance(serie, dict) or serie.get('tmdb_id'):
+                continue
+            series_id = serie.get('series_id')
+            if not series_id:
+                continue
+            info = fetch_info('get_series_info', 'series_id', series_id)
+            apply_info(serie, info)
+            processed += 1
+            _tmdb_enrich_status['processed'] = processed
+            sleep(1)
+            if processed % 100 == 0:
+                PrintLog(f"TMDB enrichment: processed {processed} series", "INFO")
+            if processed % 50 == 0:
+                write_series_cache()
+        write_series_cache()
+        PrintLog(f"TMDB enrichment: finished series ({processed} processed)", "INFO")
+    except Exception as e:
+        PrintLog(f"TMDB enrichment: failed to process series cache: {e}", "ERROR")
+
+    PrintLog("TMDB enrichment: finished", "INFO")
+    _tmdb_enrich_status['running'] = False
+
+
+@main_bp.route('/tmdb_enrich_status', methods=['GET'])
+def tmdb_enrich_status():
+    return jsonify(_tmdb_enrich_status)
+
+
+@main_bp.route('/run_tmdb_enrich', methods=['POST'])
+def run_tmdb_enrich():
+    Thread(target=enrich_tmdb_background, daemon=True).start()
+    return jsonify({'status': 'started'})
 
 
 @main_bp.route('/restore_config', methods=['POST'])
@@ -2511,7 +2999,7 @@ def jellyfin_library():
         flash("Jellyfin is not configured. Please set the URL and API key in Settings.", "warning")
         return render_template('jellyfin_library.html', items=[], error=True, jellyfin_url='', jellyfin_api_key='')
 
-    headers = {'X-Emby-Token': jellyfin_api_key, 'Content-Type': 'application/json'}
+    headers = {'Authorization': f'MediaBrowser Token="{jellyfin_api_key}"', 'Content-Type': 'application/json'}
     jellyfin_url = jellyfin_url.rstrip('/')
 
     try:
@@ -2662,7 +3150,7 @@ def jellyfin_seasons(item_id):
 
     jellyfin_url = (get_config_variable(CONFIG_PATH, 'jellyfin_url') or '').rstrip('/')
     jellyfin_api_key = get_credential('jellyfin_api_key') or ''
-    headers = {'X-Emby-Token': jellyfin_api_key}
+    headers = {'Authorization': f'MediaBrowser Token="{jellyfin_api_key}"', 'Content-Type': 'application/json'}
 
     try:
         # Fetch seasons
@@ -2722,7 +3210,7 @@ def jellyfin_remove():
 
     jellyfin_url = (get_config_variable(CONFIG_PATH, 'jellyfin_url') or '').rstrip('/')
     jellyfin_api_key = get_credential('jellyfin_api_key') or ''
-    headers = {'X-Emby-Token': jellyfin_api_key}
+    headers = {'Authorization': f'MediaBrowser Token="{jellyfin_api_key}"', 'Content-Type': 'application/json'}
 
     errors = []
 
@@ -2883,11 +3371,40 @@ def ansi_to_html_converter(text):
     text = ansi_escape.sub('', text)
     return text
 
-def get_log_lines(hide_webserver_logs, search=''):
-    log_file = f'{BASE_DIR}/logs/M3Usort.log'
+def get_available_log_dates():
+    """Return sorted list of available log date strings (YYYY-MM-DD), newest first.
+    Today is represented as 'today'."""
+    import re
+    log_dir = os.path.join(BASE_DIR, 'logs')
+    dates = []
+    pattern = re.compile(r'^M3Usort\.log\.(\d{4}-\d{2}-\d{2})$')
+    try:
+        for name in os.listdir(log_dir):
+            m = pattern.match(name)
+            if m:
+                dates.append(m.group(1))
+    except Exception:
+        pass
+    dates.sort(reverse=True)
+    return dates
+
+
+def get_log_file_for_date(date_str):
+    """Return the log file path for a given date string (YYYY-MM-DD) or 'today'."""
+    log_dir = os.path.join(BASE_DIR, 'logs')
+    if not date_str or date_str == 'today':
+        return os.path.join(log_dir, 'M3Usort.log')
+    return os.path.join(log_dir, f'M3Usort.log.{date_str}')
+
+
+def get_log_lines(hide_webserver_logs, search='', date_str='today'):
+    log_file = get_log_file_for_date(date_str)
     all_lines = []
 
-    with open(log_file, 'r') as file:
+    if not os.path.exists(log_file):
+        return []
+
+    with open(log_file, 'r', encoding='utf-8', errors='replace') as file:
         for line in file:
             if hide_webserver_logs == "1" and ('GET /' in line or 'POST /' in line):
                 continue
@@ -3004,6 +3521,21 @@ def changelog():
     return render_template('changelog.html', content=content)
 
 
+@main_bp.route('/log/download')
+@admin_required
+def log_download():
+    from flask import send_file
+    date_str = request.args.get('date', 'today')
+    log_file = get_log_file_for_date(date_str)
+    if not os.path.exists(log_file):
+        return "Log file not found", 404
+    if date_str and date_str != 'today':
+        download_name = f'M3Usort.log.{date_str}'
+    else:
+        download_name = 'M3Usort.log'
+    return send_file(log_file, as_attachment=True, download_name=download_name, mimetype='text/plain')
+
+
 @main_bp.route('/log')
 def log():
     hide_webserver_logs = get_config_variable(CONFIG_PATH, 'hide_webserver_logs')
@@ -3011,9 +3543,11 @@ def log():
     search = request.args.get('q', '').strip()
     active_types_str = request.args.get('types', 'info,warning,notice,error')
     active_types = set(active_types_str.split(','))
+    date_str = request.args.get('date', 'today')
     lines_per_page = 75
 
-    all_lines = get_log_lines(hide_webserver_logs, search)
+    available_dates = get_available_log_dates()
+    all_lines = get_log_lines(hide_webserver_logs, search, date_str)
 
     classified = []
     for line in all_lines:
@@ -3057,7 +3591,8 @@ def log():
 
     return render_template('log.html', log_entries=log_entries, current_page=page,
                            total_pages=total_pages, search_query=search,
-                           active_types=active_types_str)
+                           active_types=active_types_str, date_str=date_str,
+                           available_dates=available_dates)
 
 def is_cache_valid():
     if not GROUPS_CACHE['last_updated']:
@@ -3115,22 +3650,44 @@ def startup_delayed():
                     update_groups_cache()
 
                 debug = get_config_variable(CONFIG_PATH, 'debug')
-                if debug == "yes":
-                    scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', minutes=max_age_before_download)
-                else:
-                    scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=max_age_before_download)
+                if not scheduler.get_job('M3U Download scheduler'):
+                    if debug == "yes":
+                        scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', minutes=max_age_before_download)
+                    else:
+                        scheduler.add_job(id='M3U Download scheduler', func=scheduled_renew_m3u, trigger='interval', hours=max_age_before_download)
 
                 m3u_url = get_credential('url')
                 enable_scheduler = get_config_variable(CONFIG_PATH, 'enable_scheduler')
 
-                if enable_scheduler == "1":
+                if enable_scheduler == "1" and not scheduler.get_job('VOD scheduler'):
                     scan_interval = int(get_config_variable(CONFIG_PATH, 'scan_interval'))
                     debug = get_config_variable(CONFIG_PATH, 'debug')
                     if debug == "yes":
                         scheduler.add_job(id='VOD scheduler', func=scheduled_vod_download, trigger='interval', minutes=scan_interval)
                     else:
                         scheduler.add_job(id='VOD scheduler', func=scheduled_vod_download, trigger='interval', hours=scan_interval)
-                scheduler.add_job(id='System tasks scheduler', func=scheduled_system_tasks, trigger='interval', hours=1)
+                if not scheduler.get_job('System tasks scheduler'):
+                    scheduler.add_job(id='System tasks scheduler', func=scheduled_system_tasks, trigger='interval', hours=1)
+
+                cast_enrich_enabled = get_config_variable(CONFIG_PATH, 'cast_enrich_enabled') or '0'
+                if cast_enrich_enabled == '1' and not scheduler.get_job('Cast Enrich scheduler'):
+                    try:
+                        t = get_config_variable(CONFIG_PATH, 'cast_enrich_time') or '02:00'
+                        ch, cm = int(t.split(':')[0]), int(t.split(':')[1])
+                    except Exception:
+                        ch, cm = 2, 0
+                    scheduler.add_job(id='Cast Enrich scheduler', func=enrich_cast_background,
+                                      trigger='cron', hour=ch, minute=cm)
+
+                tmdb_enrich_enabled = get_config_variable(CONFIG_PATH, 'tmdb_enrich_enabled') or '0'
+                if tmdb_enrich_enabled == '1' and not scheduler.get_job('TMDB Enrich scheduler'):
+                    try:
+                        t = get_config_variable(CONFIG_PATH, 'tmdb_enrich_time') or '02:00'
+                        th, tm = int(t.split(':')[0]), int(t.split(':')[1])
+                    except Exception:
+                        th, tm = 2, 0
+                    scheduler.add_job(id='TMDB Enrich scheduler', func=enrich_tmdb_background,
+                                      trigger='cron', hour=th, minute=tm)
 
                 match_type = get_config_variable(CONFIG_PATH, 'match_type')
                 PrintLog(f"match type is {match_type}", "NOTICE")
@@ -3184,6 +3741,7 @@ def startup_instant():
         MUST_CHANGE_PW = 1
 
 def PrintLog(string, type):
+    string = _redact(string)
     if type == "DEBUG":
         logging.debug(string)
     elif type == "INFO":
@@ -3197,7 +3755,7 @@ def PrintLog(string, type):
     elif type == "NOTICE":
         logger.notice(string)
 
-    print(string)
+    print(string, flush=True)
 
 
 def update_groups_cache():

@@ -93,6 +93,7 @@ function addSerieToServer(serieName, serieId) {
         if(c){const d=document.createElement('div');d.textContent=data.message;d.className='flash-message info';c.appendChild(d);hideFlashMessagesAfterDelay();}
     }).catch(e=>console.error(e));
 }
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function renderModalInfo(data, title, type, modalLinks) {
     let metaHtml = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px;">';
     if (data.rating) metaHtml += `<span style="color:#c8a030;font-weight:600;">★ ${parseFloat(data.rating).toFixed(1)}</span>`;
@@ -111,7 +112,13 @@ function renderModalInfo(data, title, type, modalLinks) {
         } else { descHtml+=short; }
         descHtml+='</div>';
     }
-    modalLinks.innerHTML = metaHtml + btns + descHtml;
+    let castHtml = '';
+    if (data.cast && data.cast.length) {
+        castHtml = '<div style="margin-top:8px;border-top:1px solid #1e1e1e;padding-top:8px;font-size:12px;color:#888;">Cast: ' +
+            data.cast.map(c => `<span class="cast-actor-link" data-actor-id="${c.id}" data-actor-name="${escHtml(c.name)}" style="color:#4aadcf;cursor:pointer;margin-right:8px;">${escHtml(c.name)}</span>`).join('') +
+            '</div>';
+    }
+    modalLinks.innerHTML = metaHtml + btns + descHtml + castHtml;
 }
 function checkJellyfin(name, type) {
     fetch(`{{ url_for('main_bp.check_jellyfin', type='movie', name='placeholder') }}`.replace('movie',type).replace('placeholder',encodeURIComponent(name)))
