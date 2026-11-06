@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.6
+- Fix 403 Forbidden from Xtream provider: all provider API calls now send `VLC/3.0.20 LibVLC/3.0.20` as User-Agent via a stateless `provider_get()` wrapper; override with `PROVIDER_USER_AGENT` environment variable if needed
+- Mask credentials in logs: `username=` and `password=` query parameters are redacted to `***` before anything is written to the log file
+- Sort on Movies and Series pages: dropdown with A–Z (default), Z–A, Newest first, Oldest first; sort applies after filtering and is respected by Load More
+- NSFW toggle on Movies page: dark red checkbox in filter bar hides adult content (category 145 — XXX FILMS) by default; state persisted per browser via localStorage
+- Fix mobile layout: `.ntw-split` two-column grid now collapses to single column on screens ≤768px
+- Fix mobile modal overflow: modal switches to column layout on narrow screens with poster going full width
+- Fix filter-bar alignment: all elements (input, selects, NSFW toggle, view-toggle) now sit on the same baseline; root cause was Skeleton CSS setting non-zero margins/padding/height on form elements and buttons — reset with explicit overrides on `.filter-bar > *` and `.vt-btn`
+- Fix view-toggle button icons: replaced broken SVG paths with Unicode ☰ (list) and ⊞ (grid); active state now fills full button height
+
 ## 2.0.5
 - TMDB ID enrichment: bulk-fetch TMDB IDs for all movies and series via the Xtream Codes player API (`get_vod_info` / `get_series_info`); run manually from Settings or on a schedule
 - TMDB Cast enrichment: fetch top-5 billed cast members for all items that have a TMDB ID; run manually or on a schedule
