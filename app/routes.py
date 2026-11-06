@@ -1848,6 +1848,28 @@ def _tmdb_poster(tmdb_id, media_type, api_key):
         pass
     return None
 
+def _tmdb_tv_detail(tmdb_id, api_key):
+    """Fetch TV detail fields: poster_url, number_of_seasons, status.
+    Reuses the single /tv/{id} call instead of making a separate poster call."""
+    if not api_key or not tmdb_id:
+        return None, None, None
+    try:
+        r = requests.get(
+            f'https://api.themoviedb.org/3/tv/{tmdb_id}',
+            params={'api_key': api_key},
+            timeout=5
+        )
+        if r.status_code == 200:
+            data = _safe_json(r)
+            poster = data.get('poster_path')
+            poster_url = f'https://image.tmdb.org/t/p/w500{poster}' if poster else None
+            number_of_seasons = data.get('number_of_seasons')
+            status = data.get('status') or ''
+            return poster_url, number_of_seasons, status
+    except Exception:
+        pass
+    return None, None, None
+
 @main_bp.route('/get_vod_info/<int:stream_id>')
 def get_vod_info(stream_id):
     # Check movies cache first
@@ -1962,7 +1984,8 @@ def get_vod_info(stream_id):
 
 @main_bp.route('/get_series_info/<int:series_id>')
 def get_series_info_meta(series_id):
-    tmdb_id = imdb_id = rating = plot = name = poster_url = ''
+    tmdb_id = imdb_id = rating = plot = name = poster_url = status = ''
+    number_of_seasons = None
     cast = []
 
     # Check series cache first
@@ -1973,13 +1996,15 @@ def get_series_info_meta(series_id):
                 series_data = json.load(f)
             serie = next((s for s in series_data if s.get('series_id') == series_id), None)
             if serie:
-                name       = serie.get('name', '')
-                tmdb_id    = serie.get('tmdb_id') or ''
-                imdb_id    = serie.get('imdb_id') or ''
-                rating     = serie.get('rating') or ''
-                plot       = serie.get('plot') or ''
-                cast       = serie.get('cast') or []
-                poster_url = serie.get('poster_url') or ''
+                name              = serie.get('name', '')
+                tmdb_id           = serie.get('tmdb_id') or ''
+                imdb_id           = serie.get('imdb_id') or ''
+                rating            = serie.get('rating') or ''
+                plot              = serie.get('plot') or ''
+                cast              = serie.get('cast') or []
+                poster_url        = serie.get('poster_url') or ''
+                number_of_seasons = serie.get('number_of_seasons')
+                status            = serie.get('status') or ''
                 if tmdb_id:
                     tmdb_api_key = get_credential('tmdb_api_key') or ''
                     if not cast:
@@ -1996,13 +2021,22 @@ def get_series_info_meta(series_id):
                                 os.replace(tmp, series_cache_path)
                             except Exception:
                                 pass
-                    if not poster_url:
-                        poster_url = _tmdb_poster(tmdb_id, 'tv', tmdb_api_key) or ''
-                        if poster_url:
+                    # Fetch TV detail (poster + seasons + status) if any are missing
+                    if not poster_url or number_of_seasons is None or not status:
+                        p, nos, st = _tmdb_tv_detail(tmdb_id, tmdb_api_key)
+                        if not poster_url and p:
+                            poster_url = p
+                        if number_of_seasons is None and nos is not None:
+                            number_of_seasons = nos
+                        if not status and st:
+                            status = st
+                        if p or nos is not None or st:
                             try:
                                 for s in series_data:
                                     if s.get('series_id') == series_id:
-                                        s['poster_url'] = poster_url
+                                        if p:             s['poster_url']        = poster_url
+                                        if nos is not None: s['number_of_seasons'] = nos
+                                        if st:            s['status']            = st
                                         break
                                 tmp = series_cache_path + '.tmp'
                                 with open(tmp, 'w', encoding='utf-8') as f:
@@ -2010,7 +2044,9 @@ def get_series_info_meta(series_id):
                                 os.replace(tmp, series_cache_path)
                             except Exception:
                                 pass
-                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
+                    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot,
+                                    'cast': cast, 'poster_url': poster_url,
+                                    'number_of_seasons': number_of_seasons, 'status': status})
     except Exception:
         pass
 
@@ -2040,28 +2076,36 @@ def get_series_info_meta(series_id):
         tmdb_id    = tmdb_id or ''
         poster_url = poster_url or ''
 
-    # Fetch cast and poster from TMDB now that we have a tmdb_id
+    # Fetch cast and TV detail (poster + seasons + status) from TMDB
     if tmdb_id:
         tmdb_api_key = get_credential('tmdb_api_key') or ''
         if not cast:
             cast = _tmdb_cast(tmdb_id, 'tv', tmdb_api_key)
-        if not poster_url:
-            poster_url = _tmdb_poster(tmdb_id, 'tv', tmdb_api_key) or ''
+        if not poster_url or number_of_seasons is None or not status:
+            p, nos, st = _tmdb_tv_detail(tmdb_id, tmdb_api_key)
+            if not poster_url and p:
+                poster_url = p
+            if number_of_seasons is None and nos is not None:
+                number_of_seasons = nos
+            if not status and st:
+                status = st
 
     # Write enriched data back to cache so the next request is served instantly
-    if any([tmdb_id, imdb_id, plot, rating, cast, poster_url]):
+    if any([tmdb_id, imdb_id, plot, rating, cast, poster_url, number_of_seasons is not None, status]):
         try:
             series_cache_path = os.path.join(BASE_DIR, 'files', 'series_cache.json')
             with open(series_cache_path, encoding='utf-8') as f:
                 series_data = json.load(f)
             for s in series_data:
                 if s.get('series_id') == series_id:
-                    if tmdb_id:    s['tmdb_id']    = tmdb_id
-                    if imdb_id:    s['imdb_id']    = imdb_id
-                    if plot:       s['plot']       = plot
-                    if rating:     s['rating']     = rating
-                    if cast:       s['cast']       = cast
-                    if poster_url: s['poster_url'] = poster_url
+                    if tmdb_id:                   s['tmdb_id']           = tmdb_id
+                    if imdb_id:                   s['imdb_id']           = imdb_id
+                    if plot:                      s['plot']              = plot
+                    if rating:                    s['rating']            = rating
+                    if cast:                      s['cast']              = cast
+                    if poster_url:                s['poster_url']        = poster_url
+                    if number_of_seasons is not None: s['number_of_seasons'] = number_of_seasons
+                    if status:                    s['status']            = status
                     break
             tmp = series_cache_path + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
@@ -2070,7 +2114,9 @@ def get_series_info_meta(series_id):
         except Exception:
             pass
 
-    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot, 'cast': cast, 'poster_url': poster_url})
+    return jsonify({'tmdb_id': tmdb_id, 'imdb_id': imdb_id, 'rating': rating, 'plot': plot,
+                    'cast': cast, 'poster_url': poster_url,
+                    'number_of_seasons': number_of_seasons, 'status': status})
 
 
 @main_bp.route('/search_by_actor/<int:person_id>')
