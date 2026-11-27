@@ -112,22 +112,27 @@ pub fn safe_name(title: &str) -> Option<String> {
     }
 }
 
+const QUALITY_TAGS: &[&str] = &[
+    "4k", "hdr", "sdr", "uhd", "bluray", "bdrip", "brrip", "web-dl", "webdl", "webrip", "dvdrip",
+    "remux", "hevc", "x264", "x265", "h264", "h.264", "h265", "h.265", "dts", "aac", "atmos",
+];
+
+/// Drop everything from the first quality tag ("4K", "HDR", "x265", …) on. Keeps case.
+pub fn cut_quality_tags(name: &str) -> String {
+    name.split_whitespace()
+        .take_while(|w| {
+            let w = w.to_lowercase();
+            !QUALITY_TAGS
+                .contains(&w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '.'))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Python's normalize_movie_name: drop everything from the first quality tag on,
 /// then a trailing "(year)"; lowercase.
 pub fn normalize_title(name: &str) -> String {
-    const TAGS: &[&str] = &[
-        "4k", "hdr", "sdr", "uhd", "bluray", "bdrip", "brrip", "web-dl", "webdl", "webrip",
-        "dvdrip", "remux", "hevc", "x264", "x265", "h264", "h.264", "h265", "h.265", "dts", "aac",
-        "atmos",
-    ];
-    let lower = name.to_lowercase();
-    let kept: Vec<&str> = lower
-        .split_whitespace()
-        .take_while(|w| {
-            !TAGS.contains(&w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '.'))
-        })
-        .collect();
-    strip_year(&kept.join(" ")).0.trim().to_string()
+    strip_year(&cut_quality_tags(name)).0.trim().to_lowercase()
 }
 
 /// "Title (2010)" → ("Title", Some(2010)).

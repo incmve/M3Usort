@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<p><a href="javascript:history.back()">← Back</a></p>
+<div class="detail" title="{{ name }}">
+  <div class="poster-box">{% if image.is_empty() %}<span>{{ name }}</span>{% else %}<img class="poster" src="{{ image }}" data-fallback="{{ fallback }}" alt="" referrerpolicy="no-referrer" onerror="imgFail(this)">{% endif %}</div>
+  <div>
+    <h1>{{ name }}</h1>
+    <div class="facts">
+      {% if !rating.is_empty() %}★ {{ rating }} · {% endif %}{{ category }}{% if !added.is_empty() %} · added {{ added }}{% endif %}
+      {% match seasons %}{% when Some(n) %} · {{ n }} season{% if *n != 1 %}s{% endif %}{% when None %}{% endmatch %}
+      {% if !status.is_empty() %} · <span class="badge {% if status == "Ended" || status == "Canceled" %}off{% else %}on{% endif %}">{{ status }}</span>{% endif %}
+    </div>
+    {% if in_library %}<div class="msg ok">✓ {{ library_note }}</div>{% else %}
+    <form method="post" action="/library/{% if is_movie %}movie{% else %}series{% endif %}/{{ id }}" class="add-form" style="margin-bottom:1rem"><button class="btn" type="submit">Add to library</button></form>{% endif %}
+    {% if plot.is_empty() %}<p class="help">No description available.</p>{% else %}<p>{{ plot }}</p>{% endif %}
+    {% if !cast.is_empty() %}
+      <h2>Cast</h2>
+      <div class="cast">{% for (pid, pname, role) in cast %}<a href="/actor/{{ pid }}">{{ pname }}{% if !role.is_empty() %}<span class="help">{{ role }}</span>{% endif %}</a>{% endfor %}</div>
+    {% elif !has_tmdb_key %}<p class="help">Set a TMDB key (Admin → Settings → TMDB) for cast and posters.</p>{% endif %}
+    <p>
+      {% if !tmdb_id.is_empty() %}<a href="https://www.themoviedb.org/{% if is_movie %}movie{% else %}tv{% endif %}/{{ tmdb_id }}" target="_blank" rel="noopener">TMDB</a>{% endif %}
+      {% if !imdb_id.is_empty() %} · <a href="https://www.imdb.com/title/{{ imdb_id }}/" target="_blank" rel="noopener">IMDb</a>{% endif %}
+    </p>
+  </div>
+</div>
+{% endblock %}

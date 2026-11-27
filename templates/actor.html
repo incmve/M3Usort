@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<p><a href="javascript:history.back()">← Back</a></p>
+<h1>{{ name }}</h1>
+<p class="help">In your catalog (only titles whose cast is known; run Cast enrichment for complete results). <a href="https://www.themoviedb.org/person/{{ person_id }}" target="_blank" rel="noopener">TMDB</a></p>
+<h2>Movies ({{ movies.len() }})</h2>
+{% if movies.is_empty() %}<p>None.</p>{% else %}{% let base = "/movies" %}<div class="grid">{% for it in movies %}{% include "_tile.html" %}{% endfor %}</div>{% endif %}
+<h2>Series ({{ series.len() }})</h2>
+{% if series.is_empty() %}<p>None.</p>{% else %}{% let base = "/series" %}<div class="grid">{% for it in series %}{% include "_tile.html" %}{% endfor %}</div>{% endif %}
+{% endblock %}

@@ -24,16 +24,9 @@
   <div class="card">Nothing found.</div>
 {% else %}
 <div class="grid">
+{% let base = path %}
 {% for it in items %}
-  <div class="tile" data-id="{{ it.id }}" title="{{ it.name }}">
-    <div class="img">{% if it.image.is_empty() %}<span>{{ it.name }}</span>{% else %}<img src="{{ it.image }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:this.closest('.tile').title}))">{% endif %}</div>
-    <div class="meta">
-      <div class="name">{{ it.name }}</div>
-      <div class="sub">{% if !it.rating.is_empty() %}★ {{ it.rating }} · {% endif %}{{ it.category }}{% if !it.added.is_empty() %} · {{ it.added }}{% endif %}</div>
-      {% if it.in_library %}<div class="have">✓ In library</div>{% else %}
-      <form method="post" action="/library/{% if kind == "Movies" %}movie{% else %}series{% endif %}/{{ it.id }}" class="add-form"><button class="btn secondary add" type="submit">Add</button></form>{% endif %}
-    </div>
-  </div>
+  {% include "_tile.html" %}
 {% endfor %}
 </div>
 <div class="pager">

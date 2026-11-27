@@ -18,6 +18,7 @@ use sqlx::SqlitePool;
 use crate::auth::{self, ADMIN_COOKIE, LoginLimiter, SESSION_TTL, SessionSigner};
 use crate::catalog;
 use crate::crypto::MasterKey;
+use crate::enrich;
 use crate::library;
 use crate::playlist;
 use crate::settings as s;
@@ -39,6 +40,8 @@ pub struct AppState {
     pub catalog_running: Arc<AtomicBool>,
     pub vod_running: Arc<AtomicBool>,
     pub playlist_running: Arc<AtomicBool>,
+    pub enrich_provider_running: Arc<AtomicBool>,
+    pub enrich_tmdb_running: Arc<AtomicBool>,
     setup_done: Arc<AtomicBool>,
 }
 
@@ -62,6 +65,8 @@ impl AppState {
             catalog_running: Arc::new(AtomicBool::new(false)),
             vod_running: Arc::new(AtomicBool::new(false)),
             playlist_running: Arc::new(AtomicBool::new(false)),
+            enrich_provider_running: Arc::new(AtomicBool::new(false)),
+            enrich_tmdb_running: Arc::new(AtomicBool::new(false)),
             setup_done: Arc::new(AtomicBool::new(setup_done)),
         })
     }
@@ -158,6 +163,11 @@ pub fn app_router(state: AppState) -> Router {
         .route("/wanted", post(wanted_add))
         .route("/wanted/{id}/delete", post(wanted_delete))
         .route("/vod/run", post(vod_run))
+        .route("/movies/{id}", get(movie_detail))
+        .route("/series/{id}", get(series_detail))
+        .route("/actor/{id}", get(actor_page))
+        .route("/enrich/{job}", post(enrich_run))
+        .route("/api/enrich-status", get(enrich_status))
         .route("/playlist", get(playlist_page))
         .route("/playlist/refresh", post(playlist_refresh))
         .route("/m3u/{file}", get(m3u_download))
@@ -330,6 +340,9 @@ struct LibraryTpl {
     running: bool,
     scheduler_on: bool,
     folders_missing: Vec<&'static str>,
+    enrich_provider: enrich::JobStatus,
+    enrich_tmdb: enrich::JobStatus,
+    has_tmdb_key: bool,
 }
 
 /// (id, kind, term, created_at, last_check, found_at, found_names)
@@ -375,7 +388,7 @@ async fn library_page(
         )
         .fetch_all(&st.db)
         .await?;
-        let date = |t: i64| crate::integrations::unix_to_date(t);
+        let date = crate::localtime::date;
         let (mut pending, mut found) = (Vec::new(), Vec::new());
         for (id, kind, term, created, check, found_at, names) in wanted {
             let row = WantedRow {
@@ -453,6 +466,13 @@ async fn library_page(
         running: st.vod_running.load(Ordering::SeqCst),
         scheduler_on,
         folders_missing,
+        enrich_provider: enrich::job_status(&st, enrich::JOB_PROVIDER).await,
+        enrich_tmdb: enrich::job_status(&st, enrich::JOB_TMDB).await,
+        has_tmdb_key: s::get_secret(&st.db, &st.key, s::SECRET_TMDB_API_KEY)
+            .await
+            .ok()
+            .flatten()
+            .is_some(),
     })
 }
 
@@ -549,6 +569,240 @@ fn redirect_with_msg(path: &str, msg: &str) -> Response {
         .append_pair("msg", msg)
         .finish();
     Redirect::to(&format!("{path}?{q}")).into_response()
+}
+
+// ------------------------------------------------------------------ detail pages
+
+#[derive(Template)]
+#[template(path = "detail.html")]
+struct DetailTpl {
+    page: Page,
+    is_movie: bool,
+    id: i64,
+    name: String,
+    image: String,
+    fallback: String,
+    category: String,
+    rating: String,
+    added: String,
+    plot: String,
+    tmdb_id: String,
+    imdb_id: String,
+    seasons: Option<i64>,
+    status: String,
+    cast: Vec<(i64, String, String)>,
+    in_library: bool,
+    library_note: String,
+    has_tmdb_key: bool,
+}
+
+/// (name, image, poster, category, rating, added, plot, tmdb_id, imdb_id, seasons, status)
+type DetailRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<f64>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+);
+
+async fn detail(st: AppState, headers: HeaderMap, kind: catalog::Kind, id: i64) -> Response {
+    enrich::ensure_details(&st, kind, id).await;
+    let is_movie = kind == catalog::Kind::Movie;
+    let r = async {
+        let row: Option<DetailRow> = if is_movie {
+            sqlx::query_as(
+                "SELECT t.name, t.icon, t.poster, c.name, t.rating, t.added, t.plot, t.tmdb_id, t.imdb_id, NULL, NULL
+                 FROM movies t LEFT JOIN categories c ON c.kind = 'movie' AND c.id = t.category_id WHERE t.stream_id = ?",
+            )
+        } else {
+            sqlx::query_as(
+                "SELECT t.name, t.cover, t.poster, c.name, t.rating, t.added, t.plot, t.tmdb_id, t.imdb_id, t.seasons, t.status
+                 FROM series t LEFT JOIN categories c ON c.kind = 'series' AND c.id = t.category_id WHERE t.series_id = ?",
+            )
+        }
+        .bind(id)
+        .fetch_optional(&st.db)
+        .await?;
+        let cast: Vec<(i64, String, String)> = sqlx::query_as(
+            "SELECT person_id, name, COALESCE(character, '') FROM cast_members WHERE kind = ? AND item_id = ? ORDER BY ord",
+        )
+        .bind(kind.as_str())
+        .bind(id)
+        .fetch_all(&st.db)
+        .await?;
+        let lib: Option<(String, Option<i64>)> = if is_movie {
+            sqlx::query_as("SELECT folder, NULL FROM library_movies WHERE stream_id = ?")
+        } else {
+            sqlx::query_as("SELECT folder, episodes FROM library_series WHERE series_id = ?")
+        }
+        .bind(id)
+        .fetch_optional(&st.db)
+        .await?;
+        let has_key = s::get_secret(&st.db, &st.key, s::SECRET_TMDB_API_KEY).await?.is_some();
+        anyhow::Ok((row, cast, lib, has_key))
+    }
+    .await;
+    let (row, cast, lib, has_tmdb_key) = match r {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("database error: {e}"),
+            )
+                .into_response();
+        }
+    };
+    let Some((
+        name,
+        icon,
+        poster,
+        category,
+        rating,
+        added,
+        plot,
+        tmdb_id,
+        imdb_id,
+        seasons,
+        status,
+    )) = row
+    else {
+        return (StatusCode::NOT_FOUND, "Not in the catalog (anymore).").into_response();
+    };
+    let icon = icon.filter(|i| !i.is_empty());
+    let poster = poster.filter(|p| !p.is_empty());
+    // Detail page: prefer the TMDB poster (sharper, never a dead provider URL).
+    let image = poster.clone().or_else(|| icon.clone()).unwrap_or_default();
+    let fallback = if poster.is_some() {
+        icon.unwrap_or_default()
+    } else {
+        String::new()
+    };
+    render(DetailTpl {
+        page: Page::nav(&name, st.is_admin(&headers).await),
+        is_movie,
+        id,
+        name,
+        image,
+        fallback,
+        category: category.unwrap_or_default(),
+        rating: rating
+            .filter(|r| *r > 0.0)
+            .map(|r| format!("{r:.1}"))
+            .unwrap_or_default(),
+        added: added
+            .filter(|a| *a > 0)
+            .map(crate::localtime::date)
+            .unwrap_or_default(),
+        plot: plot.unwrap_or_default(),
+        tmdb_id: tmdb_id.unwrap_or_default(),
+        imdb_id: imdb_id.unwrap_or_default(),
+        seasons,
+        status: status.unwrap_or_default(),
+        cast,
+        in_library: lib.is_some(),
+        library_note: match lib {
+            Some((folder, Some(n))) => format!("In library as '{folder}' ({n} episodes)"),
+            Some((folder, None)) => format!("In library as '{folder}'"),
+            None => String::new(),
+        },
+        has_tmdb_key,
+    })
+}
+
+async fn movie_detail(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    detail(st, headers, catalog::Kind::Movie, id).await
+}
+
+async fn series_detail(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    detail(st, headers, catalog::Kind::Series, id).await
+}
+
+#[derive(Template)]
+#[template(path = "actor.html")]
+struct ActorTpl {
+    page: Page,
+    name: String,
+    person_id: i64,
+    movies: Vec<catalog::Item>,
+    series: Vec<catalog::Item>,
+}
+
+/// Everything in your catalog an actor appears in (from enriched cast lists).
+async fn actor_page(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(pid): Path<i64>,
+) -> Response {
+    let r = async {
+        let name: Option<String> =
+            sqlx::query_scalar("SELECT name FROM cast_members WHERE person_id = ? LIMIT 1")
+                .bind(pid)
+                .fetch_optional(&st.db)
+                .await?;
+        let movies = catalog::by_person(&st.db, catalog::Kind::Movie, pid).await?;
+        let series = catalog::by_person(&st.db, catalog::Kind::Series, pid).await?;
+        anyhow::Ok((name, movies, series))
+    }
+    .await;
+    match r {
+        Ok((Some(name), movies, series)) => render(ActorTpl {
+            page: Page::nav(&name, st.is_admin(&headers).await),
+            name,
+            person_id: pid,
+            movies,
+            series,
+        }),
+        Ok((None, _, _)) => (StatusCode::NOT_FOUND, "Unknown actor").into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("database error: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+/// "Run now" for an enrichment job (guests may, as in Python).
+async fn enrich_run(State(st): State<AppState>, Path(job): Path<String>) -> Response {
+    let job: &'static str = match job.as_str() {
+        "provider" => enrich::JOB_PROVIDER,
+        "tmdb" => enrich::JOB_TMDB,
+        _ => return redirect_with_msg("/library", "Unknown job."),
+    };
+    let st2 = st.clone();
+    tokio::spawn(async move {
+        if let Err(e) = enrich::run_job(&st2, job).await {
+            tracing::warn!("enrichment '{job}': {e:#}");
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    redirect_with_msg("/library", "Enrichment started. Progress is shown below.")
+}
+
+#[derive(Serialize)]
+struct EnrichStatus {
+    provider: enrich::JobStatus,
+    tmdb: enrich::JobStatus,
+}
+
+async fn enrich_status(State(st): State<AppState>) -> Json<EnrichStatus> {
+    Json(EnrichStatus {
+        provider: enrich::job_status(&st, enrich::JOB_PROVIDER).await,
+        tmdb: enrich::job_status(&st, enrich::JOB_TMDB).await,
+    })
 }
 
 // ------------------------------------------------------------------ live TV playlist

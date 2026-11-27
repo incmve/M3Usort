@@ -90,7 +90,13 @@ is good enough.
       Same output as Python's rebuild() (custom title rewritten, a name appears once),
       keeps the provider's `#EXTM3U url-tvg=…` header. Fix vs Python: the custom group
       follows the saved order (Python wrote the provider's order).
-- [ ] **5. TMDB enrichment** (IDs, cast, posters), "New this week", actor search
+- [x] **5. Metadata:** detail page per movie/series, filled on first open (provider
+      `get_vod_info`/`get_series_info`, then TMDB search when there is no id, then one
+      TMDB details call with `append_to_response=credits,external_ids` for poster, plot,
+      rating, IMDb id, cast, seasons and status). Actor pages and actor-name search.
+      Daily jobs at local time (`TZ`): "TMDB ID enrichment" (provider, 1 s apart) and
+      "Cast enrichment" (TMDB, 0.1 s apart, one retry on 429); run-now with live progress.
+      Tiles fall back to the TMDB poster when the provider's image is dead.
 - [ ] **6. Jellyfin:** library refresh, library view with watch status per user
 - [ ] **7. Admin extras:** log viewer, file browser, backup/restore, SMB, Gluetun card
 - [ ] **8. Trusted networks**

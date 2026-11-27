@@ -392,6 +392,9 @@ pub fn spawn_scheduler(st: AppState) {
             if let Err(e) = crate::playlist::maybe_refresh(&st).await {
                 tracing::debug!("playlist scheduler: {e:#}");
             }
+            if let Err(e) = crate::enrich::maybe_run_daily(&st).await {
+                tracing::debug!("enrichment scheduler: {e:#}");
+            }
             if let Err(e) = crate::library::maybe_run_vod(&st).await {
                 tracing::debug!("VOD scheduler: {e:#}");
             }
@@ -426,13 +429,24 @@ async fn maybe_refresh(st: &AppState) -> anyhow::Result<()> {
 
 // ------------------------------------------------------------------ queries
 
-/// (id, name, image, rating, added, category) as selected by list/new_items.
-type ItemRow = (i64, String, String, Option<f64>, Option<i64>, String, bool);
+/// (id, name, image, fallback image, rating, added, category, in library) as selected by list/new_items.
+type ItemRow = (
+    i64,
+    String,
+    String,
+    String,
+    Option<f64>,
+    Option<i64>,
+    String,
+    bool,
+);
 
 pub struct Item {
     pub id: i64,
     pub name: String,
     pub image: String,
+    /// TMDB poster to try when the provider's image fails (dead cover URLs).
+    pub fallback: String,
     pub rating: String,
     pub added: String,
     pub category: String,
@@ -467,11 +481,21 @@ fn push_filters(qb: &mut QueryBuilder<Sqlite>, kind: Kind, lq: &ListQuery) {
     let (table, id_col) = (kind.table(), kind.id_col());
     qb.push(" WHERE 1 = 1");
     if let Some(fts) = fts_query(&lq.q) {
+        // Title (full-text) or an actor's name, as in the Python version's search box.
         qb.push(format!(
-            " AND t.{id_col} IN (SELECT rowid FROM {table}_fts WHERE {table}_fts MATCH "
+            " AND (t.{id_col} IN (SELECT rowid FROM {table}_fts WHERE {table}_fts MATCH "
         ));
         qb.push_bind(fts);
-        qb.push(")");
+        qb.push(format!(
+            ") OR t.{id_col} IN (SELECT item_id FROM cast_members WHERE kind = '{}' AND name LIKE ",
+            kind.as_str()
+        ));
+        let escaped =
+            lq.q.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+        qb.push_bind(format!("%{escaped}%"));
+        qb.push(" ESCAPE '\\'))");
     }
     if !lq.category.is_empty() {
         qb.push(" AND t.category_id = ")
@@ -494,7 +518,7 @@ pub async fn list(db: &SqlitePool, kind: Kind, lq: &ListQuery) -> anyhow::Result
     let total: i64 = count.build_query_scalar().fetch_one(db).await?;
 
     let mut qb = QueryBuilder::<Sqlite>::new(format!(
-        "SELECT t.{id_col}, t.name, COALESCE(t.poster, t.{img}, ''), t.rating, t.added, COALESCE(c.name, ''),
+        "SELECT t.{id_col}, t.name, COALESCE(NULLIF(t.{img}, ''), t.poster, ''), COALESCE(t.poster, ''), t.rating, t.added, COALESCE(c.name, ''),
          EXISTS (SELECT 1 FROM library_{table} l WHERE l.{id_col} = t.{id_col}){from}"
     ));
     push_filters(&mut qb, kind, lq);
@@ -512,10 +536,15 @@ pub async fn list(db: &SqlitePool, kind: Kind, lq: &ListQuery) -> anyhow::Result
     Ok((rows.into_iter().map(to_item).collect(), total))
 }
 
-fn to_item((id, name, image, rating, added, category, in_library): ItemRow) -> Item {
+fn to_item((id, name, image, fallback, rating, added, category, in_library): ItemRow) -> Item {
     Item {
         id,
         name,
+        fallback: if fallback == image {
+            String::new()
+        } else {
+            fallback
+        },
         image,
         rating: rating
             .filter(|r| *r > 0.0)
@@ -523,7 +552,7 @@ fn to_item((id, name, image, rating, added, category, in_library): ItemRow) -> I
             .unwrap_or_default(),
         added: added
             .filter(|a| *a > 0)
-            .map(integrations::unix_to_date)
+            .map(crate::localtime::date)
             .unwrap_or_default(),
         category,
         in_library,
@@ -535,7 +564,7 @@ pub async fn new_items(db: &SqlitePool, kind: Kind) -> anyhow::Result<Vec<Item>>
     let (table, id_col, img) = (kind.table(), kind.id_col(), kind.image_col());
     let since = now_secs() - NEW_DAYS * 86_400;
     let rows: Vec<ItemRow> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT t.{id_col}, t.name, COALESCE(t.poster, t.{img}, ''), t.rating, t.added, COALESCE(c.name, ''),
+        "SELECT t.{id_col}, t.name, COALESCE(NULLIF(t.{img}, ''), t.poster, ''), COALESCE(t.poster, ''), t.rating, t.added, COALESCE(c.name, ''),
                 EXISTS (SELECT 1 FROM library_{table} l WHERE l.{id_col} = t.{id_col})
          FROM {table} t LEFT JOIN categories c ON c.kind = ? AND c.id = t.category_id
          WHERE t.added >= ? AND (c.adult IS NULL OR c.adult = 0)
@@ -543,6 +572,24 @@ pub async fn new_items(db: &SqlitePool, kind: Kind) -> anyhow::Result<Vec<Item>>
     )))
     .bind(kind.as_str())
     .bind(since)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.into_iter().map(to_item).collect())
+}
+
+/// Catalog items an actor (TMDB person id) appears in.
+pub async fn by_person(db: &SqlitePool, kind: Kind, person_id: i64) -> anyhow::Result<Vec<Item>> {
+    let (table, id_col, img) = (kind.table(), kind.id_col(), kind.image_col());
+    let rows: Vec<ItemRow> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT t.{id_col}, t.name, COALESCE(NULLIF(t.{img}, ''), t.poster, ''), COALESCE(t.poster, ''), t.rating, t.added,
+                COALESCE(c.name, ''), EXISTS (SELECT 1 FROM library_{table} l WHERE l.{id_col} = t.{id_col})
+         FROM cast_members m JOIN {table} t ON t.{id_col} = m.item_id
+         LEFT JOIN categories c ON c.kind = ? AND c.id = t.category_id
+         WHERE m.kind = ? AND m.person_id = ? ORDER BY t.added DESC LIMIT 200"
+    )))
+    .bind(kind.as_str())
+    .bind(kind.as_str())
+    .bind(person_id)
     .fetch_all(db)
     .await?;
     Ok(rows.into_iter().map(to_item).collect())

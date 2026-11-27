@@ -24,6 +24,34 @@
   <p class="help" style="margin-bottom:0">A run adopts existing folders, looks for wanted titles, adds new episodes for series in the library and then refreshes Jellyfin.</p>
 </div>
 
+<h2>Metadata (TMDB)</h2>
+<div class="card" id="enrich">
+  {% if !has_tmdb_key %}<div class="msg err">No TMDB key: only the provider's info is used. Set one under Admin → Settings → TMDB.</div>{% endif %}
+  <table>
+    <tr><td><strong>TMDB ID enrichment</strong><div class="help">Asks the provider for TMDB ids, plots and ratings (1 per second).</div></td>
+      <td id="st-provider">{% if enrich_provider.running %}running: {{ enrich_provider.processed }} / {{ enrich_provider.total }}{% else %}last: {{ enrich_provider.last }}{% if !enrich_provider.message.is_empty() %} — {{ enrich_provider.message }}{% endif %}{% endif %}</td>
+      <td class="act"><form method="post" action="/enrich/provider" style="margin:0"><button class="btn secondary" type="submit"{% if enrich_provider.running %} disabled{% endif %}>Run now</button></form></td></tr>
+    <tr><td><strong>Cast enrichment</strong><div class="help">Gets cast, posters, seasons and status from TMDB.</div></td>
+      <td id="st-tmdb">{% if enrich_tmdb.running %}running: {{ enrich_tmdb.processed }} / {{ enrich_tmdb.total }}{% else %}last: {{ enrich_tmdb.last }}{% if !enrich_tmdb.message.is_empty() %} — {{ enrich_tmdb.message }}{% endif %}{% endif %}</td>
+      <td class="act"><form method="post" action="/enrich/tmdb" style="margin:0"><button class="btn secondary" type="submit"{% if enrich_tmdb.running || !has_tmdb_key %} disabled{% endif %}>Run now</button></form></td></tr>
+  </table>
+  <p class="help" style="margin-bottom:0">Daily times are set under Settings → Schedules. Opening a movie or series fills in its details right away.</p>
+</div>
+<script>
+(function poll(){
+  fetch('/api/enrich-status').then(r => r.json()).then(j => {
+    let busy = false;
+    for (const job of ['provider','tmdb']) {
+      const s = j[job], el = document.getElementById('st-' + job);
+      if (s.running) { busy = true; el.textContent = 'running: ' + s.processed + ' / ' + s.total; }
+      else el.textContent = 'last: ' + s.last + (s.message ? ' — ' + s.message : '');
+      el.closest('tr').querySelector('button').disabled = s.running;
+    }
+    if (busy) setTimeout(poll, 2000);
+  }).catch(() => {});
+})();
+</script>
+
 <h2>Wanted</h2>
 <form method="post" action="/wanted" class="card filters" style="margin-bottom:1rem">
   <select name="kind"><option value="movie">Movie</option><option value="series">Series</option></select>

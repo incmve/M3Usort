@@ -179,6 +179,14 @@ pub async fn test_jellyfin(client: &Client, base: &str, api_key: &str) -> Result
 
 pub const TMDB_BASE: &str = "https://api.themoviedb.org";
 
+/// TMDB address. Overridable (M3USORT_TMDB_BASE) only so tests can use a stand-in.
+pub fn tmdb_base() -> String {
+    std::env::var("M3USORT_TMDB_BASE")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| TMDB_BASE.to_string())
+}
+
 /// Ask Jellyfin to rescan its libraries (as the Python version does after new files).
 pub async fn jellyfin_refresh(client: &Client, base: &str, api_key: &str) -> Result<(), String> {
     let url = format!("{}/Library/Refresh", base.trim().trim_end_matches('/'));
@@ -203,7 +211,7 @@ pub async fn jellyfin_refresh(client: &Client, base: &str, api_key: &str) -> Res
 /// parameter). A v4 read access token (a JWT, starts with `eyJ`) is sent as a
 /// Bearer header instead, which TMDB also accepts on v3 endpoints.
 pub async fn test_tmdb(client: &Client, key: &str) -> Result<String, String> {
-    test_tmdb_at(client, TMDB_BASE, key).await
+    test_tmdb_at(client, &tmdb_base(), key).await
 }
 
 pub async fn test_tmdb_at(client: &Client, base: &str, key: &str) -> Result<String, String> {

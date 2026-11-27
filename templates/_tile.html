@@ -1,0 +1,9 @@
+<div class="tile" data-id="{{ it.id }}" title="{{ it.name }}">
+  <a class="img" href="{{ base }}/{{ it.id }}">{% if it.image.is_empty() %}<span>{{ it.name }}</span>{% else %}<img src="{{ it.image }}" data-fallback="{{ it.fallback }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="imgFail(this)">{% endif %}</a>
+  <div class="meta">
+    <a class="name" href="{{ base }}/{{ it.id }}">{{ it.name }}</a>
+    <div class="sub">{% if !it.rating.is_empty() %}★ {{ it.rating }} · {% endif %}{{ it.category }}{% if !it.added.is_empty() %} · {{ it.added }}{% endif %}</div>
+    {% if it.in_library %}<div class="have">✓ In library</div>{% else %}
+    <form method="post" action="/library/{% if base.contains("movies") %}movie{% else %}series{% endif %}/{{ it.id }}" class="add-form"><button class="btn secondary add" type="submit">Add</button></form>{% endif %}
+  </div>
+</div>

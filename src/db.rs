@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::str::FromStr;
 
+use sqlx::ConnectOptions;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 
 use crate::crypto::{self, MasterKey, SALT_LEN};
@@ -37,7 +38,10 @@ pub async fn open(path: &Path, create: bool) -> anyhow::Result<SqlitePool> {
     let opts = SqliteConnectOptions::from_str(&url)?
         .create_if_missing(create)
         .journal_mode(SqliteJournalMode::Wal)
-        .foreign_keys(true);
+        .foreign_keys(true)
+        // SQLx would dump a whole bulk INSERT (thousands of placeholders) into the log
+        // when it takes > 1 s. Slow steps are timed and logged by the app itself.
+        .log_slow_statements(log::LevelFilter::Off, std::time::Duration::from_secs(60));
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(opts)

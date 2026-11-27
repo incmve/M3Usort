@@ -3,11 +3,14 @@ mod catalog;
 mod config;
 mod crypto;
 mod db;
+mod enrich;
 mod integrations;
 mod library;
+mod localtime;
 mod playlist;
 mod settings;
 mod setup;
+mod tmdb;
 mod version;
 mod web;
 
@@ -36,6 +39,7 @@ Commands:
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
+        .with_timer(localtime::LogTimer)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("M3USORT_LOG_LEVEL")
                 .unwrap_or_else(|_| "info".into()),
