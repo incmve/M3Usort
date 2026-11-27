@@ -123,5 +123,9 @@ is good enough.
       video; Jellyfin DELETE /Items (which also deletes files), our .strm folder,
       and the library_movies/library_series row (else the VOD run re-adds series).
       If Jellyfin's delete fails, files are still removed and a library scan starts.
-- [ ] **7. Admin extras:** log viewer, file browser, backup/restore, SMB, Gluetun card
-- [ ] **8. Trusted networks**
+- [ ] **7. Admin extras:** log viewer, file browser (bulk delete), DB backup/restore
+      (download + restore in the wizard), SMB backup with retention, Gluetun card,
+      subscription expiry warning
+- [ ] **8. Trusted networks + Python import:** guest access limited to configured
+      networks; optional one-time import of the Python app's playlist groups and
+      custom channels from its `config.py`
