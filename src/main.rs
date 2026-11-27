@@ -13,6 +13,7 @@ mod library;
 mod localtime;
 mod logfile;
 mod playlist;
+mod pyimport;
 mod settings;
 mod setup;
 mod tmdb;
@@ -158,7 +159,9 @@ async fn serve() -> anyhow::Result<()> {
             }
             match db::verify_or_init_key(&pool, &key, true).await? {
                 KeyCheck::Initialised => {
-                    info!("database bound to M3USORT_KEY (new install, or a backup restored without its credentials)");
+                    info!(
+                        "database bound to M3USORT_KEY (new install, or a backup restored without its credentials)"
+                    );
                     start_app(pool, key, update.clone()).await?
                 }
                 KeyCheck::Ok => {

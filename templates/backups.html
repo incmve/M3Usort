@@ -32,4 +32,60 @@
 {% include "_restore.html" %}
 </div>
 <p class="help">Without the web page: <code>docker exec m3usort-rs m3usort restore /data/backups/&lt;file&gt;</code>, then restart the container.</p>
+
+<h2>Import from the Python version</h2>
+<div class="card">
+  <p class="help">Takes four lists from the old M3Usort's <code>config.py</code>: playlist groups (<code>desired_group_titles</code>),
+  custom channels (<code>target_channel_names</code>) and the wanted lists (<code>wanted_movies</code>, <code>wanted_series</code>).
+  Nothing else, no passwords. The file is only read, never run. You see what it would do before anything changes.</p>
+  <label for="pyfile">config.py</label>
+  <input type="file" id="pyfile" accept=".py,.txt,text/plain">
+  <div class="actions"><span id="pystatus" class="help"></span><button class="btn secondary" type="button" id="pyprev">Preview</button></div>
+  <div id="pyout" hidden>
+    <table id="pytable"></table><style>#pytable td{word-break:normal}</style>
+    <p class="help" id="pynotes"></p>
+    <div class="actions"><span class="help">Groups and custom channels replace the current ones (an empty list in the file changes nothing). Wanted terms are added; existing ones stay.</span><button class="btn" type="button" id="pygo">Import</button></div>
+  </div>
+</div>
+<script>
+(function () {
+  const file = document.getElementById('pyfile'), st = document.getElementById('pystatus'), out = document.getElementById('pyout');
+  const esc = t => String(t).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+  async function send(url) {
+    const f = file.files[0];
+    if (!f) { st.textContent = 'Choose the config.py first.'; return null; }
+    const r = await fetch(url, {method: 'POST', body: f, headers: {'Content-Type': 'text/plain'}});
+    return r.json();
+  }
+  document.getElementById('pyprev').addEventListener('click', async () => {
+    out.hidden = true; st.textContent = 'Reading…';
+    const j = await send('/admin/import/preview'); if (!j) return;
+    if (!j.ok) { st.textContent = j.message; return; }
+    const p = j.preview, d = p.parsed;
+    const row = (what, n, now, extra) => '<tr><td>' + what + '</td><td>' + n + '</td><td class="help">' + now + (extra ? ' · ' + extra : '') + '</td></tr>';
+    document.getElementById('pytable').innerHTML =
+      row('Playlist groups', d.groups.length, d.groups.length ? 'replaces the current ' + p.current_groups : 'empty: current ' + p.current_groups + ' stay',
+          p.groups_not_found.length ? p.groups_not_found.length + ' not in the provider\'s playlist now' : '') +
+      row('Custom channels', d.custom.length, d.custom.length ? 'replaces the current ' + p.current_custom : 'empty: current ' + p.current_custom + ' stay',
+          p.custom_not_found.length ? p.custom_not_found.length + ' not in the provider\'s playlist now' : '') +
+      row('Wanted movies', d.wanted_movies.length, '') +
+      row('Wanted series', d.wanted_series.length, '') +
+      row('Wanted, together', d.wanted_movies.length + d.wanted_series.length, p.wanted_new + ' new, ' + p.wanted_existing + ' already on the list');
+    const notes = [];
+    if (!p.playlist_loaded) notes.push('The provider playlist isn\'t loaded yet, so names can\'t be checked; they are imported as they are.');
+    if (p.groups_not_found.length) notes.push('Groups not found now (kept; they work again when the provider uses the name): ' + p.groups_not_found.map(esc).join(', '));
+    if (p.custom_not_found.length) notes.push('Channels not found now (kept): ' + p.custom_not_found.map(esc).join(', '));
+    if (d.missing_lists.length) notes.push('Not in this file: ' + d.missing_lists.join(', '));
+    if (d.skipped_items) notes.push(d.skipped_items + ' item(s) that aren\'t text were skipped.');
+    document.getElementById('pynotes').innerHTML = notes.map(esc).join('<br>');
+    st.textContent = ''; out.hidden = false;
+  });
+  document.getElementById('pygo').addEventListener('click', async () => {
+    if (!confirm('Import these lists?')) return;
+    st.textContent = 'Importing…';
+    const j = await send('/admin/import/apply'); if (!j) return;
+    location.href = '/admin/backups?' + new URLSearchParams(j.ok ? {msg: j.message} : {err: j.message});
+  });
+})();
+</script>
 {% endblock %}

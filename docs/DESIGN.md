@@ -136,9 +136,14 @@ is good enough.
       Backups: see 7 above; settings step 7 (also in the wizard); tested against
       Samba 4.19 (login, folder creation, write, retention).
       Subscription: get_user_info every 6 h; dashboard card and warning from 30 days.
-- [ ] **8. Trusted networks + Python import:** guest access limited to configured
-      networks; optional one-time import of the Python app's playlist groups and
-      custom channels from its `config.py`
+- [ ] **8. Trusted networks + Python import:**
+      - [ ] Guest access limited to configured networks.
+      - [x] One-time import from the Python app's `config.py` (Admin → Backups):
+        `desired_group_titles`, `target_channel_names`, `wanted_movies`,
+        `wanted_series`, nothing else (not `new_group_title`, no passwords). Read as
+        text, never executed. Preview first (counts, names not in the provider's
+        playlist now). Groups/custom channels replace the current ones only when
+        the file's list isn't empty; wanted terms are added.
 
 ### Nice to have
 

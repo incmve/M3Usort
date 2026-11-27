@@ -150,6 +150,8 @@ pub fn app_router(state: AppState) -> Router {
         .route("/playlist/custom/add", post(custom_add_one))
         .route("/logout", post(logout))
         .route("/account/check", post(account_check))
+        .route("/import/preview", post(import_preview))
+        .route("/import/apply", post(import_apply))
         .route("/backups", get(backups_page))
         .route("/backups/run", post(backups_run))
         .route("/backups/download/{name}", get(backups_download))
@@ -2462,5 +2464,35 @@ pub async fn restore_and_restart(data: Vec<u8>, without_credentials: bool) -> Re
             Json(serde_json::json!({"ok": false, "message": format!("Not restored: {e:#}")}))
                 .into_response()
         }
+    }
+}
+
+// ------------------------------------------------------------------ import from the Python version (admin)
+
+fn not_text() -> Response {
+    Json(serde_json::json!({"ok": false, "message": "This is not a text file (config.py)."}))
+        .into_response()
+}
+
+async fn import_preview(State(st): State<AppState>, body: axum::body::Bytes) -> Response {
+    let Ok(src) = String::from_utf8(body.to_vec()) else {
+        return not_text();
+    };
+    match crate::pyimport::preview(&st.db, &src).await {
+        Ok(p) => Json(serde_json::json!({"ok": true, "preview": p})).into_response(),
+        Err(e) => Json(serde_json::json!({"ok": false, "message": e})).into_response(),
+    }
+}
+
+async fn import_apply(State(st): State<AppState>, body: axum::body::Bytes) -> Response {
+    let Ok(src) = String::from_utf8(body.to_vec()) else {
+        return not_text();
+    };
+    match crate::pyimport::apply(&st.db, &src).await {
+        Ok(m) => {
+            tracing::info!("import from the Python config.py: {m}");
+            Json(serde_json::json!({"ok": true, "message": m})).into_response()
+        }
+        Err(e) => Json(serde_json::json!({"ok": false, "message": e})).into_response(),
     }
 }
