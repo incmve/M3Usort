@@ -608,7 +608,11 @@ pub async fn stats(db: &SqlitePool) -> anyhow::Result<Stats> {
         )
         .await?,
         last_ok: last_ok.map(ago).unwrap_or_else(|| "never".into()),
-        last_message: last.as_ref().and_then(|l| l.2.clone()).unwrap_or_default(),
+        last_message: last
+            .as_ref()
+            .and_then(|l| l.2.clone())
+            .map(|m| if m.chars().count() > 300 { format!("{}…", m.chars().take(300).collect::<String>()) } else { m })
+            .unwrap_or_default(),
         last_failed: last.is_some_and(|l| l.1 == 0),
     })
 }

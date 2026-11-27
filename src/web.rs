@@ -431,7 +431,13 @@ async fn library_page(
         series,
         last_run: last
             .as_ref()
-            .map(|(t, _, m)| format!("{} — {}", catalog::ago(*t), m.clone().unwrap_or_default()))
+            .map(|(t, _, m)| {
+                format!(
+                    "{} — {}",
+                    catalog::ago(*t),
+                    short(&m.clone().unwrap_or_default(), 300)
+                )
+            })
             .unwrap_or_else(|| "never".into()),
         last_run_failed: last.is_some_and(|l| l.1 == 0),
         running: st.vod_running.load(Ordering::SeqCst),
@@ -514,6 +520,18 @@ async fn vod_run(State(st): State<AppState>) -> Response {
         "/library",
         "VOD run started. Reload this page to see the result.",
     )
+}
+
+/// Cap a stored run message for display (details are in the container log).
+fn short(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!(
+            "{}… (full details in the container log)",
+            s.chars().take(max).collect::<String>()
+        )
+    }
 }
 
 fn redirect_with_msg(path: &str, msg: &str) -> Response {
