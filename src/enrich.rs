@@ -30,6 +30,8 @@ use crate::web::AppState;
 const PROVIDER_DELAY: Duration = Duration::from_secs(1); // as Python
 /// Parallel TMDB lookups. TMDB allows 20 connections per IP; the request rate
 /// itself is capped in tmdb.rs (40/s, under TMDB's ~50/s).
+/// Provider answers per kind to look at before deciding it never sends TMDB ids.
+const PROBE_LOOKUPS: usize = 50;
 pub const TMDB_PARALLEL: usize = 8;
 /// Stop a job after this many network errors in a row (provider or TMDB down).
 const MAX_ERRORS_IN_A_ROW: usize = 20;
@@ -632,8 +634,9 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
             }
         })
     };
+    let mut skipped = Vec::new();
     let result = if job == JOB_PROVIDER {
-        run_provider(st, first, &p).await
+        run_provider(st, first, &p).await.map(|s| skipped = s)
     } else {
         let key = key.unwrap_or_default();
         match run_tmdb_pool(st, &key, first, &p).await {
@@ -648,7 +651,7 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
     p.save(&st.db).await;
     result?;
     let done = p.done.load(Ordering::SeqCst);
-    let msg = if p.stopped.load(Ordering::SeqCst) {
+    let mut msg = if p.stopped.load(Ordering::SeqCst) {
         format!(
             "{done} of {items} done; stopped after {MAX_ERRORS_IN_A_ROW} failed requests in a row (rest is retried next run)"
         )
@@ -657,6 +660,25 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
     } else {
         format!("{done} of {items} done")
     };
+    if !skipped.is_empty() {
+        let parts: Vec<String> = skipped
+            .iter()
+            .map(|(k, n)| {
+                format!(
+                    "{n} {}",
+                    if *k == Kind::Movie {
+                        "movies"
+                    } else {
+                        "series"
+                    }
+                )
+            })
+            .collect();
+        msg = format!(
+            "{done} of {items} done; skipped {}: no TMDB id in the first {PROBE_LOOKUPS} provider answers (the Cast job finds them by name)",
+            parts.join(" and ")
+        );
+    }
     sqlx::query("UPDATE enrich_runs SET finished = ?, ok = ?, message = ? WHERE id = ?")
         .bind(now_secs())
         .bind(i64::from(!p.stopped.load(Ordering::SeqCst)))
@@ -673,15 +695,44 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
 
 /// Provider lookups, one per second (as Python). Per group: ask the first item;
 /// if the provider has no TMDB id for it, try the next one; share the answer.
-async fn run_provider(st: &AppState, groups: Vec<Group>, p: &Progress) -> anyhow::Result<()> {
+///
+/// If the first PROBE_LOOKUPS answers for a kind hold no TMDB id at all, the rest
+/// of that kind is skipped for this run: the provider (or a proxy in between,
+/// e.g. iptv-proxy drops the field from get_series_info) doesn't send it, so
+/// thousands of 1-per-second calls would gain nothing. The next run probes again
+/// with new titles, so a fixed proxy is picked up by itself.
+/// Returns the kinds that were skipped and how many items each.
+async fn run_provider(
+    st: &AppState,
+    groups: Vec<Group>,
+    p: &Progress,
+) -> anyhow::Result<Vec<(Kind, usize)>> {
     let mut first = true;
+    // per kind: (answers, answers with an id)
+    let mut probe: HashMap<&'static str, (usize, usize)> = HashMap::new();
+    let mut skipped: Vec<(Kind, usize)> = Vec::new();
     for g in groups {
+        if let Some(s) = skipped.iter_mut().find(|(k, _)| *k == g.kind) {
+            s.1 += g.ids.len();
+            p.processed.fetch_add(g.ids.len() as i64, Ordering::SeqCst);
+            continue;
+        }
+        let (answers, with_id) = probe.get(g.kind.as_str()).copied().unwrap_or_default();
+        if answers >= PROBE_LOOKUPS && with_id == 0 {
+            tracing::info!(
+                "provider sent no TMDB id in {answers} {} lookups; skipping the rest of them this run",
+                g.kind.as_str()
+            );
+            skipped.push((g.kind, g.ids.len()));
+            p.processed.fetch_add(g.ids.len() as i64, Ordering::SeqCst);
+            continue;
+        }
         let (table, id_col, _, _) = kind_parts(g.kind);
         let mut found: Option<(String, Option<String>)> = None;
         let mut asked = 0;
         for &id in &g.ids {
             if p.stopped.load(Ordering::SeqCst) {
-                return Ok(());
+                return Ok(skipped);
             }
             if !first {
                 tokio::time::sleep(PROVIDER_DELAY).await;
@@ -693,6 +744,8 @@ async fn run_provider(st: &AppState, groups: Vec<Group>, p: &Progress) -> anyhow
                 continue;
             }
             p.ok(1, true);
+            let counts = probe.entry(g.kind.as_str()).or_default();
+            counts.0 += 1;
             let row: (Option<String>, Option<String>) = sqlx::query_as(sqlx::AssertSqlSafe(
                 format!("SELECT NULLIF(tmdb_id, ''), imdb_id FROM {table} WHERE {id_col} = ?"),
             ))
@@ -700,6 +753,7 @@ async fn run_provider(st: &AppState, groups: Vec<Group>, p: &Progress) -> anyhow
             .fetch_one(&st.db)
             .await?;
             if let (Some(t), imdb) = row {
+                counts.1 += 1;
                 found = Some((t, imdb));
                 break;
             }
@@ -722,7 +776,7 @@ async fn run_provider(st: &AppState, groups: Vec<Group>, p: &Progress) -> anyhow
             p.ok(rest.len(), true);
         }
     }
-    Ok(())
+    Ok(skipped)
 }
 
 /// TMDB lookups (searches or details) on a few parallel workers. A search that finds an id isn't counted yet: its details are.

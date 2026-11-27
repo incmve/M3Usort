@@ -28,7 +28,7 @@
 <div class="card" id="enrich">
   {% if !has_tmdb_key %}<div class="msg err">No TMDB key: only the provider's info is used. Set one under Admin → Settings → TMDB.</div>{% endif %}
   <table>
-    <tr><td><strong>TMDB ID enrichment</strong><div class="help">Asks the provider for TMDB ids, plots and ratings (1 per second), only for titles without an id from the provider's list. Same title and year in several categories is asked once.</div></td>
+    <tr><td><strong>TMDB ID enrichment</strong><div class="help">Asks the provider for TMDB ids, plots and ratings (1 per second), only for titles without an id from the provider's list. Same title and year in several categories is asked once. If the first 50 answers for movies or series hold no id at all, the rest of that kind is skipped for this run.</div></td>
       <td id="st-provider">{% if enrich_provider.running %}running: {{ enrich_provider.processed }} / {{ enrich_provider.total }}{% else %}last: {{ enrich_provider.last }}{% if !enrich_provider.message.is_empty() %} — {{ enrich_provider.message }}{% endif %}{% endif %}</td>
       <td class="act"><form method="post" action="/enrich/provider" style="margin:0"><button class="btn secondary" type="submit"{% if enrich_provider.running %} disabled{% endif %}>Run now</button></form></td></tr>
     <tr><td><strong>Cast enrichment</strong><div class="help">Searches TMDB for titles without an id, then gets cast, posters, seasons and status. {{ tmdb_parallel }} requests at a time; each title and TMDB id only once.</div></td>
