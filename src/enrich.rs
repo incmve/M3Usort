@@ -707,7 +707,10 @@ async fn run_provider(
     groups: Vec<Group>,
     p: &Progress,
 ) -> anyhow::Result<Vec<(Kind, usize)>> {
-    let mut first = true;
+    // At most one request per second, one at a time. The second counts from the
+    // start of the previous request, so a slow answer (proxy + VPN) isn't
+    // followed by another full second of waiting (Python slept 1 s after each).
+    let mut next_start = tokio::time::Instant::now();
     // per kind: (answers, answers with an id)
     let mut probe: HashMap<&'static str, (usize, usize)> = HashMap::new();
     let mut skipped: Vec<(Kind, usize)> = Vec::new();
@@ -734,10 +737,8 @@ async fn run_provider(
             if p.stopped.load(Ordering::SeqCst) {
                 return Ok(skipped);
             }
-            if !first {
-                tokio::time::sleep(PROVIDER_DELAY).await;
-            }
-            first = false;
+            tokio::time::sleep_until(next_start).await;
+            next_start = tokio::time::Instant::now() + PROVIDER_DELAY;
             asked += 1;
             if !provider_info(st, g.kind, id).await? {
                 p.failed(1);
