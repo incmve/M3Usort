@@ -287,7 +287,7 @@ async fn add_movie(
 ) -> Response {
     let r = library::add_movie(&st, id, "add").await;
     if r.is_ok() {
-        let mut log = Vec::new();
+        let mut log = library::RunLog::default();
         library::refresh_jellyfin(&st, &mut log).await;
     }
     add_response(&headers, r)
@@ -300,7 +300,7 @@ async fn add_series(
 ) -> Response {
     let r = library::add_series(&st, id, "add").await;
     if matches!(r, Ok((_, n)) if n > 0) {
-        let mut log = Vec::new();
+        let mut log = library::RunLog::default();
         library::refresh_jellyfin(&st, &mut log).await;
     }
     add_response(&headers, r.map(|(m, _)| m))

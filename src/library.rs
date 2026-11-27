@@ -26,6 +26,62 @@ const MAX_STRING_MATCHES: usize = 25;
 const FUZZY_THRESHOLD: f64 = 75.0;
 const VIDEO_EXTS: &[&str] = &["mkv", "mp4", "avi", "m4v"];
 
+// ------------------------------------------------------------------ run summary
+
+/// What a VOD run did. Details go to the log line by line; the UI gets counts.
+#[derive(Default)]
+pub struct RunLog {
+    adopted_movies: usize,
+    adopted_series: usize,
+    wanted_found: Vec<String>,
+    episodes: usize,
+    series_updated: usize,
+    series_failed: usize,
+    series_switched: usize,
+    jellyfin: Option<String>,
+}
+
+impl RunLog {
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if self.adopted_movies + self.adopted_series > 0 {
+            parts.push(format!(
+                "adopted {} movie and {} series folder(s)",
+                self.adopted_movies, self.adopted_series
+            ));
+        }
+        if !self.wanted_found.is_empty() {
+            parts.push(format!("wanted found: {}", self.wanted_found.join(", ")));
+        }
+        if self.episodes > 0 {
+            parts.push(format!(
+                "+{} episode(s) in {} series",
+                self.episodes, self.series_updated
+            ));
+        }
+        if self.series_switched > 0 {
+            parts.push(format!(
+                "{} series switched to a working catalog entry",
+                self.series_switched
+            ));
+        }
+        if self.series_failed > 0 {
+            parts.push(format!(
+                "{} series failed (see Series in library)",
+                self.series_failed
+            ));
+        }
+        if let Some(j) = &self.jellyfin {
+            parts.push(j.clone());
+        }
+        if parts.is_empty() {
+            "nothing new".into()
+        } else {
+            parts.join("; ")
+        }
+    }
+}
+
 // ------------------------------------------------------------------ names and paths
 
 /// Turn a provider title into one safe folder/file name component. Same as the
@@ -277,13 +333,30 @@ async fn fetch_episodes(st: &AppState, x: &Xtream, series_id: i64) -> anyhow::Re
         "get_series_info answered HTTP {}",
         resp.status()
     );
-    let info: Value = resp.json().await?;
+    let body = resp.text().await?;
+    let info: Value = serde_json::from_str(&body).map_err(|_| {
+        anyhow::anyhow!("series {series_id}: answer is not JSON: {}", snippet(&body))
+    })?;
+    // Episodes are what we need; some providers leave "info" empty but still send them.
+    let eps = parse_episodes(&info);
     anyhow::ensure!(
-        info.get("info")
-            .is_some_and(|i| !i.is_null() && i != &Value::Array(vec![])),
-        "provider has no info for series {series_id} (removed?)"
+        !eps.is_empty(),
+        "provider returned no episodes for series {series_id}: {}",
+        snippet(&body)
     );
-    Ok(parse_episodes(&info))
+    Ok(eps)
+}
+
+/// First part of a provider answer, for error messages (credentials never appear in it).
+fn snippet(body: &str) -> String {
+    let t: String = body.trim().chars().take(160).collect();
+    if body.trim().chars().count() > 160 {
+        format!("{t}…")
+    } else if t.is_empty() {
+        "(empty answer)".into()
+    } else {
+        t
+    }
 }
 
 /// Write the episodes that are missing (or all, with overwrite). Returns files written.
@@ -373,7 +446,7 @@ async fn existing_series_folder(st: &AppState, series_id: i64) -> anyhow::Result
 
 /// New episodes for every series in the library. Only series whose catalog
 /// "last_modified" changed since the last sync are fetched, 0.5 s apart.
-async fn sync_series(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<usize> {
+async fn sync_series(st: &AppState, log: &mut RunLog) -> anyhow::Result<usize> {
     let d = dirs(st).await?;
     let Some(base) = d.series else { return Ok(0) };
     let x = xtream(st).await?;
@@ -385,35 +458,79 @@ async fn sync_series(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<usi
     .await?;
     let mut written = 0;
     let mut calls = 0;
+    let mut alt_index: Option<NameIndex> = None; // built only when needed
+    let mut in_library: HashSet<i64> = rows.iter().map(|r| r.0).collect();
     for (id, folder, synced, current) in rows {
-        let Some(current) = current else {
-            set_series_error(st, id, "no longer in the provider catalog").await?;
-            continue;
-        };
+        // Gone from the catalog: still try (other entries with the same name may work).
+        let gone = current.is_none();
+        let current = current.unwrap_or(0);
         let dir = base.join(&folder);
         if let Err(e) = ensure_no_video(&dir).await {
             set_series_error(st, id, &format!("{e:#}")).await?;
             continue;
         }
         let has_files = dir.is_dir();
-        if synced == Some(current) && has_files {
+        if !gone && synced == Some(current) && has_files {
             continue; // unchanged at the provider and folder still there
         }
         if calls > 0 {
             tokio::time::sleep(SERIES_CALL_DELAY).await;
         }
         calls += 1;
-        match fetch_episodes(st, &x, id).await {
-            Ok(eps) => {
+        // Try the series' own id first; if the provider has nothing for it, try other
+        // catalog entries with the same name (stale duplicates are common).
+        let mut tried = vec![id];
+        let mut result = fetch_episodes(st, &x, id).await.map(|eps| (id, eps));
+        if result.is_err() {
+            let index = match &alt_index {
+                Some(i) => i,
+                None => {
+                    let all: Vec<(i64, String, Option<i64>)> =
+                        sqlx::query_as("SELECT series_id, name, added FROM series")
+                            .fetch_all(&st.db)
+                            .await?;
+                    alt_index.insert(NameIndex::new(&all))
+                }
+            };
+            for alt in index.find_all(&folder) {
+                if tried.contains(&alt) || in_library.contains(&alt) || tried.len() >= 4 {
+                    continue;
+                }
+                tried.push(alt);
+                tokio::time::sleep(SERIES_CALL_DELAY).await;
+                if let Ok(eps) = fetch_episodes(st, &x, alt).await {
+                    result = Ok((alt, eps));
+                    break;
+                }
+            }
+        }
+        match result {
+            Ok((used_id, eps)) => {
                 let n = write_episodes(&dir, &folder, &eps, &x, d.overwrite_series).await?;
                 written += n;
                 if n > 0 {
-                    log.push(format!("{folder}: +{n} episode(s)"));
+                    log.episodes += n;
+                    log.series_updated += 1;
                 }
+                if used_id != id {
+                    tracing::info!(
+                        "{folder}: series {id} has no episodes at the provider; switched to {used_id}"
+                    );
+                    log.series_switched += 1;
+                    in_library.insert(used_id);
+                }
+                let version: Option<i64> =
+                    sqlx::query_scalar("SELECT added FROM series WHERE series_id = ?")
+                        .bind(used_id)
+                        .fetch_optional(&st.db)
+                        .await?
+                        .flatten();
                 sqlx::query(
-                    "UPDATE library_series SET synced_version = ?, last_sync = ?, episodes = ?, last_error = NULL WHERE series_id = ?",
+                    "UPDATE library_series SET series_id = ?, synced_version = ?, last_sync = ?, episodes = ?, last_error = NULL
+                     WHERE series_id = ?",
                 )
-                .bind(current)
+                .bind(used_id)
+                .bind(version.unwrap_or(current))
                 .bind(now_secs())
                 .bind(eps.len() as i64)
                 .bind(id)
@@ -421,8 +538,17 @@ async fn sync_series(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<usi
                 .await?;
             }
             Err(e) => {
-                tracing::warn!("{folder}: {e:#}");
-                set_series_error(st, id, &format!("{e:#}")).await?;
+                let note = if tried.len() > 1 {
+                    format!(
+                        "{e:#} (also tried {} other catalog entries with this name)",
+                        tried.len() - 1
+                    )
+                } else {
+                    format!("{e:#}")
+                };
+                tracing::warn!("{folder}: {note}");
+                log.series_failed += 1;
+                set_series_error(st, id, &note).await?;
             }
         }
     }
@@ -508,7 +634,7 @@ async fn subfolders(base: &Path) -> Vec<String> {
 /// Match folders that aren't in the library yet (e.g. made by the Python version)
 /// to the catalog by name: exact, case-insensitive, then Python's normalized name.
 /// Folders with real video files are left alone (no duplicates in Jellyfin).
-async fn adopt_folders(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<usize> {
+async fn adopt_folders(st: &AppState, log: &mut RunLog) -> anyhow::Result<usize> {
     let d = dirs(st).await?;
     let mut written = 0;
 
@@ -518,9 +644,10 @@ async fn adopt_folders(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<u
             .await?
             .into_iter()
             .collect();
-        let catalog: Vec<(i64, String)> = sqlx::query_as("SELECT stream_id, name FROM movies")
-            .fetch_all(&st.db)
-            .await?;
+        let catalog: Vec<(i64, String, Option<i64>)> =
+            sqlx::query_as("SELECT stream_id, name, added FROM movies")
+                .fetch_all(&st.db)
+                .await?;
         let index = NameIndex::new(&catalog);
         let x = catalog::load_xtream(st).await?;
         for folder in subfolders(base)
@@ -544,7 +671,8 @@ async fn adopt_folders(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<u
                 written += 1;
             }
             record_movie(st, id, &folder, "adopted").await?;
-            log.push(format!("adopted movie folder '{folder}'"));
+            tracing::info!("adopted movie folder '{folder}'");
+            log.adopted_movies += 1;
         }
     }
 
@@ -554,9 +682,10 @@ async fn adopt_folders(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<u
             .await?
             .into_iter()
             .collect();
-        let catalog: Vec<(i64, String)> = sqlx::query_as("SELECT series_id, name FROM series")
-            .fetch_all(&st.db)
-            .await?;
+        let catalog: Vec<(i64, String, Option<i64>)> =
+            sqlx::query_as("SELECT series_id, name, added FROM series")
+                .fetch_all(&st.db)
+                .await?;
         let index = NameIndex::new(&catalog);
         for folder in subfolders(base)
             .await
@@ -581,43 +710,64 @@ async fn adopt_folders(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<u
             .execute(&st.db)
             .await?;
             if res.rows_affected() > 0 {
-                log.push(format!("adopted series folder '{folder}'"));
+                tracing::info!("adopted series folder '{folder}'");
+                log.adopted_series += 1;
             }
         }
     }
     Ok(written)
 }
 
-/// Name → id lookup: exact, then case-insensitive, then normalized (Python rules).
+/// Name → ids lookup: exact, then case-insensitive, then normalized (Python rules).
+/// A title can be in the catalog more than once (e.g. an NL and an EN category, or
+/// a stale entry); all candidates are kept, most recently changed first.
 struct NameIndex {
-    exact: HashMap<String, i64>,
-    lower: HashMap<String, i64>,
-    normalized: HashMap<String, i64>,
+    exact: HashMap<String, Vec<(i64, i64)>>,
+    lower: HashMap<String, Vec<(i64, i64)>>,
+    normalized: HashMap<String, Vec<(i64, i64)>>,
 }
 
 impl NameIndex {
-    fn new(items: &[(i64, String)]) -> Self {
+    /// items: (id, name, added/last_modified)
+    fn new(items: &[(i64, String, Option<i64>)]) -> Self {
         let mut idx = Self {
             exact: HashMap::new(),
             lower: HashMap::new(),
             normalized: HashMap::new(),
         };
-        for (id, name) in items {
-            idx.exact.entry(name.clone()).or_insert(*id);
-            if let Some(safe) = safe_name(name) {
-                idx.exact.entry(safe).or_insert(*id);
+        for (id, name, added) in items {
+            let e = (*id, added.unwrap_or(0));
+            idx.exact.entry(name.clone()).or_default().push(e);
+            if let Some(safe) = safe_name(name).filter(|s| s != name) {
+                idx.exact.entry(safe).or_default().push(e);
             }
-            idx.lower.entry(name.to_lowercase()).or_insert(*id);
-            idx.normalized.entry(normalize_title(name)).or_insert(*id);
+            idx.lower.entry(name.to_lowercase()).or_default().push(e);
+            idx.normalized
+                .entry(normalize_title(name))
+                .or_default()
+                .push(e);
+        }
+        for map in [&mut idx.exact, &mut idx.lower, &mut idx.normalized] {
+            for v in map.values_mut() {
+                v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                v.dedup_by_key(|e| e.0);
+            }
         }
         idx
     }
-    fn find(&self, folder: &str) -> Option<i64> {
+
+    /// All candidate ids for a folder name, best first. Empty when nothing matches.
+    fn find_all(&self, folder: &str) -> Vec<i64> {
         self.exact
             .get(folder)
             .or_else(|| self.lower.get(&folder.to_lowercase()))
             .or_else(|| self.normalized.get(&normalize_title(folder)))
-            .copied()
+            .map(|v| v.iter().map(|e| e.0).collect())
+            .unwrap_or_default()
+    }
+
+    fn find(&self, folder: &str) -> Option<i64> {
+        self.find_all(folder).first().copied()
     }
 }
 
@@ -677,7 +827,7 @@ pub fn match_term(term: &str, catalog: &[(i64, String)], fuzzy: bool) -> Vec<(i6
     best.map(|(_, _, i)| vec![i.clone()]).unwrap_or_default()
 }
 
-async fn process_wanted(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<usize> {
+async fn process_wanted(st: &AppState, log: &mut RunLog) -> anyhow::Result<usize> {
     let fuzzy = s::get(&st.db, s::MATCH_TYPE).await?.as_deref() == Some("fuzzy");
     let pending: Vec<(i64, String, String)> =
         sqlx::query_as("SELECT id, kind, term FROM wanted WHERE found_at IS NULL ORDER BY id")
@@ -730,7 +880,8 @@ async fn process_wanted(st: &AppState, log: &mut Vec<String>) -> anyhow::Result<
                 .bind(id)
                 .execute(&st.db)
                 .await?;
-                log.push(format!("wanted '{term}' found: {}", names.join(", ")));
+                tracing::info!("wanted '{term}' found: {}", names.join(", "));
+                log.wanted_found.push(term.clone());
                 continue;
             }
         }
@@ -756,7 +907,7 @@ pub async fn run_vod_job(st: &AppState) -> anyhow::Result<String> {
         .bind(started)
         .fetch_one(&st.db)
         .await?;
-    let mut log = Vec::new();
+    let mut log = RunLog::default();
     let result = async {
         let mut written = adopt_folders(st, &mut log).await?;
         written += process_wanted(st, &mut log).await?;
@@ -770,15 +921,7 @@ pub async fn run_vod_job(st: &AppState) -> anyhow::Result<String> {
     st.vod_running.store(false, Ordering::SeqCst);
 
     let (ok, written, msg) = match &result {
-        Ok(n) => (
-            true,
-            *n as i64,
-            if log.is_empty() {
-                "nothing new".to_string()
-            } else {
-                log.join("; ")
-            },
-        ),
+        Ok(n) => (true, *n as i64, log.summary()),
         Err(e) => (false, 0, format!("{e:#}")),
     };
     sqlx::query("UPDATE vod_runs SET finished = ?, ok = ?, written = ?, message = ? WHERE id = ?")
@@ -801,7 +944,7 @@ pub async fn run_vod_job(st: &AppState) -> anyhow::Result<String> {
     }
 }
 
-pub async fn refresh_jellyfin(st: &AppState, log: &mut Vec<String>) {
+pub async fn refresh_jellyfin(st: &AppState, log: &mut RunLog) {
     let enabled = s::get(&st.db, s::JELLYFIN_ENABLED)
         .await
         .ok()
@@ -822,10 +965,10 @@ pub async fn refresh_jellyfin(st: &AppState, log: &mut Vec<String>) {
         return;
     }
     match integrations::jellyfin_refresh(&st.http, &url, &key).await {
-        Ok(()) => log.push("Jellyfin library refresh started".into()),
+        Ok(()) => log.jellyfin = Some("Jellyfin refreshed".into()),
         Err(e) => {
             tracing::warn!("Jellyfin refresh: {e}");
-            log.push(format!("Jellyfin refresh failed: {e}"));
+            log.jellyfin = Some(format!("Jellyfin refresh failed: {e}"));
         }
     }
 }
