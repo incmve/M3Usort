@@ -19,6 +19,7 @@ use crate::auth::{self, ADMIN_COOKIE, LoginLimiter, SESSION_TTL, SessionSigner};
 use crate::catalog;
 use crate::crypto::MasterKey;
 use crate::library;
+use crate::playlist;
 use crate::settings as s;
 use crate::setup::{self, Draft};
 use crate::version::{self, SharedStatus, UpdateStatus};
@@ -37,6 +38,7 @@ pub struct AppState {
     pub draft: Arc<Mutex<Option<(String, Draft)>>>,
     pub catalog_running: Arc<AtomicBool>,
     pub vod_running: Arc<AtomicBool>,
+    pub playlist_running: Arc<AtomicBool>,
     setup_done: Arc<AtomicBool>,
 }
 
@@ -59,6 +61,7 @@ impl AppState {
             draft: Arc::new(Mutex::new(None)),
             catalog_running: Arc::new(AtomicBool::new(false)),
             vod_running: Arc::new(AtomicBool::new(false)),
+            playlist_running: Arc::new(AtomicBool::new(false)),
             setup_done: Arc::new(AtomicBool::new(setup_done)),
         })
     }
@@ -132,6 +135,10 @@ pub fn app_router(state: AppState) -> Router {
             "/settings/{step}",
             get(setup::admin_section).post(setup::admin_section_save),
         )
+        .route("/playlist/groups", get(groups_page).post(groups_save))
+        .route("/playlist/custom", get(custom_page).post(custom_save))
+        .route("/playlist/custom/add-group", post(custom_add_group))
+        .route("/playlist/custom/add", post(custom_add_one))
         .route("/logout", post(logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
 
@@ -151,6 +158,9 @@ pub fn app_router(state: AppState) -> Router {
         .route("/wanted", post(wanted_add))
         .route("/wanted/{id}/delete", post(wanted_delete))
         .route("/vod/run", post(vod_run))
+        .route("/playlist", get(playlist_page))
+        .route("/playlist/refresh", post(playlist_refresh))
+        .route("/m3u/{file}", get(m3u_download))
         .route("/setup", get(setup::start))
         .route("/setup/summary", get(setup::summary))
         .route("/setup/finish", post(setup::finish))
@@ -539,6 +549,324 @@ fn redirect_with_msg(path: &str, msg: &str) -> Response {
         .append_pair("msg", msg)
         .finish();
     Redirect::to(&format!("{path}?{q}")).into_response()
+}
+
+// ------------------------------------------------------------------ live TV playlist
+
+/// Repeated form keys (order=…&order=…) in their original order.
+fn form_list(body: &str, key: &str) -> Vec<String> {
+    url::form_urlencoded::parse(body.as_bytes())
+        .filter(|(k, _)| k == key)
+        .map(|(_, v)| v.into_owned())
+        .collect()
+}
+
+fn form_value(body: &str, key: &str) -> String {
+    form_list(body, key).into_iter().next().unwrap_or_default()
+}
+
+#[derive(Template)]
+#[template(path = "playlist.html")]
+struct PlaylistTpl {
+    page: Page,
+    message: String,
+    status: playlist::Status,
+    running: bool,
+    url: String,
+    password_set: bool,
+}
+
+async fn playlist_page(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<MsgQuery>,
+) -> Response {
+    let r = async {
+        let status = playlist::status(&st.db).await?;
+        let output = s::get(&st.db, s::PLAYLIST_OUTPUT)
+            .await?
+            .unwrap_or_else(|| "sorted.m3u".into());
+        let pw = s::get(&st.db, s::PLAYLIST_PASSWORD_HASH)
+            .await?
+            .is_some_and(|h| !h.is_empty());
+        anyhow::Ok((status, output, pw))
+    }
+    .await;
+    let (status, output, password_set) = match r {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("database error: {e}"),
+            )
+                .into_response();
+        }
+    };
+    // Address as the player should use it: HOST_IP when set, else the Host the browser used.
+    let host = std::env::var("HOST_IP")
+        .ok()
+        .filter(|h| !h.trim().is_empty())
+        .map(|h| {
+            let port = headers
+                .get(header::HOST)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|h| h.rsplit_once(':'))
+                .map(|(_, p)| p.to_string());
+            match port {
+                Some(p) if !h.contains(':') => format!("{h}:{p}"),
+                _ => h,
+            }
+        })
+        .or_else(|| {
+            headers
+                .get(header::HOST)
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "SERVER:5051".into());
+    render(PlaylistTpl {
+        page: Page::nav("Live TV playlist", st.is_admin(&headers).await),
+        message: q.msg.unwrap_or_default(),
+        status,
+        running: st.playlist_running.load(Ordering::SeqCst),
+        url: format!("http://{host}/m3u/{output}?password=YOUR_PLAYLIST_PASSWORD"),
+        password_set,
+    })
+}
+
+async fn playlist_refresh(State(st): State<AppState>) -> Response {
+    if !st.playlist_running.load(Ordering::SeqCst) {
+        let st2 = st.clone();
+        tokio::spawn(async move {
+            let _ = playlist::refresh(&st2).await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    redirect_with_msg(
+        "/playlist",
+        "Download started. Reload this page to see the result.",
+    )
+}
+
+#[derive(Deserialize)]
+struct M3uQuery {
+    password: Option<String>,
+}
+
+/// What IPTV players fetch: /m3u/<file name>?password=<playlist password>.
+/// Same per-IP lockout as the admin login (5 wrong → 30 minutes).
+async fn m3u_download(
+    State(st): State<AppState>,
+    Path(file): Path<String>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Query(q): Query<M3uQuery>,
+) -> Response {
+    let ip = addr.ip();
+    let hash = s::get(&st.db, s::PLAYLIST_PASSWORD_HASH)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if hash.is_empty() {
+        return (
+            StatusCode::FORBIDDEN,
+            "Playlist downloads are off: no playlist password is set.",
+        )
+            .into_response();
+    }
+    let output = s::get(&st.db, s::PLAYLIST_OUTPUT)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "sorted.m3u".into());
+    if file != output {
+        return (StatusCode::NOT_FOUND, "Unknown playlist").into_response();
+    }
+    if let Err(min) = st.limiter.check(ip).await {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("Locked out for {min} more minutes."),
+        )
+            .into_response();
+    }
+    let pw = q.password.unwrap_or_default();
+    let ok = tokio::task::spawn_blocking(move || auth::verify_password(&pw, &hash))
+        .await
+        .unwrap_or(false);
+    if !ok {
+        st.limiter.fail(ip).await;
+        tracing::warn!("wrong playlist password from {ip}");
+        return (StatusCode::UNAUTHORIZED, "Invalid password").into_response();
+    }
+    st.limiter.reset(ip).await;
+    match playlist::build(&st.db).await {
+        Ok((m3u, n)) => {
+            tracing::info!("playlist '{file}' sent to {ip} ({n} channels)");
+            (
+                [
+                    (
+                        header::CONTENT_TYPE,
+                        "audio/x-mpegurl; charset=utf-8".to_string(),
+                    ),
+                    (
+                        header::CONTENT_DISPOSITION,
+                        format!("attachment; filename=\"{file}\""),
+                    ),
+                ],
+                m3u,
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not build the playlist: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Template)]
+#[template(path = "playlist_groups.html")]
+struct GroupsTpl {
+    page: Page,
+    message: String,
+    chosen: Vec<(String, i64)>,
+    all: Vec<playlist::Group>,
+}
+
+async fn groups_page(State(st): State<AppState>, Query(q): Query<MsgQuery>) -> Response {
+    let r = async {
+        anyhow::Ok((
+            playlist::chosen_groups(&st.db).await?,
+            playlist::groups(&st.db).await?,
+        ))
+    }
+    .await;
+    match r {
+        Ok((chosen, all)) => render(GroupsTpl {
+            page: Page::admin("Playlist groups"),
+            message: q.msg.unwrap_or_default(),
+            chosen,
+            all,
+        }),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("database error: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn groups_save(State(st): State<AppState>, body: String) -> Response {
+    let order = form_list(&body, "order");
+    let msg = match playlist::save_groups(&st.db, &order).await {
+        Ok(()) => format!(
+            "Saved: {} group(s). Players get the new order on their next refresh.",
+            order.len()
+        ),
+        Err(e) => format!("Saving failed: {e}"),
+    };
+    redirect_with_msg("/admin/playlist/groups", &msg)
+}
+
+#[derive(Template)]
+#[template(path = "playlist_custom.html")]
+struct CustomTpl {
+    page: Page,
+    message: String,
+    title: String,
+    channels: Vec<(String, String)>,
+    groups: Vec<playlist::Group>,
+    q: String,
+    results: Vec<(String, String)>,
+}
+
+#[derive(Deserialize)]
+struct CustomQuery {
+    msg: Option<String>,
+    q: Option<String>,
+}
+
+async fn custom_page(State(st): State<AppState>, Query(q): Query<CustomQuery>) -> Response {
+    let search =
+        q.q.unwrap_or_default()
+            .trim()
+            .chars()
+            .take(100)
+            .collect::<String>();
+    let r = async {
+        let channels = playlist::custom_channels(&st.db).await?;
+        let groups = playlist::groups(&st.db)
+            .await?
+            .into_iter()
+            .filter(|g| g.kind == "live")
+            .collect();
+        let results = if search.is_empty() {
+            Vec::new()
+        } else {
+            playlist::search_channels(&st.db, &search).await?
+        };
+        let title = s::get(&st.db, s::CUSTOM_GROUP_TITLE)
+            .await?
+            .unwrap_or_else(|| "Custom".into());
+        anyhow::Ok((channels, groups, results, title))
+    }
+    .await;
+    match r {
+        Ok((channels, groups, results, title)) => render(CustomTpl {
+            page: Page::admin("Custom group"),
+            message: q.msg.unwrap_or_default(),
+            title,
+            channels,
+            groups,
+            q: search,
+            results,
+        }),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("database error: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn custom_save(State(st): State<AppState>, body: String) -> Response {
+    let names = form_list(&body, "order");
+    let msg = match playlist::save_custom(&st.db, &names).await {
+        Ok(()) => format!("Saved: {} channel(s) in the custom group.", names.len()),
+        Err(e) => format!("Saving failed: {e}"),
+    };
+    redirect_with_msg("/admin/playlist/custom", &msg)
+}
+
+async fn custom_add_group(State(st): State<AppState>, body: String) -> Response {
+    let group = form_value(&body, "group");
+    let msg = match playlist::add_group_to_custom(&st.db, &group).await {
+        Ok(n) => format!("Added {n} channel(s) from '{group}' to the end of the custom group."),
+        Err(e) => format!("Failed: {e}"),
+    };
+    redirect_with_msg("/admin/playlist/custom", &msg)
+}
+
+async fn custom_add_one(State(st): State<AppState>, body: String) -> Response {
+    let name = form_value(&body, "name");
+    let r = async {
+        let mut names: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM playlist_custom ORDER BY position")
+                .fetch_all(&st.db)
+                .await?;
+        if names.contains(&name) {
+            return anyhow::Ok(format!("'{name}' is already in the custom group."));
+        }
+        names.push(name.clone());
+        playlist::save_custom(&st.db, &names).await?;
+        anyhow::Ok(format!("Added '{name}' to the end of the custom group."))
+    }
+    .await;
+    redirect_with_msg(
+        "/admin/playlist/custom",
+        &r.unwrap_or_else(|e| format!("Failed: {e}")),
+    )
 }
 
 // ------------------------------------------------------------------ catalog pages

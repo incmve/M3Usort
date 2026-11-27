@@ -83,7 +83,13 @@ is good enough.
       Differences from Python, on purpose: folders with real video files are never
       written into; names with `/` or `\` can't create sub-folders; a string-match term
       hitting more than 25 titles is not added; .strm files are written atomically.
-- [ ] **4. Live TV playlist:** groups, sorting, custom group, `/m3u/` with playlist password
+- [x] **4. Live TV playlist:** provider M3U (`get.php`, m3u_plus/ts) downloaded on the
+      playlist interval into SQLite (kept if a new download has less than half the
+      entries); choose and order groups; custom group (first) from whole groups or single
+      channels, in your order; `/m3u/<name>?password=` built on request, per-IP lockout.
+      Same output as Python's rebuild() (custom title rewritten, a name appears once),
+      keeps the provider's `#EXTM3U url-tvg=…` header. Fix vs Python: the custom group
+      follows the saved order (Python wrote the provider's order).
 - [ ] **5. TMDB enrichment** (IDs, cast, posters), "New this week", actor search
 - [ ] **6. Jellyfin:** library refresh, library view with watch status per user
 - [ ] **7. Admin extras:** log viewer, file browser, backup/restore, SMB, Gluetun card

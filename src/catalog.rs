@@ -389,6 +389,9 @@ pub fn spawn_scheduler(st: AppState) {
             if let Err(e) = maybe_refresh(&st).await {
                 tracing::debug!("catalog scheduler: {e:#}");
             }
+            if let Err(e) = crate::playlist::maybe_refresh(&st).await {
+                tracing::debug!("playlist scheduler: {e:#}");
+            }
             if let Err(e) = crate::library::maybe_run_vod(&st).await {
                 tracing::debug!("VOD scheduler: {e:#}");
             }

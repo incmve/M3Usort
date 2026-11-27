@@ -5,6 +5,7 @@ mod crypto;
 mod db;
 mod integrations;
 mod library;
+mod playlist;
 mod settings;
 mod setup;
 mod version;

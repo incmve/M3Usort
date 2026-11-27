@@ -18,6 +18,8 @@ pub const JELLYFIN_URL: &str = "jellyfin_url";
 pub const PLAYLIST_OUTPUT: &str = "playlist_output";
 pub const PLAYLIST_REFRESH_HOURS: &str = "playlist_refresh_hours";
 pub const CUSTOM_GROUP_TITLE: &str = "custom_group_title";
+/// First line of the provider's M3U (#EXTM3U plus attributes like url-tvg), kept for the output.
+pub const M3U_HEADER: &str = "m3u_header";
 pub const VOD_SCHEDULER_ENABLED: &str = "vod_scheduler_enabled";
 pub const VOD_SCAN_HOURS: &str = "vod_scan_hours";
 pub const OVERWRITE_MOVIES: &str = "overwrite_movies";

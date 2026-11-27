@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<h1>Playlist groups</h1>
+{% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
+<p><a href="/playlist">← Live TV playlist</a></p>
+<div class="two">
+  <form method="post" action="/admin/playlist/groups" class="card">
+    <div class="actions" style="margin-top:0"><strong>In your playlist, in this order</strong><button class="btn" type="submit">Save</button></div>
+    <ul class="sortable" id="chosen">
+      {% for (title, count) in chosen %}
+      <li><input type="hidden" name="order" value="{{ title }}"><span class="t">{{ title }}</span>
+        <span class="help">{% if *count == 0 %}gone at provider{% else %}{{ count }}{% endif %}</span>
+        <span class="ops"><button type="button" data-op="up">↑</button><button type="button" data-op="down">↓</button><button type="button" data-op="del">✕</button></span></li>
+      {% endfor %}
+    </ul>
+    <p class="help" id="empty-chosen"{% if !chosen.is_empty() %} hidden{% endif %}>No groups yet. Add them from the list on the right.</p>
+  </form>
+  <div class="card">
+    <strong>All groups at the provider</strong>
+    <div class="filters" style="margin:.6rem 0">
+      <input type="text" id="gfilter" placeholder="Filter groups…">
+      <span class="check"><input type="checkbox" id="showvod"><label for="showvod">Show VOD groups</label></span>
+    </div>
+    <table id="allgroups">
+      {% for g in all %}
+      <tr data-kind="{{ g.kind }}" data-title="{{ g.title|lower }}"{% if g.kind != "live" %} hidden{% endif %}>
+        <td>{% if g.title.is_empty() %}<em>(no group)</em>{% else %}{{ g.title }}{% endif %}</td>
+        <td>{{ g.count }}{% if g.kind != "live" %} · {{ g.kind }}{% endif %}</td>
+        <td class="act"><button class="btn secondary" type="button" data-add="{{ g.title }}" data-count="{{ g.count }}"{% if g.position.is_some() %} disabled{% endif %}>Add</button></td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+<script>
+const chosen = document.getElementById('chosen');
+function refreshEmpty(){ document.getElementById('empty-chosen').hidden = chosen.children.length > 0; }
+document.getElementById('allgroups').addEventListener('click', e => {
+  const b = e.target.closest('button[data-add]'); if (!b) return;
+  const li = document.createElement('li');
+  const inp = Object.assign(document.createElement('input'), {type:'hidden', name:'order', value:b.dataset.add});
+  const t = Object.assign(document.createElement('span'), {className:'t', textContent:b.dataset.add || '(no group)'});
+  const c = Object.assign(document.createElement('span'), {className:'help', textContent:' ' + b.dataset.count});
+  const ops = document.createElement('span'); ops.className = 'ops';
+  ops.innerHTML = '<button type="button" data-op="up">↑</button><button type="button" data-op="down">↓</button><button type="button" data-op="del">✕</button>';
+  li.append(inp, t, c, ops); chosen.append(li); b.disabled = true; refreshEmpty();
+});
+function filter(){
+  const q = document.getElementById('gfilter').value.toLowerCase(), vod = document.getElementById('showvod').checked;
+  for (const tr of document.querySelectorAll('#allgroups tr'))
+    tr.hidden = !((vod || tr.dataset.kind === 'live') && tr.dataset.title.includes(q));
+}
+document.getElementById('gfilter').addEventListener('input', filter);
+document.getElementById('showvod').addEventListener('change', filter);
+chosen.addEventListener('click', e => {
+  const b = e.target.closest('button[data-op]'); if (!b) return;
+  if (b.dataset.op === 'del') {
+    const v = b.closest('li').querySelector('input').value;
+    for (const a of document.querySelectorAll('#allgroups button[data-add]')) if (a.dataset.add === v) a.disabled = false;
+  }
+  refreshEmpty();
+});
+</script>
+{% endblock %}

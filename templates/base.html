@@ -58,6 +58,12 @@ main.wide,footer.wide{max-width:76rem}
 .tile .sub{color:var(--muted);font-size:.75rem;margin-top:.2rem}
 .tile .add{margin-top:.4rem;width:100%;padding:.35rem;font-size:.8rem}
 .tile .have{margin-top:.4rem;font-size:.8rem;color:#8fd19e}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:start}
+@media (max-width:800px){.two{grid-template-columns:1fr}}
+ul.sortable{list-style:none;padding:0;margin:.6rem 0}
+ul.sortable li{display:flex;align-items:center;gap:.6rem;padding:.4rem .5rem;border-bottom:1px solid var(--line)}
+ul.sortable li .t{flex:1;word-break:break-word}
+ul.sortable .ops button{background:#2a2e38;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:.1rem .45rem;margin-left:.2rem;cursor:pointer}
 .pager{display:flex;gap:.5rem;justify-content:center;align-items:center;margin:1.5rem 0}
 nav.tabs a{margin-right:1rem}
 </style>
@@ -70,6 +76,7 @@ nav.tabs a{margin-right:1rem}
   <a href="/series">Series</a>
   <a href="/new">New</a>
   <a href="/library">Library</a>
+  <a href="/playlist">Live TV</a>
   {% if page.is_admin %}
     <a href="/admin">Admin</a>
     <form method="post" action="/admin/logout" style="margin:0"><button type="submit">Log out</button></form>
@@ -82,6 +89,13 @@ nav.tabs a{margin-right:1rem}
 {% block content %}{% endblock %}
 </main>
 <script>
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest('ul.sortable button[data-op]'); if (!b) return;
+  const li = b.closest('li');
+  if (b.dataset.op === 'up' && li.previousElementSibling) li.parentNode.insertBefore(li, li.previousElementSibling);
+  if (b.dataset.op === 'down' && li.nextElementSibling) li.parentNode.insertBefore(li.nextElementSibling, li);
+  if (b.dataset.op === 'del') li.remove();
+});
 document.addEventListener('submit', async (ev) => {
   const f = ev.target;
   if (!f.matches('form.add-form')) return;

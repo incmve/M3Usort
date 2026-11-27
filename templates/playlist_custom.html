@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<h1>Custom group "{{ title }}"</h1>
+{% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
+<p><a href="/playlist">← Live TV playlist</a> · The title is set under Admin → Settings → Schedules.</p>
+<div class="two">
+  <form method="post" action="/admin/playlist/custom" class="card">
+    <div class="actions" style="margin-top:0"><strong>Channels, in this order</strong><button class="btn" type="submit">Save</button></div>
+    <ul class="sortable" id="chosen">
+      {% for (name, group) in channels %}
+      <li><input type="hidden" name="order" value="{{ name }}"><span class="t">{{ name }}</span>
+        <span class="help">{% if group.is_empty() %}not at provider now{% else %}{{ group }}{% endif %}</span>
+        <span class="ops"><button type="button" data-op="up">↑</button><button type="button" data-op="down">↓</button><button type="button" data-op="del">✕</button></span></li>
+      {% endfor %}
+    </ul>
+    {% if channels.is_empty() %}<p class="help">Empty. Add a whole group or single channels on the right.</p>{% endif %}
+    <p class="help">↑ ↓ ✕ change the list here; nothing is stored until you click Save.</p>
+  </form>
+  <div>
+    <form method="post" action="/admin/playlist/custom/add-group" class="card">
+      <strong>Add all channels of a group</strong>
+      <div class="filters" style="margin:.6rem 0 0">
+        <select name="group">{% for g in groups %}<option value="{{ g.title }}">{{ g.title }} ({{ g.count }})</option>{% endfor %}</select>
+        <button class="btn" type="submit">Add</button>
+      </div>
+      <p class="help">Appended to the end; channels already in the list are skipped.</p>
+    </form>
+    <div class="card">
+      <strong>Add a single channel</strong>
+      <form method="get" action="/admin/playlist/custom" class="filters" style="margin:.6rem 0">
+        <input type="text" name="q" value="{{ q }}" placeholder="Search live channels, e.g. NPO"><button class="btn secondary" type="submit">Search</button>
+      </form>
+      {% if !q.is_empty() && results.is_empty() %}<p>Nothing found.</p>{% endif %}
+      <table>{% for (name, group) in results %}
+        <tr><td>{{ name }}</td><td class="help">{{ group }}</td>
+        <td class="act"><form method="post" action="/admin/playlist/custom/add" style="margin:0"><input type="hidden" name="name" value="{{ name }}"><button class="btn secondary" type="submit">Add</button></form></td></tr>
+      {% endfor %}</table>
+    </div>
+  </div>
+</div>
+{% endblock %}

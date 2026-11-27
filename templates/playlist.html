@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<h1>Live TV playlist</h1>
+{% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
+<div class="stats">
+  <div class="stat s1"><div class="n">{{ status.live }}</div><div class="l">Live channels at provider</div></div>
+  <div class="stat s2"><div class="n">{{ status.chosen }}</div><div class="l">Groups in your playlist</div></div>
+  <div class="stat s3"><div class="n">{{ status.custom }}</div><div class="l">Channels in custom group</div></div>
+  <div class="stat s4"><div class="n" style="font-size:1.2rem;padding:.35rem 0">{{ status.last_ok }}</div><div class="l">Last download</div></div>
+</div>
+
+<div class="card">
+  {% if running %}<p><strong>Downloading the provider's playlist…</strong> Reload in a minute.</p>
+  {% elif status.last_failed %}<div class="msg err">Last download failed: {{ status.last_message }}</div>
+  {% elif !status.last_message.is_empty() %}<p class="help">Last download: {{ status.last_message }}</p>{% endif %}
+  <form method="post" action="/playlist/refresh" class="actions" style="margin-top:.5rem">
+    <span class="help">Downloaded automatically every playlist refresh interval (Settings → Schedules).</span>
+    <button class="btn" type="submit"{% if running %} disabled{% endif %}>Download now</button>
+  </form>
+</div>
+
+<h2>Use in your IPTV player</h2>
+<div class="card">
+  {% if !password_set %}<div class="msg err">No playlist password is set, so players can't download it yet. An admin can set one on the Admin page.</div>{% endif %}
+  <p>Playlist URL:</p>
+  <pre style="white-space:pre-wrap;word-break:break-all;user-select:all;padding:.7rem">{{ url }}</pre>
+  <p class="help">Replace YOUR_PLAYLIST_PASSWORD with the playlist password. The playlist is built when the player asks for it, so changes show up on the player's next refresh. 5 wrong passwords lock that IP out for 30 minutes.</p>
+</div>
+
+<h2>Arrange</h2>
+<div class="card">
+  <p><a class="btn secondary" href="/admin/playlist/groups">Groups: choose and order</a>
+     <a class="btn secondary" href="/admin/playlist/custom">Custom group: channels and order</a></p>
+  <p class="help">Admin only. The custom group always comes first, then your groups in your order. A channel name appears only once.</p>
+</div>
+{% endblock %}
