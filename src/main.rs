@@ -1,6 +1,10 @@
+mod auth;
 mod config;
 mod crypto;
 mod db;
+mod integrations;
+mod settings;
+mod setup;
 mod version;
 mod web;
 
@@ -19,6 +23,7 @@ Commands:
   serve         Run the web app (default)
   gen-key       Print a new random M3USORT_KEY
   rotate-key    Re-encrypt all stored credentials with a new key (stop the app first)
+  reset-admin   Set a new random admin password and log out all admin sessions
   version       Print version and commit
   healthcheck   Exit 0 if the running app answers on /healthcheck (for Docker HEALTHCHECK)
 ";
@@ -40,6 +45,7 @@ async fn main() {
             Ok(())
         }
         "rotate-key" => rotate_key().await,
+        "reset-admin" => reset_admin().await,
         "healthcheck" => healthcheck().await,
         "version" | "-V" | "--version" => {
             println!("{}", version::version_line());
@@ -96,17 +102,17 @@ async fn serve() -> anyhow::Result<()> {
             match db::verify_or_init_key(&pool, &key, true).await? {
                 KeyCheck::Initialised => {
                     info!("new database created and bound to M3USORT_KEY");
-                    web::app_router(pool, update.clone())
+                    web::app_router(web::AppState::new(pool, key, update.clone()).await?)
                 }
                 KeyCheck::Ok => {
                     info!("M3USORT_KEY verified");
-                    web::app_router(pool, update.clone())
+                    web::app_router(web::AppState::new(pool, key, update.clone()).await?)
                 }
                 KeyCheck::Rebound => {
                     warn!(
                         "M3USORT_KEY changed before setup was finished; database re-bound to the new key"
                     );
-                    web::app_router(pool, update.clone())
+                    web::app_router(web::AppState::new(pool, key, update.clone()).await?)
                 }
                 KeyCheck::Mismatch => {
                     error!("M3USORT_KEY does not match this database; nothing was changed");
@@ -120,9 +126,12 @@ async fn serve() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("cannot listen on {}", cfg.listen))?;
     info!("listening on http://{}", cfg.listen);
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     Ok(())
 }
 
@@ -182,6 +191,32 @@ async fn rotate_key() -> anyhow::Result<()> {
     println!(
         "Then recreate the container (docker compose up -d). Backups made before now still need the OLD key."
     );
+    Ok(())
+}
+
+/// Forgotten admin password: set a random one. Works while the app runs
+/// (`docker exec`), needs no M3USORT_KEY: only someone on the Docker host can run it.
+async fn reset_admin() -> anyhow::Result<()> {
+    let cfg = Config::from_env()?;
+    anyhow::ensure!(
+        cfg.db_path().exists(),
+        "no database at {}",
+        cfg.db_path().display()
+    );
+    let pool = db::open(&cfg.db_path(), false).await?;
+    anyhow::ensure!(
+        settings::setup_completed(&pool).await?,
+        "setup is not finished yet; use the setup wizard"
+    );
+    let password = auth::random_code(16);
+    let hash = setup::hash_off_thread(password.clone()).await;
+    let mut tx = pool.begin().await?;
+    settings::set(&mut *tx, settings::ADMIN_PASSWORD_HASH, &hash).await?;
+    settings::bump_session_generation(&mut *tx).await?;
+    tx.commit().await?;
+    pool.close().await;
+    println!("New admin password: {password}");
+    println!("All admin sessions are logged out. Change it under Admin after logging in.");
     Ok(())
 }
 

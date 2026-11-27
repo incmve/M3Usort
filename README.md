@@ -17,7 +17,15 @@ Open `http://<host>:5051`. Step 1 shows a generated `M3USORT_KEY`:
 
 1. Put it in `.env` **and in your password manager**.
 2. Recreate the container: `docker compose up -d` (Arcane: *Redeploy*).
-3. The setup wizard continues.
+3. The setup wizard starts. It asks for the **setup code** printed in the container
+   log (`Setup code: XXXXXXXX`), so nobody else on your network can claim the admin
+   account first.
+4. Admin & playlist passwords → provider/proxy (login tested) → folders (write-tested)
+   → Jellyfin (optional, tested) → TMDB (optional, tested) → schedules → summary →
+   **Finish**. Nothing is saved before Finish.
+
+After setup, guests use the app without logging in. Admin pages (`/admin`) need the
+admin password. 5 wrong passwords from one IP lock that IP out for 30 minutes.
 
 Everything about the key (rotation, restore, what happens when it's wrong):
 [docs/KEY-MANAGEMENT.md](docs/KEY-MANAGEMENT.md).
@@ -31,6 +39,7 @@ Versions and update check: [docs/RELEASING.md](docs/RELEASING.md).
 m3usort serve         Run the web app (default)
 m3usort gen-key       Print a new random M3USORT_KEY
 m3usort rotate-key    Re-encrypt stored credentials with a new key (app must be stopped)
+m3usort reset-admin   New random admin password, logs out all admin sessions
 m3usort version       Print version and commit
 m3usort healthcheck   Used by the Docker HEALTHCHECK
 ```

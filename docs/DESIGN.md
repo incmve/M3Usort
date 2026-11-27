@@ -40,7 +40,11 @@ is good enough.
    LAN can claim the admin account first.
 7. **Backup/restore:** backup = database snapshot (no key inside). Restore from the
    wizard's first screen or Settings, needs the matching key.
-8. **Credentials viewable** by admin after re-entering the admin password.
+8. **Admin sessions:** signed cookie (HMAC-SHA256, key derived from `M3USORT_KEY`),
+   7 days, `HttpOnly; SameSite=Strict`. A password change or `reset-admin` bumps a
+   generation counter that logs out every session. Lockout per IP (5 tries / 30 min),
+   so a guest can't lock the admin out from another device.
+   **Credentials viewable** by admin after re-entering the admin password.
    Forgotten admin password: `m3usort reset-admin` from the host.
 
 9. **Version + update check:** version from `Cargo.toml` plus git commit, shown in
@@ -52,7 +56,8 @@ is good enough.
 
 - [x] **0. Skeleton:** key handling (random key or passphrase), key check, key
       rotation, data-dir lock, healthcheck, version + update check, Docker image, CI releases
-- [ ] **1. Setup wizard + admin login + guest access**
+- [x] **1. Setup wizard + admin login + guest access**, admin page (show credentials,
+      change admin/playlist password), `reset-admin`
 - [ ] **2. Catalog import** (Xtream `get_vod_streams` / `get_series`) into SQLite + FTS5 search
 - [ ] **3. Wanted lists → .strm writing**, compatible with existing folders; scheduler
 - [ ] **4. Live TV playlist:** groups, sorting, custom group, `/m3u/` with playlist password

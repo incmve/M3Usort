@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Check and finish</h1>
+{% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
+<div class="card">
+  <table>
+  {% for (k, v) in rows %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
+  </table>
+</div>
+<p class="help">Credentials are stored encrypted with your <code>M3USORT_KEY</code>. Passwords are stored as salted Argon2id hashes.</p>
+<form method="post" action="/setup/finish">
+  <div class="actions">
+    <a class="btn secondary" href="/setup/6">← Back</a>
+    <button class="btn" type="submit">Finish</button>
+  </div>
+</form>
+{% endblock %}

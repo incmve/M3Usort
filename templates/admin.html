@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Admin</h1>
+{% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
+{% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
+
+<h2>Settings</h2>
+<div class="card">
+  <table>{% for (k, v) in settings %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}</table>
+  <p class="help">Editing settings comes in a later version. Credentials are not listed here; see below.</p>
+</div>
+
+<h2>Stored credentials</h2>
+{% if credentials.is_empty() %}
+<form method="post" action="/admin/credentials" class="card" autocomplete="off">
+  <p>Credentials are stored encrypted. Enter the admin password to show them.</p>
+  <label for="cred_pw">Admin password</label>
+  <input type="password" id="cred_pw" name="password" autocomplete="current-password">
+  <div class="actions"><span></span><button class="btn" type="submit">Show credentials</button></div>
+</form>
+{% else %}
+<div class="card">
+  <table>{% for (k, v) in credentials %}<tr><td>{{ k }}</td><td><code>{{ v }}</code></td></tr>{% endfor %}</table>
+  <div class="actions"><span></span><a class="btn secondary" href="/admin">Hide</a></div>
+</div>
+{% endif %}
+
+<h2>Change admin password</h2>
+<form method="post" action="/admin/password" class="card" autocomplete="off">
+  <label for="a_cur">Current admin password</label><input type="password" id="a_cur" name="current" autocomplete="current-password">
+  <label for="a_new">New admin password</label><input type="password" id="a_new" name="new" autocomplete="new-password">
+  <label for="a_new2">New admin password (again)</label><input type="password" id="a_new2" name="new2" autocomplete="new-password">
+  <div class="help">Logs out every other admin session.</div>
+  <div class="actions"><span></span><button class="btn" type="submit">Change</button></div>
+</form>
+
+<h2>Change playlist password</h2>
+<form method="post" action="/admin/playlist-password" class="card" autocomplete="off">
+  <label for="p_cur">Current admin password</label><input type="password" id="p_cur" name="current" autocomplete="current-password">
+  <label for="p_new">New playlist password</label><input type="password" id="p_new" name="new" autocomplete="new-password">
+  <label for="p_new2">New playlist password (again)</label><input type="password" id="p_new2" name="new2" autocomplete="new-password">
+  <div class="actions"><span></span><button class="btn" type="submit">Change</button></div>
+</form>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="steps">{% for i in 1..=last_step %}<span{% if i <= step %} class="on"{% endif %}></span>{% endfor %}</div>
+<h1>Step {{ step }} of {{ last_step }}: {{ title }}</h1>
+<p>{{ intro }}</p>
+{% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
+{% if !success.is_empty() %}<div class="msg ok">{{ success }}</div>{% endif %}
+<form method="post" action="/setup/{{ step }}" class="card" autocomplete="off">
+  {% for f in fields %}
+    {% if f.is_checkbox() %}
+      <div class="check"><input type="checkbox" id="{{ f.name }}" name="{{ f.name }}"{% if f.checked %} checked{% endif %}><label for="{{ f.name }}">{{ f.label }}</label></div>
+    {% else %}
+      <label for="{{ f.name }}">{{ f.label }}</label>
+      {% if f.is_select() %}
+        <select id="{{ f.name }}" name="{{ f.name }}">
+        {% for (v, l, sel) in f.options() %}<option value="{{ v }}"{% if sel %} selected{% endif %}>{{ l }}</option>{% endfor %}
+        </select>
+      {% elif f.is_password() %}
+        <input type="password" id="{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}" autocomplete="new-password">
+      {% elif f.is_time() %}
+        <input type="time" id="{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}">
+      {% else %}
+        {% match f.number_range() %}
+          {% when Some((min, max)) %}
+            <input type="number" id="{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}" min="{{ min }}" max="{{ max }}">
+          {% when None %}
+            <input type="text" id="{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}">
+        {% endmatch %}
+      {% endif %}
+    {% endif %}
+    {% if !f.help.is_empty() %}<div class="help">{{ f.help }}</div>{% endif %}
+  {% endfor %}
+  <div class="actions">
+    {% if step > 1 %}<a class="btn secondary" href="/setup/{{ step - 1 }}">← Back</a>{% else %}<a class="btn secondary" href="/setup">← Back</a>{% endif %}
+    <button class="btn" type="submit">{% if step == 2 || step == 4 || step == 5 %}Test &amp; next →{% else %}Next →{% endif %}</button>
+  </div>
+</form>
+{% endblock %}

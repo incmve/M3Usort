@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Admin login</h1>
+<p>Guests don't need to log in. This is only for settings and other admin pages.</p>
+{% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
+<form method="post" action="/login" class="card">
+  <label for="password">Admin password</label>
+  <input type="password" id="password" name="password" autofocus autocomplete="current-password">
+  <div class="actions"><span></span><button class="btn" type="submit">Log in</button></div>
+</form>
+<p class="help">Forgot it? Reset from the Docker host: <code>docker exec m3usort-rs m3usort reset-admin</code></p>
+{% endblock %}

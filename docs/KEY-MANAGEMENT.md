@@ -133,17 +133,20 @@ this database was set up with. Nothing was changed.
 - Backup without the matching key: catalog, wanted lists and settings come back;
   credentials must be re-entered.
 
-## Viewing stored credentials *(planned)*
+## Viewing stored credentials
 
-Admin → Settings → *Show credentials*, after re-entering the admin password.
+Admin → *Stored credentials* → *Show credentials*, after re-entering the admin password.
+The page is sent with `Cache-Control: no-store` and the event is logged.
 This works because credentials are encrypted, not hashed.
 
-## Forgotten admin password *(planned)*
+## Forgotten admin password
 
 The admin password cannot be recovered. Reset it from the host:
 
 ```
-docker exec -it m3usort-rs m3usort reset-admin
+docker exec m3usort-rs m3usort reset-admin
 ```
 
-Only someone with access to the Docker host can do this.
+It prints a new random admin password and logs out every admin session. It works
+while the app is running and doesn't need `M3USORT_KEY`; only someone with access to
+the Docker host can run it. Change the password under Admin afterwards.

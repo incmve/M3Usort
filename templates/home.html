@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+{% match update_banner %}
+  {% when Some((latest, url)) %}
+    <div class="msg ok">Update available: <strong>{{ latest }}</strong>. <a href="{{ url }}">Release notes</a></div>
+  {% when None %}
+{% endmatch %}
+<h1>M3Usort</h1>
+<div class="card">
+  <p>Setup is complete. The catalog (movies, series, search) arrives in the next milestone.</p>
+</div>
+{% endblock %}
