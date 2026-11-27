@@ -149,6 +149,7 @@ pub fn app_router(state: AppState) -> Router {
         .route("/playlist/custom/add-group", post(custom_add_group))
         .route("/playlist/custom/add", post(custom_add_one))
         .route("/logout", post(logout))
+        .route("/account/check", post(account_check))
         .route("/jellyfin", get(jellyfin_page))
         .route("/jellyfin/img/{id}", get(jellyfin_img))
         .route("/jellyfin/seasons/{id}", get(jellyfin_seasons))
@@ -222,6 +223,7 @@ struct HomeTpl {
     stats: catalog::Stats,
     running: bool,
     message: String,
+    account: Option<crate::account::View>,
 }
 
 #[derive(Deserialize)]
@@ -261,6 +263,7 @@ async fn home(
         stats,
         running,
         message,
+        account: crate::account::view(&st.db).await,
     })
 }
 
@@ -611,6 +614,13 @@ fn short(s: &str, max: usize) -> String {
             s.chars().take(max).collect::<String>()
         )
     }
+}
+
+fn redirect_with_err(path: &str, err: &str) -> Response {
+    let q: String = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("err", err)
+        .finish();
+    Redirect::to(&format!("{path}?{q}")).into_response()
 }
 
 fn redirect_with_msg(path: &str, msg: &str) -> Response {
@@ -1450,6 +1460,8 @@ struct AdminTpl {
     sections: Vec<Section>,
     credentials: Vec<(String, String)>,
     playlist_password_set: bool,
+    account: Option<crate::account::View>,
+    warn_days: i64,
 }
 
 async fn admin_render(
@@ -1591,21 +1603,37 @@ async fn admin_render(
         sections,
         credentials,
         playlist_password_set,
+        account: crate::account::view(&st.db).await,
+        warn_days: crate::account::WARN_DAYS,
     })
+}
+
+async fn account_check(State(st): State<AppState>) -> Response {
+    match crate::account::check(&st).await {
+        Ok(()) => match crate::account::view(&st.db).await {
+            Some(v) if !v.error.is_empty() => {
+                redirect_with_err("/admin", &format!("Account check failed: {}", v.error))
+            }
+            _ => redirect_with_msg("/admin", "Provider account checked."),
+        },
+        Err(e) => redirect_with_err("/admin", &format!("Account check failed: {e:#}")),
+    }
 }
 
 #[derive(Deserialize)]
 struct AdminQuery {
     welcome: Option<String>,
+    msg: Option<String>,
+    err: Option<String>,
 }
 
 async fn admin_page(State(st): State<AppState>, Query(q): Query<AdminQuery>) -> Response {
     let msg = if q.welcome.is_some() {
         "Setup finished. You are logged in as admin.".into()
     } else {
-        String::new()
+        q.msg.unwrap_or_default()
     };
-    admin_render(&st, msg, String::new(), Vec::new()).await
+    admin_render(&st, msg, q.err.unwrap_or_default(), Vec::new()).await
 }
 
 #[derive(Deserialize)]

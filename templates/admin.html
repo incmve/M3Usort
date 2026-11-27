@@ -4,6 +4,23 @@
 {% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
 {% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
 
+<h2>Provider account</h2>
+<div class="card">
+  {% match account %}
+  {% when Some(a) %}
+    {% if let Some(w) = a.warning() %}<div class="msg err">⚠ {{ w }}</div>{% endif %}
+    <table>
+      <tr><td>Status</td><td>{{ a.status }}</td></tr>
+      <tr><td>Expires</td><td>{{ a.expires }}{% if let Some(d) = a.days_left %}{% if *d >= 0 %} ({{ d }} days left){% endif %}{% endif %}</td></tr>
+      {% if !a.connections.is_empty() %}<tr><td>Connections</td><td>{{ a.connections }}</td></tr>{% endif %}
+      <tr><td>Checked</td><td>{{ a.checked }}{% if !a.error.is_empty() %} — last check failed: {{ a.error }}{% endif %}</td></tr>
+    </table>
+  {% when None %}
+    <p class="help">Not checked yet. It is read from the provider every 6 hours.</p>
+  {% endmatch %}
+  <form method="post" action="/admin/account/check" class="actions"><span class="help">Warns on the dashboard {{ warn_days }} days before the end date.</span><button class="btn secondary" type="submit">Check now</button></form>
+</div>
+
 <h2>Settings</h2>
 {% for (step, title, rows) in sections %}
 <div class="card">

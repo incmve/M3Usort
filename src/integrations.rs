@@ -102,6 +102,28 @@ impl Xtream {
 
 /// Xtream `player_api.php` → `user_info.auth == 1`.
 pub async fn test_provider(client: &Client, x: &Xtream) -> Result<String, String> {
+    let info = user_info(client, x).await?;
+    let status = info
+        .get("status")
+        .map(as_text)
+        .unwrap_or_else(|| "?".into());
+    let max = info
+        .get("max_connections")
+        .map(as_text)
+        .unwrap_or_else(|| "?".into());
+    let exp = info
+        .get("exp_date")
+        .map(as_text)
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(unix_to_date)
+        .unwrap_or_else(|| "unknown".into());
+    Ok(format!(
+        "Logged in. Status: {status}, expires: {exp}, max connections: {max}"
+    ))
+}
+
+/// Xtream `get_user_info` → the `user_info` object, after checking `auth == 1`.
+pub async fn user_info(client: &Client, x: &Xtream) -> Result<Value, String> {
     let api = x.api_url("get_user_info")?;
     let resp = client
         .get(api)
@@ -124,23 +146,7 @@ pub async fn test_provider(client: &Client, x: &Xtream) -> Result<String, String
     if auth != "1" {
         return Err("Login refused: wrong username or password".into());
     }
-    let status = info
-        .get("status")
-        .map(as_text)
-        .unwrap_or_else(|| "?".into());
-    let max = info
-        .get("max_connections")
-        .map(as_text)
-        .unwrap_or_else(|| "?".into());
-    let exp = info
-        .get("exp_date")
-        .map(as_text)
-        .and_then(|s| s.parse::<i64>().ok())
-        .map(unix_to_date)
-        .unwrap_or_else(|| "unknown".into());
-    Ok(format!(
-        "Logged in. Status: {status}, expires: {exp}, max connections: {max}"
-    ))
+    Ok(info.clone())
 }
 
 /// Jellyfin `GET /System/Info` with the API key.

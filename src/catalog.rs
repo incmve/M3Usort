@@ -403,6 +403,9 @@ pub fn spawn_scheduler(st: AppState) {
             if let Err(e) = crate::library::maybe_run_vod(&st).await {
                 tracing::debug!("VOD scheduler: {e:#}");
             }
+            if let Err(e) = crate::account::maybe_check(&st).await {
+                tracing::debug!("account check: {e:#}");
+            }
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });

@@ -1091,6 +1091,7 @@ pub async fn finish(State(st): State<AppState>, headers: HeaderMap) -> Response 
     st.mark_setup_done();
     *st.draft.lock().expect("draft lock") = None;
     tracing::info!("setup finished");
+    spawn_account_check(&st);
 
     // Log the admin in straight away.
     let generation = s::session_generation(&st.db).await.unwrap_or(0);
@@ -1129,6 +1130,17 @@ pub async fn admin_section(State(st): State<AppState>, Path(step): Path<u8>) -> 
     }
 }
 
+/// Read the provider account (expiry date) in the background after the
+/// provider settings change.
+fn spawn_account_check(st: &AppState) {
+    let st = st.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::account::check(&st).await {
+            tracing::debug!("account check: {e:#}");
+        }
+    });
+}
+
 pub async fn admin_section_save(
     State(st): State<AppState>,
     Path(step): Path<u8>,
@@ -1161,6 +1173,9 @@ pub async fn admin_section_save(
     match saved {
         Ok(()) => {
             tracing::info!("settings saved: {}", step_info(step).title);
+            if step == 2 {
+                spawn_account_check(&st);
+            }
             let result = match step {
                 2 => d.provider_result.clone(),
                 4 => d.jellyfin_result.clone(),
