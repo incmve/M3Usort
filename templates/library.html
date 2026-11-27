@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<h1>Library</h1>
+{% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
+{% for f in folders_missing %}<div class="msg err">No {{ f }} folder is set, so {{ f }} can't be added yet. An admin can set it under Admin → Settings → Folders.</div>{% endfor %}
+
+<div class="stats">
+  <div class="stat s1"><div class="n">{{ movies }}</div><div class="l">Movies in library</div></div>
+  <div class="stat s2"><div class="n">{{ series.len() }}</div><div class="l">Series in library</div></div>
+  <div class="stat s3"><div class="n">{{ pending.len() }}</div><div class="l">Wanted, not found yet</div></div>
+</div>
+
+<div class="card">
+  <div class="actions" style="margin-top:0">
+    <div>
+      <strong>VOD run</strong>{% if !scheduler_on %} <span class="help">(scheduler is off; runs only when started here)</span>{% endif %}
+      <div class="help">{% if running %}Running now… reload in a minute.{% else %}Last: {{ last_run }}{% endif %}</div>
+      {% if last_run_failed %}<div class="msg err" style="margin:.5rem 0 0">The last run failed.</div>{% endif %}
+    </div>
+    <form method="post" action="/vod/run" style="margin:0"><button class="btn" type="submit"{% if running %} disabled{% endif %}>Start download now</button></form>
+  </div>
+  <p class="help" style="margin-bottom:0">A run adopts existing folders, looks for wanted titles, adds new episodes for series in the library and then refreshes Jellyfin.</p>
+</div>
+
+<h2>Wanted</h2>
+<form method="post" action="/wanted" class="card filters" style="margin-bottom:1rem">
+  <select name="kind"><option value="movie">Movie</option><option value="series">Series</option></select>
+  <input type="text" name="term" placeholder="Title to look for, e.g. Dune Part Three" required>
+  <button class="btn" type="submit">Add to wanted</button>
+</form>
+<p class="help">For titles that aren't in the catalog yet. Each VOD run searches for them (matching method under Settings → Schedules); when found, the .strm files are written and the term moves to "Found". Titles that are already in the catalog: use the <em>Add</em> button on Movies or Series.</p>
+{% if pending.is_empty() %}<p>Nothing wanted.</p>{% else %}
+<div class="card"><table>
+  {% for w in pending %}<tr><td>{{ w.term }} <span class="help">({{ w.kind }})</span></td><td>added {{ w.created }} · checked {{ w.last_check }}{% if !w.note.is_empty() %}<div class="help">{{ w.note }}</div>{% endif %}</td>
+  <td class="act"><form method="post" action="/wanted/{{ w.id }}/delete" style="margin:0"><button class="btn secondary" type="submit">Remove</button></form></td></tr>{% endfor %}
+</table></div>{% endif %}
+
+{% if !found.is_empty() %}
+<h2>Found</h2>
+<div class="card"><table>
+  {% for w in found %}<tr><td>{{ w.term }} <span class="help">({{ w.kind }})</span></td><td>{{ w.last_check }}: {{ w.note }}</td>
+  <td class="act"><form method="post" action="/wanted/{{ w.id }}/delete" style="margin:0"><button class="btn secondary" type="submit">Clear</button></form></td></tr>{% endfor %}
+</table></div>{% endif %}
+
+<h2>Series in library</h2>
+{% if series.is_empty() %}<p>No series yet. Use <em>Add</em> on the Series page, or add a wanted term.</p>{% else %}
+<div class="card"><table>
+  {% for r in series %}<tr><td>{{ r.folder }}</td><td>{{ r.episodes }} episodes · synced {{ r.last_sync }}{% if !r.error.is_empty() %}<div class="msg err" style="margin:.3rem 0 0;padding:.3rem .5rem">{{ r.error }}</div>{% endif %}</td></tr>{% endfor %}
+</table></div>{% endif %}
+{% endblock %}

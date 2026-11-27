@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ page.title }}</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <style>
 :root{--bg:#16181d;--panel:#1e2128;--line:#2d313b;--text:#e6e6e6;--muted:#9aa0aa;--accent:#7cc4ff;--ok:#3d7a4a;--okbg:#1f3a24;--err:#a34848;--errbg:#3a1f1f}
 *{box-sizing:border-box}
@@ -22,6 +23,8 @@ label{display:block;font-weight:600;margin:.9rem 0 .25rem}
 input[type=text],input[type=password],input[type=number],input[type=time],select{width:100%;padding:.5rem .6rem;border-radius:6px;border:1px solid var(--line);background:#121418;color:var(--text);font:inherit}
 .help{color:var(--muted);font-size:.85rem;margin-top:.2rem}
 .btn{display:inline-block;padding:.55rem 1.1rem;border-radius:6px;border:0;background:var(--accent);color:#0d1b26;font-weight:700;cursor:pointer;text-decoration:none;font:inherit}
+.btn{white-space:nowrap}
+td.act{width:1%;white-space:nowrap;word-break:normal}
 .btn.secondary{background:transparent;color:var(--text);border:1px solid var(--line)}
 .btn[disabled]{opacity:.4;cursor:not-allowed}
 .actions{display:flex;justify-content:space-between;align-items:center;margin-top:1.5rem;gap:1rem}
@@ -53,6 +56,8 @@ main.wide,footer.wide{max-width:76rem}
 .tile .meta{padding:.5rem .6rem;font-size:.85rem}
 .tile .name{font-weight:600;line-height:1.25;word-break:break-word}
 .tile .sub{color:var(--muted);font-size:.75rem;margin-top:.2rem}
+.tile .add{margin-top:.4rem;width:100%;padding:.35rem;font-size:.8rem}
+.tile .have{margin-top:.4rem;font-size:.8rem;color:#8fd19e}
 .pager{display:flex;gap:.5rem;justify-content:center;align-items:center;margin:1.5rem 0}
 nav.tabs a{margin-right:1rem}
 </style>
@@ -60,10 +65,11 @@ nav.tabs a{margin-right:1rem}
 <body>
 {% if page.show_nav %}
 <header>
-  <a class="brand" href="/">M3Usort</a>
+  <a class="brand" href="/"><img src="/favicon.png" alt="" width="22" height="22" style="vertical-align:-5px;margin-right:.4rem">M3Usort</a>
   <a href="/movies">Movies</a>
   <a href="/series">Series</a>
   <a href="/new">New</a>
+  <a href="/library">Library</a>
   {% if page.is_admin %}
     <a href="/admin">Admin</a>
     <form method="post" action="/admin/logout" style="margin:0"><button type="submit">Log out</button></form>
@@ -75,6 +81,20 @@ nav.tabs a{margin-right:1rem}
 <main{% block mainclass %}{% endblock %}>
 {% block content %}{% endblock %}
 </main>
+<script>
+document.addEventListener('submit', async (ev) => {
+  const f = ev.target;
+  if (!f.matches('form.add-form')) return;
+  ev.preventDefault();
+  const b = f.querySelector('button'); b.disabled = true; const label = b.textContent; b.textContent = 'Adding…';
+  try {
+    const r = await fetch(f.action, {method: 'POST', headers: {'Accept': 'application/json'}});
+    const j = await r.json();
+    b.textContent = j.ok ? 'Added ✓' : 'Failed'; b.title = j.message;
+    if (!j.ok) { b.disabled = false; alert(j.message); }
+  } catch (e) { b.textContent = label; b.disabled = false; alert('Request failed: ' + e); }
+});
+</script>
 <footer{% block footclass %}{% endblock %}>{{ page.version }}</footer>
 </body>
 </html>

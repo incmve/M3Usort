@@ -8,12 +8,12 @@
 {% if movies.is_empty() %}<p>No new movies.</p>{% else %}
 <div class="grid">{% for it in movies %}
   <div class="tile" data-id="{{ it.id }}" title="{{ it.name }}"><div class="img">{% if it.image.is_empty() %}<span>{{ it.name }}</span>{% else %}<img src="{{ it.image }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:this.closest('.tile').title}))">{% endif %}</div>
-  <div class="meta"><div class="name">{{ it.name }}</div><div class="sub">{{ it.added }} · {{ it.category }}</div></div></div>
+  <div class="meta"><div class="name">{{ it.name }}</div><div class="sub">{{ it.added }} · {{ it.category }}</div>{% if it.in_library %}<div class="have">✓ In library</div>{% else %}<form method="post" action="/library/movie/{{ it.id }}" class="add-form"><button class="btn secondary add" type="submit">Add</button></form>{% endif %}</div></div>
 {% endfor %}</div>{% endif %}
 <h2>Series ({{ series.len() }})</h2>
 {% if series.is_empty() %}<p>No new or updated series.</p>{% else %}
 <div class="grid">{% for it in series %}
   <div class="tile" data-id="{{ it.id }}" title="{{ it.name }}"><div class="img">{% if it.image.is_empty() %}<span>{{ it.name }}</span>{% else %}<img src="{{ it.image }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:this.closest('.tile').title}))">{% endif %}</div>
-  <div class="meta"><div class="name">{{ it.name }}</div><div class="sub">{{ it.added }} · {{ it.category }}</div></div></div>
+  <div class="meta"><div class="name">{{ it.name }}</div><div class="sub">{{ it.added }} · {{ it.category }}</div>{% if it.in_library %}<div class="have">✓ In library</div>{% else %}<form method="post" action="/library/series/{{ it.id }}" class="add-form"><button class="btn secondary add" type="submit">Add</button></form>{% endif %}</div></div>
 {% endfor %}</div>{% endif %}
 {% endblock %}

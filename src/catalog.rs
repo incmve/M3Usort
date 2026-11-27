@@ -389,6 +389,9 @@ pub fn spawn_scheduler(st: AppState) {
             if let Err(e) = maybe_refresh(&st).await {
                 tracing::debug!("catalog scheduler: {e:#}");
             }
+            if let Err(e) = crate::library::maybe_run_vod(&st).await {
+                tracing::debug!("VOD scheduler: {e:#}");
+            }
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
@@ -421,7 +424,7 @@ async fn maybe_refresh(st: &AppState) -> anyhow::Result<()> {
 // ------------------------------------------------------------------ queries
 
 /// (id, name, image, rating, added, category) as selected by list/new_items.
-type ItemRow = (i64, String, String, Option<f64>, Option<i64>, String);
+type ItemRow = (i64, String, String, Option<f64>, Option<i64>, String, bool);
 
 pub struct Item {
     pub id: i64,
@@ -430,6 +433,7 @@ pub struct Item {
     pub rating: String,
     pub added: String,
     pub category: String,
+    pub in_library: bool,
 }
 
 #[derive(Default)]
@@ -487,7 +491,8 @@ pub async fn list(db: &SqlitePool, kind: Kind, lq: &ListQuery) -> anyhow::Result
     let total: i64 = count.build_query_scalar().fetch_one(db).await?;
 
     let mut qb = QueryBuilder::<Sqlite>::new(format!(
-        "SELECT t.{id_col}, t.name, COALESCE(t.poster, t.{img}, ''), t.rating, t.added, COALESCE(c.name, ''){from}"
+        "SELECT t.{id_col}, t.name, COALESCE(t.poster, t.{img}, ''), t.rating, t.added, COALESCE(c.name, ''),
+         EXISTS (SELECT 1 FROM library_{table} l WHERE l.{id_col} = t.{id_col}){from}"
     ));
     push_filters(&mut qb, kind, lq);
     qb.push(match lq.sort.as_str() {
@@ -504,16 +509,7 @@ pub async fn list(db: &SqlitePool, kind: Kind, lq: &ListQuery) -> anyhow::Result
     Ok((rows.into_iter().map(to_item).collect(), total))
 }
 
-fn to_item(
-    (id, name, image, rating, added, category): (
-        i64,
-        String,
-        String,
-        Option<f64>,
-        Option<i64>,
-        String,
-    ),
-) -> Item {
+fn to_item((id, name, image, rating, added, category, in_library): ItemRow) -> Item {
     Item {
         id,
         name,
@@ -527,6 +523,7 @@ fn to_item(
             .map(integrations::unix_to_date)
             .unwrap_or_default(),
         category,
+        in_library,
     }
 }
 
@@ -535,7 +532,8 @@ pub async fn new_items(db: &SqlitePool, kind: Kind) -> anyhow::Result<Vec<Item>>
     let (table, id_col, img) = (kind.table(), kind.id_col(), kind.image_col());
     let since = now_secs() - NEW_DAYS * 86_400;
     let rows: Vec<ItemRow> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT t.{id_col}, t.name, COALESCE(t.poster, t.{img}, ''), t.rating, t.added, COALESCE(c.name, '')
+        "SELECT t.{id_col}, t.name, COALESCE(t.poster, t.{img}, ''), t.rating, t.added, COALESCE(c.name, ''),
+                EXISTS (SELECT 1 FROM library_{table} l WHERE l.{id_col} = t.{id_col})
          FROM {table} t LEFT JOIN categories c ON c.kind = ? AND c.id = t.category_id
          WHERE t.added >= ? AND (c.adult IS NULL OR c.adult = 0)
          ORDER BY t.added DESC LIMIT 300"

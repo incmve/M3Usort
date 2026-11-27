@@ -72,7 +72,17 @@ is good enough.
       FTS5 search; dashboard, Movies, Series, New this week; category/sort/adult filters.
       Refreshed every VOD scan interval and on demand. If the provider suddenly lists
       less than half of what we have, nothing is removed (broken answer protection).
-- [ ] **3. Wanted lists → .strm writing**, compatible with existing folders; scheduler
+- [x] **3. Library → .strm writing**, compatible with the Python folders:
+      `Name/Name.strm` → `<server>/movie/<user>/<pass>/<id>.mkv`,
+      `Name/Name S01E02.strm` → `<server>/series/<user>/<pass>/<episode_id>.mkv`.
+      Add button on Movies/Series/New; wanted search terms (string/fuzzy as in Python);
+      existing folders are adopted by name (exact → case-insensitive → Python's
+      normalized name); new episodes via `get_series_info`, only for series whose
+      catalog `last_modified` changed, 0.5 s apart; Jellyfin `/Library/Refresh` after
+      new files; VOD scheduler + "Start download now" (5 min cooldown).
+      Differences from Python, on purpose: folders with real video files are never
+      written into; names with `/` or `\` can't create sub-folders; a string-match term
+      hitting more than 25 titles is not added; .strm files are written atomically.
 - [ ] **4. Live TV playlist:** groups, sorting, custom group, `/m3u/` with playlist password
 - [ ] **5. TMDB enrichment** (IDs, cast, posters), "New this week", actor search
 - [ ] **6. Jellyfin:** library refresh, library view with watch status per user

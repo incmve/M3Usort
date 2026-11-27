@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use askama::Template;
-use axum::extract::{ConnectInfo, Query, Request, State};
+use axum::extract::{ConnectInfo, Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -18,6 +18,7 @@ use sqlx::SqlitePool;
 use crate::auth::{self, ADMIN_COOKIE, LoginLimiter, SESSION_TTL, SessionSigner};
 use crate::catalog;
 use crate::crypto::MasterKey;
+use crate::library;
 use crate::settings as s;
 use crate::setup::{self, Draft};
 use crate::version::{self, SharedStatus, UpdateStatus};
@@ -35,6 +36,7 @@ pub struct AppState {
     pub setup_code: Arc<String>,
     pub draft: Arc<Mutex<Option<(String, Draft)>>>,
     pub catalog_running: Arc<AtomicBool>,
+    pub vod_running: Arc<AtomicBool>,
     setup_done: Arc<AtomicBool>,
 }
 
@@ -56,6 +58,7 @@ impl AppState {
             setup_code: Arc::new(setup_code),
             draft: Arc::new(Mutex::new(None)),
             catalog_running: Arc::new(AtomicBool::new(false)),
+            vod_running: Arc::new(AtomicBool::new(false)),
             setup_done: Arc::new(AtomicBool::new(setup_done)),
         })
     }
@@ -134,12 +137,20 @@ pub fn app_router(state: AppState) -> Router {
 
     Router::new()
         .route("/healthcheck", get(|| async { "ok" }))
+        .route("/favicon.png", get(favicon))
+        .route("/favicon.ico", get(favicon))
         .route("/api/version", get(api_version))
         .route("/", get(home))
         .route("/movies", get(movies_page))
         .route("/series", get(series_page))
         .route("/new", get(new_page))
         .route("/catalog/refresh", post(catalog_refresh))
+        .route("/library", get(library_page))
+        .route("/library/movie/{id}", post(add_movie))
+        .route("/library/series/{id}", post(add_series))
+        .route("/wanted", post(wanted_add))
+        .route("/wanted/{id}/delete", post(wanted_delete))
+        .route("/vod/run", post(vod_run))
         .route("/setup", get(setup::start))
         .route("/setup/summary", get(setup::summary))
         .route("/setup/finish", post(setup::finish))
@@ -236,6 +247,280 @@ async fn catalog_refresh(State(st): State<AppState>) -> Response {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     Redirect::to("/?refreshed=1").into_response()
+}
+
+// ------------------------------------------------------------------ library (guests may use all of this, as in Python)
+
+#[derive(Serialize)]
+struct AddResult {
+    ok: bool,
+    message: String,
+}
+
+/// Answer JSON to the page's fetch() call, or redirect back for plain form posts.
+fn add_response(headers: &HeaderMap, r: anyhow::Result<String>) -> Response {
+    let (ok, message) = match r {
+        Ok(m) => (true, m),
+        Err(e) => (false, format!("{e:#}")),
+    };
+    let wants_json = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("application/json"));
+    if wants_json {
+        return Json(AddResult { ok, message }).into_response();
+    }
+    let back = headers
+        .get(header::REFERER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|r| reqwest::Url::parse(r).ok())
+        .map(|u| u.path().to_string())
+        .filter(|p| p.starts_with('/') && !p.starts_with("//"))
+        .unwrap_or_else(|| "/library".into());
+    Redirect::to(&back).into_response()
+}
+
+async fn add_movie(
+    State(st): State<AppState>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Response {
+    let r = library::add_movie(&st, id, "add").await;
+    if r.is_ok() {
+        let mut log = Vec::new();
+        library::refresh_jellyfin(&st, &mut log).await;
+    }
+    add_response(&headers, r)
+}
+
+async fn add_series(
+    State(st): State<AppState>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Response {
+    let r = library::add_series(&st, id, "add").await;
+    if matches!(r, Ok((_, n)) if n > 0) {
+        let mut log = Vec::new();
+        library::refresh_jellyfin(&st, &mut log).await;
+    }
+    add_response(&headers, r.map(|(m, _)| m))
+}
+
+#[derive(Template)]
+#[template(path = "library.html")]
+struct LibraryTpl {
+    page: Page,
+    message: String,
+    pending: Vec<WantedRow>,
+    found: Vec<WantedRow>,
+    movies: i64,
+    series: Vec<SeriesRow>,
+    last_run: String,
+    last_run_failed: bool,
+    running: bool,
+    scheduler_on: bool,
+    folders_missing: Vec<&'static str>,
+}
+
+/// (id, kind, term, created_at, last_check, found_at, found_names)
+type WantedDbRow = (
+    i64,
+    String,
+    String,
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+);
+
+pub struct WantedRow {
+    pub id: i64,
+    pub kind: String,
+    pub term: String,
+    pub created: String,
+    pub last_check: String,
+    pub note: String,
+}
+
+pub struct SeriesRow {
+    pub folder: String,
+    pub episodes: i64,
+    pub last_sync: String,
+    pub error: String,
+}
+
+#[derive(Deserialize)]
+struct MsgQuery {
+    msg: Option<String>,
+}
+
+async fn library_page(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<MsgQuery>,
+) -> Response {
+    let r = async {
+        let wanted: Vec<WantedDbRow> = sqlx::query_as(
+            "SELECT id, kind, term, created_at, last_check, found_at, found_names FROM wanted ORDER BY id DESC LIMIT 300",
+        )
+        .fetch_all(&st.db)
+        .await?;
+        let date = |t: i64| crate::integrations::unix_to_date(t);
+        let (mut pending, mut found) = (Vec::new(), Vec::new());
+        for (id, kind, term, created, check, found_at, names) in wanted {
+            let row = WantedRow {
+                id,
+                kind,
+                term,
+                created: date(created),
+                last_check: check.map(catalog::ago).unwrap_or_else(|| "not yet".into()),
+                note: names.unwrap_or_default(),
+            };
+            if let Some(f) = found_at {
+                found.push(WantedRow { last_check: date(f), ..row });
+            } else {
+                pending.push(row);
+            }
+        }
+        let movies: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_movies").fetch_one(&st.db).await?;
+        let series: Vec<(String, i64, Option<i64>, Option<String>)> = sqlx::query_as(
+            "SELECT folder, episodes, last_sync, last_error FROM library_series ORDER BY last_error IS NULL, folder COLLATE NOCASE",
+        )
+        .fetch_all(&st.db)
+        .await?;
+        let series = series
+            .into_iter()
+            .map(|(folder, episodes, sync, err)| SeriesRow {
+                folder,
+                episodes,
+                last_sync: sync.map(catalog::ago).unwrap_or_else(|| "pending".into()),
+                error: err.unwrap_or_default(),
+            })
+            .collect();
+        let last: Option<(i64, i64, Option<String>)> =
+            sqlx::query_as("SELECT started, ok, message FROM vod_runs WHERE finished IS NOT NULL ORDER BY id DESC LIMIT 1")
+                .fetch_optional(&st.db)
+                .await?;
+        let mut folders_missing = Vec::new();
+        if s::get(&st.db, s::MOVIES_DIR).await?.unwrap_or_default().is_empty() {
+            folders_missing.push("movies");
+        }
+        if s::get(&st.db, s::SERIES_DIR).await?.unwrap_or_default().is_empty() {
+            folders_missing.push("series");
+        }
+        let scheduler_on = s::get(&st.db, s::VOD_SCHEDULER_ENABLED).await?.as_deref() == Some("1");
+        anyhow::Ok((pending, found, movies, series, last, folders_missing, scheduler_on))
+    }
+    .await;
+    let (pending, found, movies, series, last, folders_missing, scheduler_on) = match r {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("database error: {e}"),
+            )
+                .into_response();
+        }
+    };
+    render(LibraryTpl {
+        page: Page::nav("Library", st.is_admin(&headers).await),
+        message: q.msg.unwrap_or_default(),
+        pending,
+        found,
+        movies,
+        series,
+        last_run: last
+            .as_ref()
+            .map(|(t, _, m)| format!("{} — {}", catalog::ago(*t), m.clone().unwrap_or_default()))
+            .unwrap_or_else(|| "never".into()),
+        last_run_failed: last.is_some_and(|l| l.1 == 0),
+        running: st.vod_running.load(Ordering::SeqCst),
+        scheduler_on,
+        folders_missing,
+    })
+}
+
+#[derive(Deserialize)]
+struct WantedForm {
+    kind: String,
+    term: String,
+}
+
+async fn wanted_add(State(st): State<AppState>, Form(f): Form<WantedForm>) -> Response {
+    let term: String = f.term.trim().chars().take(200).collect();
+    let kind = if f.kind == "series" {
+        "series"
+    } else {
+        "movie"
+    };
+    let msg = if term.chars().filter(|c| c.is_alphanumeric()).count() < 2 {
+        "Type at least 2 letters or digits.".to_string()
+    } else {
+        match sqlx::query(
+            "INSERT INTO wanted (kind, term, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+        )
+        .bind(kind)
+        .bind(&term)
+        .bind(catalog::now_secs())
+        .execute(&st.db)
+        .await
+        {
+            Ok(r) if r.rows_affected() == 0 => format!("'{term}' is already on the wanted list."),
+            Ok(_) => format!(
+                "'{term}' added. It is searched on the next VOD run (or click Start download now)."
+            ),
+            Err(e) => format!("Saving failed: {e}"),
+        }
+    };
+    redirect_with_msg("/library", &msg)
+}
+
+async fn wanted_delete(State(st): State<AppState>, Path(id): Path<i64>) -> Response {
+    let _ = sqlx::query("DELETE FROM wanted WHERE id = ?")
+        .bind(id)
+        .execute(&st.db)
+        .await;
+    redirect_with_msg("/library", "Removed from the wanted list.")
+}
+
+/// "Start download now" (guests may, as in Python). Refused while a run is busy
+/// or within 5 minutes of the last one (Python had a 300 s cooldown in the browser).
+async fn vod_run(State(st): State<AppState>) -> Response {
+    let last: Option<i64> = sqlx::query_scalar("SELECT MAX(started) FROM vod_runs")
+        .fetch_one(&st.db)
+        .await
+        .unwrap_or(None);
+    let wait = last
+        .map(|t| 300 - (catalog::now_secs() - t))
+        .filter(|w| *w > 0);
+    if st.vod_running.load(Ordering::SeqCst) {
+        return redirect_with_msg("/library", "A VOD run is already busy.");
+    }
+    if let Some(w) = wait {
+        return redirect_with_msg(
+            "/library",
+            &format!(
+                "Last run was less than 5 minutes ago. Try again in {} s.",
+                w
+            ),
+        );
+    }
+    let st2 = st.clone();
+    tokio::spawn(async move {
+        let _ = library::run_vod_job(&st2).await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    redirect_with_msg(
+        "/library",
+        "VOD run started. Reload this page to see the result.",
+    )
+}
+
+fn redirect_with_msg(path: &str, msg: &str) -> Response {
+    let q: String = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("msg", msg)
+        .finish();
+    Redirect::to(&format!("{path}?{q}")).into_response()
 }
 
 // ------------------------------------------------------------------ catalog pages
@@ -805,6 +1090,19 @@ async fn show_credentials(
     resp
 }
 
+/// The original M3Usort icon, built into the binary.
+pub async fn favicon() -> Response {
+    const ICON: &[u8] = include_bytes!("../static/favicon.png");
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=604800"),
+        ],
+        ICON,
+    )
+        .into_response()
+}
+
 // ------------------------------------------------------------------ blocked pages
 
 /// Why the app can't start normally. Shown as a page instead of crash-looping,
@@ -826,6 +1124,8 @@ pub fn blocked_router(reason: Blocked) -> Router {
             "/healthcheck",
             get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "blocked") }),
         )
+        .route("/favicon.png", get(favicon))
+        .route("/favicon.ico", get(favicon))
         .fallback(move || {
             let page = page.clone();
             async move { (StatusCode::SERVICE_UNAVAILABLE, page).into_response() }
@@ -860,7 +1160,7 @@ A long random key like the one above is stronger; a short passphrase can be brut
     };
     format!(
         r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>M3Usort – action needed</title><style>
+<title>M3Usort – action needed</title><link rel="icon" type="image/png" href="/favicon.png"><style>
 body{{font-family:system-ui,sans-serif;background:#16181d;color:#e6e6e6;max-width:46rem;margin:3rem auto;padding:0 1rem;line-height:1.5}}
 code,pre{{background:#23262e;border-radius:4px;padding:.1rem .3rem}} pre.key{{padding:1rem;user-select:all;overflow-x:auto}}
 h1{{color:#7cc4ff;font-size:1.4rem}} footer{{margin-top:3rem;color:#777;font-size:.8rem}}

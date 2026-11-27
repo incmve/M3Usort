@@ -179,6 +179,25 @@ pub async fn test_jellyfin(client: &Client, base: &str, api_key: &str) -> Result
 
 pub const TMDB_BASE: &str = "https://api.themoviedb.org";
 
+/// Ask Jellyfin to rescan its libraries (as the Python version does after new files).
+pub async fn jellyfin_refresh(client: &Client, base: &str, api_key: &str) -> Result<(), String> {
+    let url = format!("{}/Library/Refresh", base.trim().trim_end_matches('/'));
+    let resp = client
+        .post(url)
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("MediaBrowser Token=\"{}\"", api_key.trim()),
+        )
+        .send()
+        .await
+        .map_err(|e| format!("cannot reach Jellyfin: {}", root_cause(&e)))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Jellyfin answered HTTP {}", resp.status()))
+    }
+}
+
 /// TMDB key test, using the same call the Python version uses in production:
 /// `GET /3/search/movie?api_key=…&query=…&language=en-US` (v3 API key as query
 /// parameter). A v4 read access token (a JWT, starts with `eyJ`) is sent as a
