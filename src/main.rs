@@ -79,13 +79,19 @@ async fn serve() -> anyhow::Result<()> {
             }
             Ok(key) => {
                 let pool = db::open(&cfg.db_path(), true).await?;
-                match db::verify_or_init_key(&pool, &key).await? {
+                match db::verify_or_init_key(&pool, &key, true).await? {
                     KeyCheck::Initialised => {
                         info!("new database created and bound to M3USORT_KEY");
                         web::app_router(pool)
                     }
                     KeyCheck::Ok => {
                         info!("M3USORT_KEY verified");
+                        web::app_router(pool)
+                    }
+                    KeyCheck::Rebound => {
+                        warn!(
+                            "M3USORT_KEY changed before setup was finished; database re-bound to the new key"
+                        );
                         web::app_router(pool)
                     }
                     KeyCheck::Mismatch => {
@@ -122,12 +128,15 @@ async fn rotate_key() -> anyhow::Result<()> {
     );
 
     let pool = db::open(&cfg.db_path(), false).await?;
-    match db::verify_or_init_key(&pool, &old).await? {
+    match db::verify_or_init_key(&pool, &old, false).await? {
         KeyCheck::Ok => {}
         KeyCheck::Mismatch => {
             anyhow::bail!("M3USORT_KEY does not match this database; nothing was changed")
         }
-        KeyCheck::Initialised => unreachable!("database existed, so a key check value was present"),
+        KeyCheck::Initialised => {
+            anyhow::bail!("database has no key check value; start the app once first")
+        }
+        KeyCheck::Rebound => unreachable!("rebind is disabled for rotate-key"),
     }
 
     let new_b64 = crypto::generate_key();

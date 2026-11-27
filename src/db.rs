@@ -30,10 +30,26 @@ pub enum KeyCheck {
     /// Fresh database: check value has just been written.
     Initialised,
     Ok,
+    /// Key differed, but nothing was encrypted yet (setup not finished), so the
+    /// database has been re-bound to the new key. Only when `allow_rebind` is set.
+    Rebound,
     Mismatch,
 }
 
-pub async fn verify_or_init_key(pool: &SqlitePool, key: &MasterKey) -> anyhow::Result<KeyCheck> {
+/// Number of encrypted credentials. Zero means setup was never finished: the
+/// wizard saves all credentials in one transaction at Finish.
+async fn secret_count(pool: &SqlitePool) -> anyhow::Result<i64> {
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM secrets")
+        .fetch_one(pool)
+        .await?;
+    Ok(n)
+}
+
+pub async fn verify_or_init_key(
+    pool: &SqlitePool,
+    key: &MasterKey,
+    allow_rebind: bool,
+) -> anyhow::Result<KeyCheck> {
     let row: Option<(Vec<u8>,)> = sqlx::query_as("SELECT value FROM meta WHERE name = ?")
         .bind(KEY_CHECK)
         .fetch_optional(pool)
@@ -50,6 +66,14 @@ pub async fn verify_or_init_key(pool: &SqlitePool, key: &MasterKey) -> anyhow::R
         }
         Some((blob,)) => match key.decrypt(KEY_CHECK, &blob) {
             Ok(pt) if pt == KEY_CHECK_PLAINTEXT => Ok(KeyCheck::Ok),
+            _ if allow_rebind && secret_count(pool).await? == 0 => {
+                sqlx::query("UPDATE meta SET value = ? WHERE name = ?")
+                    .bind(key.encrypt(KEY_CHECK, KEY_CHECK_PLAINTEXT))
+                    .bind(KEY_CHECK)
+                    .execute(pool)
+                    .await?;
+                Ok(KeyCheck::Rebound)
+            }
             _ => Ok(KeyCheck::Mismatch),
         },
     }
@@ -105,16 +129,48 @@ mod tests {
         let a = MasterKey::from_base64(&generate_key()).unwrap();
         let b = MasterKey::from_base64(&generate_key()).unwrap();
         assert!(matches!(
-            verify_or_init_key(&pool, &a).await.unwrap(),
+            verify_or_init_key(&pool, &a, false).await.unwrap(),
             KeyCheck::Initialised
         ));
         assert!(matches!(
-            verify_or_init_key(&pool, &a).await.unwrap(),
+            verify_or_init_key(&pool, &a, false).await.unwrap(),
             KeyCheck::Ok
         ));
         assert!(matches!(
-            verify_or_init_key(&pool, &b).await.unwrap(),
+            verify_or_init_key(&pool, &b, false).await.unwrap(),
             KeyCheck::Mismatch
+        ));
+    }
+
+    #[tokio::test]
+    async fn rebind_only_while_no_secrets() {
+        let (_d, pool) = temp_db().await;
+        let a = MasterKey::from_base64(&generate_key()).unwrap();
+        let b = MasterKey::from_base64(&generate_key()).unwrap();
+        let c = MasterKey::from_base64(&generate_key()).unwrap();
+        verify_or_init_key(&pool, &a, true).await.unwrap();
+        // Setup not finished: switching key is allowed and re-binds.
+        assert!(matches!(
+            verify_or_init_key(&pool, &b, true).await.unwrap(),
+            KeyCheck::Rebound
+        ));
+        assert!(matches!(
+            verify_or_init_key(&pool, &b, true).await.unwrap(),
+            KeyCheck::Ok
+        ));
+        // Once a credential exists, a different key is a hard mismatch.
+        sqlx::query("INSERT INTO secrets (name, blob) VALUES ('x', ?)")
+            .bind(b.encrypt("x", b"v"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            verify_or_init_key(&pool, &c, true).await.unwrap(),
+            KeyCheck::Mismatch
+        ));
+        assert!(matches!(
+            verify_or_init_key(&pool, &b, true).await.unwrap(),
+            KeyCheck::Ok
         ));
     }
 
@@ -123,7 +179,7 @@ mod tests {
         let (_d, pool) = temp_db().await;
         let old = MasterKey::from_base64(&generate_key()).unwrap();
         let new = MasterKey::from_base64(&generate_key()).unwrap();
-        verify_or_init_key(&pool, &old).await.unwrap();
+        verify_or_init_key(&pool, &old, false).await.unwrap();
         sqlx::query("INSERT INTO secrets (name, blob) VALUES (?, ?)")
             .bind("tmdb_api_key")
             .bind(old.encrypt("tmdb_api_key", b"t0k3n"))
@@ -133,11 +189,11 @@ mod tests {
 
         assert_eq!(rotate_key(&pool, &old, &new).await.unwrap(), 1);
         assert!(matches!(
-            verify_or_init_key(&pool, &new).await.unwrap(),
+            verify_or_init_key(&pool, &new, false).await.unwrap(),
             KeyCheck::Ok
         ));
         assert!(matches!(
-            verify_or_init_key(&pool, &old).await.unwrap(),
+            verify_or_init_key(&pool, &old, false).await.unwrap(),
             KeyCheck::Mismatch
         ));
         let (blob,): (Vec<u8>,) =

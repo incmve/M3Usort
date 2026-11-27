@@ -37,11 +37,29 @@ only reset (see the end of this page).
 5. The setup wizard continues.
 
 Until a key is set, every start shows a new key. Any of them is fine; nothing is
-encrypted yet. Or generate one yourself:
+encrypted yet.
+
+### Setting your own key before the first start
+
+Also fine: put a key in `.env` before the first start. Step 1 is then skipped and
+the wizard starts straight away. Generate it with:
 
 ```
 docker run --rm incmve/m3usort:rust gen-key
+# or, without Docker:
+openssl rand -base64 32
 ```
+
+It must be 32 random bytes in base64 (44 characters). A self-chosen password or
+passphrase such as `MySecret123` is refused on purpose: the key is used directly as
+an encryption key, so it has to be random, not guessable.
+
+### Changing the key before setup is finished
+
+Until you click *Finish* in the wizard, no credentials are stored, so nothing
+depends on the key yet. If you change `M3USORT_KEY` in that phase, the app accepts
+the new key and re-binds the empty database to it (logged as a warning). After
+*Finish*, a different key is refused; use rotation instead.
 
 ## What the app does in each situation
 
@@ -50,9 +68,10 @@ docker run --rm incmve/m3usort:rust gen-key
 | empty | none | Shows a generated key (step 1 of setup) |
 | empty | exists | Refuses: "M3USORT_KEY is missing". No new key is generated. |
 | malformed | any | Refuses: "M3USORT_KEY is invalid" |
-| set | none | Creates the database bound to this key, starts the wizard |
+| set | none | Creates the database bound to this key, starts the wizard (step 1 skipped) |
 | set, correct | exists | Normal start |
-| set, wrong | exists | Refuses: "does not match this database". Nothing changed. |
+| set, different | exists, setup not finished | Accepts it, re-binds the empty database (warning in log) |
+| set, wrong | exists, setup finished | Refuses: "does not match this database". Nothing changed. |
 
 When it refuses, the container stays up (so it doesn't restart-loop) but shows only
 the error page, and `/healthcheck` returns 503, so Arcane shows it as unhealthy.
