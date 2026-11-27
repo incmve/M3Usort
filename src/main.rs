@@ -72,6 +72,7 @@ async fn serve() -> anyhow::Result<()> {
     std::fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("cannot create data dir {}", cfg.data_dir.display()))?;
     let _lock = lock_data_dir(&cfg)?;
+    warn_if_not_a_volume(&cfg.data_dir);
     let db_exists = cfg.db_path().exists();
     info!("{}", version::version_line());
     let update = version::spawn_checker();
@@ -276,6 +277,30 @@ async fn derive_key(raw: &str, pool: &sqlx::SqlitePool) -> anyhow::Result<Master
     let salt = db::kdf_salt(pool).await?;
     let raw = raw.to_string();
     tokio::task::spawn_blocking(move || MasterKey::derive(&raw, &salt)).await?
+}
+
+/// In a container, the data folder must be a mounted volume, or the database is
+/// lost when the container is recreated. A mount point sits on a different device
+/// than its parent folder; if it doesn't, warn loudly.
+fn warn_if_not_a_volume(dir: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let in_container = std::path::Path::new("/.dockerenv").exists();
+        let parent = dir.parent().unwrap_or(std::path::Path::new("/"));
+        if let (true, Ok(d), Ok(p)) = (
+            in_container,
+            std::fs::metadata(dir),
+            std::fs::metadata(parent),
+        ) && d.dev() == p.dev()
+        {
+            warn!(
+                "{} is not a mounted volume: the database will be LOST when the container is recreated. \
+                 Check the volumes in docker-compose.yml, and remove M3USORT_DATA_DIR from .env.",
+                dir.display()
+            );
+        }
+    }
 }
 
 /// Exclusive lock on the data dir for as long as the returned file is alive.

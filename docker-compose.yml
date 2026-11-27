@@ -1,13 +1,18 @@
+# All values come from .env (next to this file). Docker Compose reads .env twice:
+#  - to fill in the ${...} below (host side: paths, port, image), and
+#  - via env_file, to pass the app settings into the container.
+# Change .env, then recreate: docker compose up -d   (Arcane: Redeploy)
 services:
   m3usort:
-    image: incmve/m3usort:rust
-    container_name: m3usort-rs
+    image: incmve/m3usort:${M3USORT_IMAGE_TAG:-rust}
+    container_name: ${M3USORT_CONTAINER_NAME:-m3usort-rs}
     restart: unless-stopped
     user: "${PUID:-1000}:${PGID:-1000}"
     env_file: .env
     volumes:
-      - /opt/stacks/m3usort-rs:/data
-      - /data/media/movies:/data/media/movies
-      - /data/media/tv:/data/media/tv
+      # Inside the container these paths are fixed; only the host side changes.
+      - ${M3USORT_DATA_PATH:-/opt/stacks/m3usort-rs}:/data
+      - ${MOVIES_PATH:-/data/media/movies}:/data/media/movies
+      - ${SERIES_PATH:-/data/media/tv}:/data/media/tv
     ports:
-      - 5051:5050   # 5051 on the host so it can run next to the Python version on 5050
+      - ${M3USORT_HOST_PORT:-5051}:5050

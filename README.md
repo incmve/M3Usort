@@ -9,11 +9,15 @@ Python version, rebuilt on Rust + SQLite. Design and milestones: [docs/DESIGN.md
 ## Quick start
 
 ```bash
-cp .env.example .env          # leave M3USORT_KEY empty for now
+cp .env.example .env          # set paths/port if needed; leave M3USORT_KEY empty for now
 docker compose up -d
 ```
 
-Open `http://<host>:5051`. Step 1 shows a generated `M3USORT_KEY`:
+`docker-compose.yml` takes everything from `.env`: host paths (`M3USORT_DATA_PATH`,
+`MOVIES_PATH`, `SERIES_PATH`), host port, image tag and container name. You don't
+need to edit the compose file.
+
+Open `http://<host>:5051` (or your `M3USORT_HOST_PORT`). Step 1 shows a generated `M3USORT_KEY`:
 
 1. Put it in `.env` **and in your password manager**.
 2. Recreate the container: `docker compose up -d` (Arcane: *Redeploy*).
@@ -56,5 +60,6 @@ m3usort healthcheck   Used by the Docker HEALTHCHECK
 ```bash
 cargo test
 cargo clippy --all-targets -- -D warnings
+# Without Docker: M3USORT_DATA_DIR (default /data) and M3USORT_PORT (default 5050)
 M3USORT_DATA_DIR=./dev-data M3USORT_PORT=5099 cargo run
 ```
