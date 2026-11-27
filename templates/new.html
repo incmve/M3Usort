@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<h1>New this week</h1>
+<p class="help">Added by the provider in the last 7 days. Adult categories are hidden.</p>
+<h2>Movies ({{ movies.len() }})</h2>
+{% if movies.is_empty() %}<p>No new movies.</p>{% else %}
+<div class="grid">{% for it in movies %}
+  <div class="tile" data-id="{{ it.id }}" title="{{ it.name }}"><div class="img">{% if it.image.is_empty() %}<span>{{ it.name }}</span>{% else %}<img src="{{ it.image }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:this.closest('.tile').title}))">{% endif %}</div>
+  <div class="meta"><div class="name">{{ it.name }}</div><div class="sub">{{ it.added }} · {{ it.category }}</div></div></div>
+{% endfor %}</div>{% endif %}
+<h2>Series ({{ series.len() }})</h2>
+{% if series.is_empty() %}<p>No new or updated series.</p>{% else %}
+<div class="grid">{% for it in series %}
+  <div class="tile" data-id="{{ it.id }}" title="{{ it.name }}"><div class="img">{% if it.image.is_empty() %}<span>{{ it.name }}</span>{% else %}<img src="{{ it.image }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:this.closest('.tile').title}))">{% endif %}</div>
+  <div class="meta"><div class="name">{{ it.name }}</div><div class="sub">{{ it.added }} · {{ it.category }}</div></div></div>
+{% endfor %}</div>{% endif %}
+{% endblock %}

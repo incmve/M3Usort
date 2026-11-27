@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::auth::{self, ADMIN_COOKIE, LoginLimiter, SESSION_TTL, SessionSigner};
+use crate::catalog;
 use crate::crypto::MasterKey;
 use crate::settings as s;
 use crate::setup::{self, Draft};
@@ -33,6 +34,7 @@ pub struct AppState {
     pub limiter: Arc<LoginLimiter>,
     pub setup_code: Arc<String>,
     pub draft: Arc<Mutex<Option<(String, Draft)>>>,
+    pub catalog_running: Arc<AtomicBool>,
     setup_done: Arc<AtomicBool>,
 }
 
@@ -53,6 +55,7 @@ impl AppState {
             limiter,
             setup_code: Arc::new(setup_code),
             draft: Arc::new(Mutex::new(None)),
+            catalog_running: Arc::new(AtomicBool::new(false)),
             setup_done: Arc::new(AtomicBool::new(setup_done)),
         })
     }
@@ -133,6 +136,10 @@ pub fn app_router(state: AppState) -> Router {
         .route("/healthcheck", get(|| async { "ok" }))
         .route("/api/version", get(api_version))
         .route("/", get(home))
+        .route("/movies", get(movies_page))
+        .route("/series", get(series_page))
+        .route("/new", get(new_page))
+        .route("/catalog/refresh", post(catalog_refresh))
         .route("/setup", get(setup::start))
         .route("/setup/summary", get(setup::summary))
         .route("/setup/finish", post(setup::finish))
@@ -173,18 +180,214 @@ async fn require_admin(State(st): State<AppState>, req: Request, next: Next) -> 
 struct HomeTpl {
     page: Page,
     update_banner: Option<(String, String)>,
+    stats: catalog::Stats,
+    running: bool,
+    message: String,
 }
 
-async fn home(State(st): State<AppState>, headers: HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct HomeQuery {
+    refreshed: Option<String>,
+}
+
+async fn home(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HomeQuery>,
+) -> Response {
     let u = st.update.read().await.clone();
     let update_banner = match (u.latest, u.release_url) {
         (Some(latest), Some(url)) if u.update_available => Some((latest, url)),
         _ => None,
     };
+    let stats = match catalog::stats(&st.db).await {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("database error: {e}"),
+            )
+                .into_response();
+        }
+    };
+    let running = st.catalog_running.load(Ordering::SeqCst);
+    let message = if q.refreshed.is_some() && running {
+        "Catalog refresh started. This page shows the result when you reload it.".into()
+    } else {
+        String::new()
+    };
     render(HomeTpl {
         page: Page::nav("M3Usort", st.is_admin(&headers).await),
         update_banner,
+        stats,
+        running,
+        message,
     })
+}
+
+/// Start a catalog refresh in the background (guests may do this, as in Python).
+async fn catalog_refresh(State(st): State<AppState>) -> Response {
+    if !st.catalog_running.load(Ordering::SeqCst) {
+        let st2 = st.clone();
+        tokio::spawn(async move {
+            let _ = catalog::refresh(&st2).await;
+        });
+        // Give the task a moment to set the running flag before the redirect renders.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    Redirect::to("/?refreshed=1").into_response()
+}
+
+// ------------------------------------------------------------------ catalog pages
+
+#[derive(Template)]
+#[template(path = "catalog.html")]
+struct CatalogTpl {
+    page: Page,
+    kind: &'static str,
+    path: &'static str,
+    items: Vec<catalog::Item>,
+    total: i64,
+    q: String,
+    category: String,
+    sort: String,
+    nsfw: bool,
+    page_no: i64,
+    pages: i64,
+    categories: Vec<(String, String)>,
+    empty_catalog: bool,
+}
+
+impl CatalogTpl {
+    /// Link to another page with the same filters.
+    fn page_link(&self, p: i64) -> String {
+        let mut u = url::form_urlencoded::Serializer::new(String::new());
+        for (k, v) in [
+            ("q", self.q.as_str()),
+            ("category", self.category.as_str()),
+            ("sort", self.sort.as_str()),
+        ] {
+            if !v.is_empty() {
+                u.append_pair(k, v);
+            }
+        }
+        if self.nsfw {
+            u.append_pair("nsfw", "1");
+        }
+        u.append_pair("page", &p.to_string());
+        format!("{}?{}", self.path, u.finish())
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct ListParams {
+    q: Option<String>,
+    category: Option<String>,
+    sort: Option<String>,
+    page: Option<i64>,
+    nsfw: Option<String>,
+}
+
+async fn catalog_page(
+    st: AppState,
+    headers: HeaderMap,
+    kind: catalog::Kind,
+    p: ListParams,
+) -> Response {
+    let lq = catalog::ListQuery {
+        q: p.q.unwrap_or_default().trim().chars().take(100).collect(),
+        category: p.category.unwrap_or_default(),
+        sort: p.sort.unwrap_or_default(),
+        page: (p.page.unwrap_or(1) - 1).max(0),
+        nsfw: p.nsfw.is_some_and(|v| v == "1" || v == "on"),
+    };
+    let result = async {
+        let (items, total) = catalog::list(&st.db, kind, &lq).await?;
+        let categories = catalog::categories(&st.db, kind, lq.nsfw).await?;
+        let any: i64 = sqlx::query_scalar(match kind {
+            catalog::Kind::Movie => "SELECT COUNT(*) FROM movies",
+            catalog::Kind::Series => "SELECT COUNT(*) FROM series",
+        })
+        .fetch_one(&st.db)
+        .await?;
+        anyhow::Ok((items, total, categories, any == 0))
+    }
+    .await;
+    let (items, total, categories, empty_catalog) = match result {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("database error: {e}"),
+            )
+                .into_response();
+        }
+    };
+    let (title, path) = match kind {
+        catalog::Kind::Movie => ("Movies", "/movies"),
+        catalog::Kind::Series => ("Series", "/series"),
+    };
+    render(CatalogTpl {
+        page: Page::nav(title, st.is_admin(&headers).await),
+        kind: title,
+        path,
+        items,
+        total,
+        pages: ((total + catalog::PAGE_SIZE - 1) / catalog::PAGE_SIZE).max(1),
+        page_no: lq.page + 1,
+        q: lq.q,
+        category: lq.category,
+        sort: lq.sort,
+        nsfw: lq.nsfw,
+        categories,
+        empty_catalog,
+    })
+}
+
+async fn movies_page(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(p): Query<ListParams>,
+) -> Response {
+    catalog_page(st, headers, catalog::Kind::Movie, p).await
+}
+
+async fn series_page(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(p): Query<ListParams>,
+) -> Response {
+    catalog_page(st, headers, catalog::Kind::Series, p).await
+}
+
+#[derive(Template)]
+#[template(path = "new.html")]
+struct NewTpl {
+    page: Page,
+    movies: Vec<catalog::Item>,
+    series: Vec<catalog::Item>,
+}
+
+async fn new_page(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    let r = async {
+        anyhow::Ok((
+            catalog::new_items(&st.db, catalog::Kind::Movie).await?,
+            catalog::new_items(&st.db, catalog::Kind::Series).await?,
+        ))
+    }
+    .await;
+    match r {
+        Ok((movies, series)) => render(NewTpl {
+            page: Page::nav("New this week", st.is_admin(&headers).await),
+            movies,
+            series,
+        }),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("database error: {e}"),
+        )
+            .into_response(),
+    }
 }
 
 #[derive(Serialize)]

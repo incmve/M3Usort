@@ -8,7 +8,7 @@
 :root{--bg:#16181d;--panel:#1e2128;--line:#2d313b;--text:#e6e6e6;--muted:#9aa0aa;--accent:#7cc4ff;--ok:#3d7a4a;--okbg:#1f3a24;--err:#a34848;--errbg:#3a1f1f}
 *{box-sizing:border-box}
 body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);margin:0;line-height:1.5}
-header{display:flex;align-items:center;gap:1rem;padding:.7rem 1.2rem;background:var(--panel);border-bottom:1px solid var(--line)}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem 1rem;padding:.7rem 1.2rem;background:var(--panel);border-bottom:1px solid var(--line)}
 header .brand{font-weight:700;color:var(--accent);text-decoration:none;margin-right:auto}
 header a,header button{color:var(--text);text-decoration:none;background:none;border:0;font:inherit;cursor:pointer}
 main{max-width:46rem;margin:2rem auto;padding:0 1rem}
@@ -36,12 +36,34 @@ td:first-child{color:var(--muted);width:40%;word-break:normal}
 .steps span.on{background:var(--accent)}
 code{background:#23262e;border-radius:4px;padding:.1rem .3rem}
 footer{max-width:46rem;margin:3rem auto 1rem;padding:0 1rem;color:#777;font-size:.8rem}
+main.wide,footer.wide{max-width:76rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:1rem;margin-bottom:1rem}
+.stat{border-radius:8px;padding:1rem 1.2rem;color:#fff}
+.stat .n{font-size:1.8rem;font-weight:700} .stat .l{opacity:.85;font-size:.9rem}
+.stat .plus{color:#b8f5c4;font-size:1rem;font-weight:600;margin-left:.3rem}
+.s1{background:#2b5f8a}.s2{background:#6a3d8a}.s3{background:#2f6b4f}.s4{background:#8a5a2b}
+.filters{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1rem}
+.filters input[type=text]{flex:1 1 14rem;width:auto}.filters select{width:auto;flex:0 1 14rem}
+.filters .check{margin:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr));gap:1rem}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+.tile .img{aspect-ratio:2/3;background:#0f1115;display:flex;align-items:center;justify-content:center;color:#555;font-size:.8rem;text-align:center;overflow:hidden}
+.tile .img span{padding:.5rem}
+.tile .img img{width:100%;height:100%;object-fit:cover;display:block}
+.tile .meta{padding:.5rem .6rem;font-size:.85rem}
+.tile .name{font-weight:600;line-height:1.25;word-break:break-word}
+.tile .sub{color:var(--muted);font-size:.75rem;margin-top:.2rem}
+.pager{display:flex;gap:.5rem;justify-content:center;align-items:center;margin:1.5rem 0}
+nav.tabs a{margin-right:1rem}
 </style>
 </head>
 <body>
 {% if page.show_nav %}
 <header>
   <a class="brand" href="/">M3Usort</a>
+  <a href="/movies">Movies</a>
+  <a href="/series">Series</a>
+  <a href="/new">New</a>
   {% if page.is_admin %}
     <a href="/admin">Admin</a>
     <form method="post" action="/admin/logout" style="margin:0"><button type="submit">Log out</button></form>
@@ -50,9 +72,9 @@ footer{max-width:46rem;margin:3rem auto 1rem;padding:0 1rem;color:#777;font-size
   {% endif %}
 </header>
 {% endif %}
-<main>
+<main{% block mainclass %}{% endblock %}>
 {% block content %}{% endblock %}
 </main>
-<footer>{{ page.version }}</footer>
+<footer{% block footclass %}{% endblock %}>{{ page.version }}</footer>
 </body>
 </html>

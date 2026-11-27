@@ -1,4 +1,5 @@
 mod auth;
+mod catalog;
 mod config;
 mod crypto;
 mod db;
@@ -107,17 +108,17 @@ async fn serve() -> anyhow::Result<()> {
             match db::verify_or_init_key(&pool, &key, true).await? {
                 KeyCheck::Initialised => {
                     info!("new database created and bound to M3USORT_KEY");
-                    web::app_router(web::AppState::new(pool, key, update.clone()).await?)
+                    start_app(pool, key, update.clone()).await?
                 }
                 KeyCheck::Ok => {
                     info!("M3USORT_KEY verified");
-                    web::app_router(web::AppState::new(pool, key, update.clone()).await?)
+                    start_app(pool, key, update.clone()).await?
                 }
                 KeyCheck::Rebound => {
                     warn!(
                         "M3USORT_KEY changed before setup was finished; database re-bound to the new key"
                     );
-                    web::app_router(web::AppState::new(pool, key, update.clone()).await?)
+                    start_app(pool, key, update.clone()).await?
                 }
                 KeyCheck::Mismatch => {
                     error!("M3USORT_KEY does not match this database; nothing was changed");
@@ -138,6 +139,17 @@ async fn serve() -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await?;
     Ok(())
+}
+
+/// Build the app state, start background jobs, return the router.
+async fn start_app(
+    pool: sqlx::SqlitePool,
+    key: MasterKey,
+    update: version::SharedStatus,
+) -> anyhow::Result<axum::Router> {
+    let state = web::AppState::new(pool, key, update).await?;
+    catalog::spawn_scheduler(state.clone());
+    Ok(web::app_router(state))
 }
 
 async fn rotate_key() -> anyhow::Result<()> {

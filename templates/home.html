@@ -1,12 +1,31 @@
 {% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
 {% block content %}
 {% match update_banner %}
   {% when Some((latest, url)) %}
     <div class="msg ok">Update available: <strong>{{ latest }}</strong>. <a href="{{ url }}">Release notes</a></div>
   {% when None %}
 {% endmatch %}
-<h1>M3Usort</h1>
+{% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
+<h1>Dashboard</h1>
+<div class="stats">
+  <a class="stat s1" href="/movies" style="text-decoration:none"><div class="n">{{ stats.movies }}{% if stats.new_movies > 0 %}<span class="plus">+{{ stats.new_movies }}</span>{% endif %}</div><div class="l">Movies</div></a>
+  <a class="stat s2" href="/series" style="text-decoration:none"><div class="n">{{ stats.series }}{% if stats.new_series > 0 %}<span class="plus">+{{ stats.new_series }}</span>{% endif %}</div><div class="l">Series</div></a>
+  <a class="stat s3" href="/new" style="text-decoration:none"><div class="n">{{ stats.new_movies + stats.new_series }}</div><div class="l">New this week</div></a>
+  <div class="stat s4"><div class="n" style="font-size:1.2rem;padding:.35rem 0">{{ stats.last_ok }}</div><div class="l">Last catalog refresh</div></div>
+</div>
 <div class="card">
-  <p>Setup is complete. The catalog (movies, series, search) arrives in the next milestone.</p>
+  {% if running %}
+    <p><strong>Catalog refresh running…</strong> Reload this page in a minute.</p>
+  {% else %}
+    {% if stats.last_failed %}<div class="msg err">Last refresh failed: {{ stats.last_message }}</div>
+    {% elif !stats.last_message.is_empty() %}<p class="help">Last refresh: {{ stats.last_message }}</p>{% endif %}
+    {% if stats.movies == 0 && stats.series == 0 && !stats.last_failed %}<p>The catalog is empty. It is fetched from your provider automatically a few seconds after start, or now:</p>{% endif %}
+  {% endif %}
+  <form method="post" action="/catalog/refresh" class="actions" style="margin-top:.5rem">
+    <span class="help">Refreshed automatically every VOD scan interval (Admin → Settings → Schedules).</span>
+    <button class="btn" type="submit"{% if running %} disabled{% endif %}>Refresh catalog now</button>
+  </form>
 </div>
 {% endblock %}

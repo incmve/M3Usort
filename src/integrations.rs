@@ -242,7 +242,7 @@ pub async fn test_folder(path: &str) -> Result<String, String> {
     Ok("Exists and is writable".into())
 }
 
-fn as_text(v: &Value) -> String {
+pub fn as_text(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         Value::Null => String::new(),
@@ -262,7 +262,7 @@ fn root_cause(e: &reqwest::Error) -> String {
     }
 }
 
-fn unix_to_date(ts: i64) -> String {
+pub fn unix_to_date(ts: i64) -> String {
     let days = ts.div_euclid(86_400);
     // Civil-from-days (Howard Hinnant).
     let z = days + 719_468;

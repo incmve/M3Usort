@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<h1>{{ kind }} <span class="help" style="font-size:1rem">{{ total }} found</span></h1>
+<form method="get" action="{{ path }}" class="filters">
+  <input type="text" name="q" value="{{ q }}" placeholder="Search {{ kind|lower }}…" autofocus>
+  <select name="category">
+    <option value="">All categories</option>
+    {% for (id, name) in categories %}<option value="{{ id }}"{% if id.as_str() == category.as_str() %} selected{% endif %}>{{ name }}</option>{% endfor %}
+  </select>
+  <select name="sort">
+    <option value="az"{% if sort == "az" || sort.is_empty() %} selected{% endif %}>A–Z</option>
+    <option value="za"{% if sort == "za" %} selected{% endif %}>Z–A</option>
+    <option value="new"{% if sort == "new" %} selected{% endif %}>Newest first</option>
+    <option value="old"{% if sort == "old" %} selected{% endif %}>Oldest first</option>
+  </select>
+  <span class="check"><input type="checkbox" id="nsfw" name="nsfw" value="1"{% if nsfw %} checked{% endif %}><label for="nsfw">Show adult</label></span>
+  <button class="btn" type="submit">Search</button>
+</form>
+{% if empty_catalog %}
+  <div class="card">The catalog is empty. Go to the <a href="/">dashboard</a> and click <em>Refresh catalog now</em>.</div>
+{% elif items.is_empty() %}
+  <div class="card">Nothing found.</div>
+{% else %}
+<div class="grid">
+{% for it in items %}
+  <div class="tile" data-id="{{ it.id }}" title="{{ it.name }}">
+    <div class="img">{% if it.image.is_empty() %}<span>{{ it.name }}</span>{% else %}<img src="{{ it.image }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:this.closest('.tile').title}))">{% endif %}</div>
+    <div class="meta">
+      <div class="name">{{ it.name }}</div>
+      <div class="sub">{% if !it.rating.is_empty() %}★ {{ it.rating }} · {% endif %}{{ it.category }}{% if !it.added.is_empty() %} · {{ it.added }}{% endif %}</div>
+    </div>
+  </div>
+{% endfor %}
+</div>
+<div class="pager">
+  {% if page_no > 1 %}<a class="btn secondary" href="{{ self.page_link(page_no - 1) }}">← Previous</a>{% endif %}
+  <span>Page {{ page_no }} of {{ pages }}</span>
+  {% if page_no < pages %}<a class="btn secondary" href="{{ self.page_link(page_no + 1) }}">Next →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

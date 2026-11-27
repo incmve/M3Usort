@@ -67,7 +67,11 @@ is good enough.
       rotation, data-dir lock, healthcheck, version + update check, Docker image, CI releases
 - [x] **1. Setup wizard + admin login + guest access**, admin page (show credentials,
       change admin/playlist password), `reset-admin`
-- [ ] **2. Catalog import** (Xtream `get_vod_streams` / `get_series`) into SQLite + FTS5 search
+- [x] **2. Catalog import** (Xtream `get_vod_categories`, `get_vod_streams`,
+      `get_series_categories`, `get_series`: 4 bulk calls, as in Python) into SQLite +
+      FTS5 search; dashboard, Movies, Series, New this week; category/sort/adult filters.
+      Refreshed every VOD scan interval and on demand. If the provider suddenly lists
+      less than half of what we have, nothing is removed (broken answer protection).
 - [ ] **3. Wanted lists → .strm writing**, compatible with existing folders; scheduler
 - [ ] **4. Live TV playlist:** groups, sorting, custom group, `/m3u/` with playlist password
 - [ ] **5. TMDB enrichment** (IDs, cast, posters), "New this week", actor search
