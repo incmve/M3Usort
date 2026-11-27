@@ -95,7 +95,13 @@ is good enough.
       TMDB details call with `append_to_response=credits,external_ids` for poster, plot,
       rating, IMDb id, cast, seasons and status). Actor pages and actor-name search.
       Daily jobs at local time (`TZ`): "TMDB ID enrichment" (provider, 1 s apart) and
-      "Cast enrichment" (TMDB, 0.1 s apart, one retry on 429); run-now with live progress.
+      "Cast enrichment" (TMDB, one retry on 429); run-now with live progress.
+      Faster than Python: TMDB ids from the provider's bulk lists are used directly
+      (no provider lookup); the provider job only covers titles without an id and
+      asks once per title+year group; the TMDB job searches once per cleaned
+      title+year and fetches details once per TMDB id, 8 in parallel, capped at
+      40 requests/s app-wide (TMDB's CDN allows ~50/s, 20 connections).
+      Mock test, 11,503 titles at 150 ms per request: 4 min 41 s.
       Tiles fall back to the TMDB poster when the provider's image is dead.
 - [ ] **6. Jellyfin:** library refresh, library view with watch status per user
 - [ ] **7. Admin extras:** log viewer, file browser, backup/restore, SMB, Gluetun card

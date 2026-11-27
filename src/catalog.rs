@@ -238,13 +238,13 @@ async fn import_items(
             }
             Kind::Series => {
                 sqlx::query(
-                    "INSERT INTO series (series_id, name, category_id, cover, plot, genre, release_date, rating, added, first_seen, last_seen)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "INSERT INTO series (series_id, name, category_id, cover, plot, genre, release_date, rating, added, provider_tmdb, first_seen, last_seen)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                      ON CONFLICT (series_id) DO UPDATE SET
                        name = excluded.name, category_id = excluded.category_id, cover = excluded.cover,
                        plot = COALESCE(excluded.plot, series.plot), genre = excluded.genre,
                        release_date = excluded.release_date, rating = excluded.rating,
-                       added = excluded.added, last_seen = excluded.last_seen",
+                       added = excluded.added, provider_tmdb = excluded.provider_tmdb, last_seen = excluded.last_seen",
                 )
                 .bind(id)
                 .bind(&name)
@@ -256,6 +256,7 @@ async fn import_items(
                 .bind(get_f64(it, "rating"))
                 // Series have no "added"; the provider's last_modified is the closest (as in Python).
                 .bind(get_i64(it, "last_modified").or_else(|| get_i64(it, "added")))
+                .bind(get_str(it, "tmdb").or_else(|| get_str(it, "tmdb_id")))
                 .bind(run_at)
                 .bind(run_at)
                 .execute(&mut *tx)
@@ -377,6 +378,10 @@ async fn refresh_inner(st: &AppState, run_at: i64) -> anyhow::Result<(ImportResu
         "get_series returned an empty list; series left unchanged"
     );
     let sr = import_items(&st.db, Kind::Series, &series, run_at).await?;
+    let adopted = crate::enrich::adopt_bulk_ids(&st.db).await?;
+    if adopted > 0 {
+        tracing::info!("{adopted} title(s) got a TMDB id from the provider's list");
+    }
     Ok((m, sr))
 }
 

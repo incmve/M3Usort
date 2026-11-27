@@ -333,8 +333,9 @@ struct LibraryTpl {
     message: String,
     pending: Vec<WantedRow>,
     found: Vec<WantedRow>,
-    movies: i64,
+    movies: Vec<MovieRow>,
     series: Vec<SeriesRow>,
+    bulk: enrich::BulkCounts,
     last_run: String,
     last_run_failed: bool,
     running: bool,
@@ -343,6 +344,7 @@ struct LibraryTpl {
     enrich_provider: enrich::JobStatus,
     enrich_tmdb: enrich::JobStatus,
     has_tmdb_key: bool,
+    tmdb_parallel: usize,
 }
 
 /// (id, kind, term, created_at, last_check, found_at, found_names)
@@ -365,7 +367,20 @@ pub struct WantedRow {
     pub note: String,
 }
 
+/// (series_id, in_catalog, folder, episodes, last_sync, last_error)
+type SeriesDbRow = (i64, bool, String, i64, Option<i64>, Option<String>);
+
+pub struct MovieRow {
+    pub id: i64,
+    pub folder: String,
+    pub added: String,
+    pub via: String,
+    pub in_catalog: bool,
+}
+
 pub struct SeriesRow {
+    pub id: i64,
+    pub in_catalog: bool,
     pub folder: String,
     pub episodes: i64,
     pub last_sync: String,
@@ -405,15 +420,39 @@ async fn library_page(
                 pending.push(row);
             }
         }
-        let movies: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_movies").fetch_one(&st.db).await?;
-        let series: Vec<(String, i64, Option<i64>, Option<String>)> = sqlx::query_as(
-            "SELECT folder, episodes, last_sync, last_error FROM library_series ORDER BY last_error IS NULL, folder COLLATE NOCASE",
+        let movies: Vec<(i64, String, i64, String, bool)> = sqlx::query_as(
+            "SELECT l.stream_id, l.folder, l.added_at, l.via, m.stream_id IS NOT NULL
+             FROM library_movies l LEFT JOIN movies m ON m.stream_id = l.stream_id
+             ORDER BY l.folder COLLATE NOCASE",
+        )
+        .fetch_all(&st.db)
+        .await?;
+        let movies = movies
+            .into_iter()
+            .map(|(id, folder, added, via, in_catalog)| MovieRow {
+                id,
+                folder,
+                added: date(added),
+                via: match via.as_str() {
+                    "adopted" => "existing folder".into(),
+                    "wanted" => "wanted".into(),
+                    _ => "added".into(),
+                },
+                in_catalog,
+            })
+            .collect();
+        let series: Vec<SeriesDbRow> = sqlx::query_as(
+            "SELECT l.series_id, s.series_id IS NOT NULL, l.folder, l.episodes, l.last_sync, l.last_error
+             FROM library_series l LEFT JOIN series s ON s.series_id = l.series_id
+             ORDER BY l.last_error IS NULL, l.folder COLLATE NOCASE",
         )
         .fetch_all(&st.db)
         .await?;
         let series = series
             .into_iter()
-            .map(|(folder, episodes, sync, err)| SeriesRow {
+            .map(|(id, in_catalog, folder, episodes, sync, err)| SeriesRow {
+                id,
+                in_catalog,
                 folder,
                 episodes,
                 last_sync: sync.map(catalog::ago).unwrap_or_else(|| "pending".into()),
@@ -452,6 +491,7 @@ async fn library_page(
         found,
         movies,
         series,
+        bulk: enrich::bulk_id_counts(&st.db).await.unwrap_or_default(),
         last_run: last
             .as_ref()
             .map(|(t, _, m)| {
@@ -468,6 +508,7 @@ async fn library_page(
         folders_missing,
         enrich_provider: enrich::job_status(&st, enrich::JOB_PROVIDER).await,
         enrich_tmdb: enrich::job_status(&st, enrich::JOB_TMDB).await,
+        tmdb_parallel: enrich::TMDB_PARALLEL,
         has_tmdb_key: s::get_secret(&st.db, &st.key, s::SECRET_TMDB_API_KEY)
             .await
             .ok()

@@ -12,6 +12,21 @@ use crate::integrations::as_text;
 
 pub const IMAGE_BASE: &str = "https://image.tmdb.org/t/p/w500";
 
+/// TMDB's CDN allows ~50 requests/s per IP (the old 40-per-10-s limit was dropped
+/// in Dec 2019). Every request in the app waits for its slot: at most 40/s.
+const MIN_GAP: Duration = Duration::from_millis(25);
+static NEXT_SLOT: tokio::sync::Mutex<Option<tokio::time::Instant>> =
+    tokio::sync::Mutex::const_new(None);
+
+async fn wait_for_slot() {
+    let mut next = NEXT_SLOT.lock().await;
+    let now = tokio::time::Instant::now();
+    let at = next.map_or(now, |n| n.max(now));
+    *next = Some(at + MIN_GAP);
+    drop(next);
+    tokio::time::sleep_until(at).await;
+}
+
 #[derive(Debug, Default)]
 pub struct Details {
     pub poster: Option<String>,
@@ -54,6 +69,7 @@ async fn get(
     }
     // One retry after a 429, honouring Retry-After (as the Python cast job did).
     for attempt in 0..2 {
+        wait_for_slot().await;
         let mut req = client.get(url.clone()).timeout(Duration::from_secs(10));
         if key.starts_with("eyJ") {
             req = req.bearer_auth(key);

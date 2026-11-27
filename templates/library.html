@@ -7,7 +7,7 @@
 {% for f in folders_missing %}<div class="msg err">No {{ f }} folder is set, so {{ f }} can't be added yet. An admin can set it under Admin → Settings → Folders.</div>{% endfor %}
 
 <div class="stats">
-  <div class="stat s1"><div class="n">{{ movies }}</div><div class="l">Movies in library</div></div>
+  <div class="stat s1"><div class="n">{{ movies.len() }}</div><div class="l">Movies in library</div></div>
   <div class="stat s2"><div class="n">{{ series.len() }}</div><div class="l">Series in library</div></div>
   <div class="stat s3"><div class="n">{{ pending.len() }}</div><div class="l">Wanted, not found yet</div></div>
 </div>
@@ -28,13 +28,14 @@
 <div class="card" id="enrich">
   {% if !has_tmdb_key %}<div class="msg err">No TMDB key: only the provider's info is used. Set one under Admin → Settings → TMDB.</div>{% endif %}
   <table>
-    <tr><td><strong>TMDB ID enrichment</strong><div class="help">Asks the provider for TMDB ids, plots and ratings (1 per second).</div></td>
+    <tr><td><strong>TMDB ID enrichment</strong><div class="help">Asks the provider for TMDB ids, plots and ratings (1 per second), only for titles without an id from the provider's list. Same title and year in several categories is asked once.</div></td>
       <td id="st-provider">{% if enrich_provider.running %}running: {{ enrich_provider.processed }} / {{ enrich_provider.total }}{% else %}last: {{ enrich_provider.last }}{% if !enrich_provider.message.is_empty() %} — {{ enrich_provider.message }}{% endif %}{% endif %}</td>
       <td class="act"><form method="post" action="/enrich/provider" style="margin:0"><button class="btn secondary" type="submit"{% if enrich_provider.running %} disabled{% endif %}>Run now</button></form></td></tr>
-    <tr><td><strong>Cast enrichment</strong><div class="help">Gets cast, posters, seasons and status from TMDB.</div></td>
+    <tr><td><strong>Cast enrichment</strong><div class="help">Searches TMDB for titles without an id, then gets cast, posters, seasons and status. {{ tmdb_parallel }} requests at a time; each title and TMDB id only once.</div></td>
       <td id="st-tmdb">{% if enrich_tmdb.running %}running: {{ enrich_tmdb.processed }} / {{ enrich_tmdb.total }}{% else %}last: {{ enrich_tmdb.last }}{% if !enrich_tmdb.message.is_empty() %} — {{ enrich_tmdb.message }}{% endif %}{% endif %}</td>
       <td class="act"><form method="post" action="/enrich/tmdb" style="margin:0"><button class="btn secondary" type="submit"{% if enrich_tmdb.running || !has_tmdb_key %} disabled{% endif %}>Run now</button></form></td></tr>
   </table>
+  <p class="help">TMDB ids from the provider's list: <strong>{{ bulk.movies_bulk }}</strong> of {{ bulk.movies }} movies, <strong>{{ bulk.series_bulk }}</strong> of {{ bulk.series }} series{% if bulk.movies_bulk == 0 && bulk.series_bulk == 0 && bulk.movies > 0 %} (your provider doesn't send them, so the provider lookup is still needed){% endif %}. With a TMDB id now: {{ bulk.movies_with_id }} movies, {{ bulk.series_with_id }} series.</p>
   <p class="help" style="margin-bottom:0">Daily times are set under Settings → Schedules. Opening a movie or series fills in its details right away.</p>
 </div>
 <script>
@@ -72,9 +73,26 @@
   <td class="act"><form method="post" action="/wanted/{{ w.id }}/delete" style="margin:0"><button class="btn secondary" type="submit">Clear</button></form></td></tr>{% endfor %}
 </table></div>{% endif %}
 
+<h2>Movies in library</h2>
+{% if movies.is_empty() %}<p>No movies yet. Use <em>Add</em> on the Movies page, or add a wanted term.</p>{% else %}
+<input type="search" class="libfilter" data-table="lib-movies" placeholder="Filter {{ movies.len() }} movies…">
+<div class="card"><table id="lib-movies">
+  {% for r in movies %}<tr><td>{% if r.in_catalog %}<a href="/movies/{{ r.id }}">{{ r.folder }}</a>{% else %}{{ r.folder }} <span class="help">(no longer in the catalog)</span>{% endif %}</td><td class="help">{{ r.via }} · {{ r.added }}</td></tr>{% endfor %}
+</table></div>{% endif %}
+
 <h2>Series in library</h2>
 {% if series.is_empty() %}<p>No series yet. Use <em>Add</em> on the Series page, or add a wanted term.</p>{% else %}
-<div class="card"><table>
-  {% for r in series %}<tr><td>{{ r.folder }}</td><td>{{ r.episodes }} episodes · synced {{ r.last_sync }}{% if !r.error.is_empty() %}<div class="msg err" style="margin:.3rem 0 0;padding:.3rem .5rem">{{ r.error }}</div>{% endif %}</td></tr>{% endfor %}
+<input type="search" class="libfilter" data-table="lib-series" placeholder="Filter {{ series.len() }} series…">
+<div class="card"><table id="lib-series">
+  {% for r in series %}<tr><td>{% if r.in_catalog %}<a href="/series/{{ r.id }}">{{ r.folder }}</a>{% else %}{{ r.folder }} <span class="help">(no longer in the catalog)</span>{% endif %}</td><td>{{ r.episodes }} episodes · synced {{ r.last_sync }}{% if !r.error.is_empty() %}<div class="msg err" style="margin:.3rem 0 0;padding:.3rem .5rem">{{ r.error }}</div>{% endif %}</td></tr>{% endfor %}
 </table></div>{% endif %}
+<script>
+document.querySelectorAll('.libfilter').forEach(inp => inp.addEventListener('input', () => {
+  const q = inp.value.toLowerCase();
+  document.querySelectorAll('#' + inp.dataset.table + ' tr').forEach(tr => {
+    tr.style.display = tr.cells[0].textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}));
+</script>
+<style>.libfilter{width:100%;max-width:24rem;margin:0 0 .6rem}</style>
 {% endblock %}
