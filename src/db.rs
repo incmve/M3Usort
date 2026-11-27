@@ -5,12 +5,32 @@ use std::str::FromStr;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 
-use crate::crypto::MasterKey;
+use crate::crypto::{self, MasterKey, SALT_LEN};
 
 /// Name of the meta row holding a value encrypted with the master key.
 /// Decrypting it at startup proves M3USORT_KEY matches this database.
 const KEY_CHECK: &str = "key_check";
 const KEY_CHECK_PLAINTEXT: &[u8] = b"m3usort-key-check-v1";
+/// Salt for stretching a passphrase M3USORT_KEY with Argon2id. Not secret.
+const KDF_SALT: &str = "kdf_salt";
+
+/// The Argon2id salt for this database, created on first use.
+pub async fn kdf_salt(pool: &SqlitePool) -> anyhow::Result<Vec<u8>> {
+    let row: Option<(Vec<u8>,)> = sqlx::query_as("SELECT value FROM meta WHERE name = ?")
+        .bind(KDF_SALT)
+        .fetch_optional(pool)
+        .await?;
+    if let Some((salt,)) = row {
+        return Ok(salt);
+    }
+    let salt = crypto::random_bytes::<SALT_LEN>().to_vec();
+    sqlx::query("INSERT INTO meta (name, value) VALUES (?, ?)")
+        .bind(KDF_SALT)
+        .bind(&salt)
+        .execute(pool)
+        .await?;
+    Ok(salt)
+}
 
 pub async fn open(path: &Path, create: bool) -> anyhow::Result<SqlitePool> {
     let url = format!("sqlite://{}", path.display());
@@ -85,6 +105,7 @@ pub async fn rotate_key(
     pool: &SqlitePool,
     old: &MasterKey,
     new: &MasterKey,
+    new_salt: &[u8],
 ) -> anyhow::Result<usize> {
     let mut tx = pool.begin().await?;
 
@@ -107,6 +128,11 @@ pub async fn rotate_key(
         .bind(KEY_CHECK)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("INSERT INTO meta (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value")
+        .bind(KDF_SALT)
+        .bind(new_salt)
+        .execute(&mut *tx)
+        .await?;
 
     tx.commit().await?;
     Ok(rows.len())
@@ -117,6 +143,18 @@ mod tests {
     use super::*;
     use crate::crypto::generate_key;
 
+    fn k() -> MasterKey {
+        MasterKey::derive(&generate_key(), b"0123456789abcdef").unwrap()
+    }
+
+    #[tokio::test]
+    async fn salt_is_created_once() {
+        let (_d, pool) = temp_db().await;
+        let a = kdf_salt(&pool).await.unwrap();
+        assert_eq!(a.len(), SALT_LEN);
+        assert_eq!(kdf_salt(&pool).await.unwrap(), a);
+    }
+
     async fn temp_db() -> (tempdir::Guard, SqlitePool) {
         let dir = tempdir::Guard::new();
         let pool = open(&dir.path.join("t.db"), true).await.unwrap();
@@ -126,8 +164,8 @@ mod tests {
     #[tokio::test]
     async fn key_check_lifecycle() {
         let (_d, pool) = temp_db().await;
-        let a = MasterKey::from_base64(&generate_key()).unwrap();
-        let b = MasterKey::from_base64(&generate_key()).unwrap();
+        let a = k();
+        let b = k();
         assert!(matches!(
             verify_or_init_key(&pool, &a, false).await.unwrap(),
             KeyCheck::Initialised
@@ -145,9 +183,9 @@ mod tests {
     #[tokio::test]
     async fn rebind_only_while_no_secrets() {
         let (_d, pool) = temp_db().await;
-        let a = MasterKey::from_base64(&generate_key()).unwrap();
-        let b = MasterKey::from_base64(&generate_key()).unwrap();
-        let c = MasterKey::from_base64(&generate_key()).unwrap();
+        let a = k();
+        let b = k();
+        let c = k();
         verify_or_init_key(&pool, &a, true).await.unwrap();
         // Setup not finished: switching key is allowed and re-binds.
         assert!(matches!(
@@ -177,8 +215,8 @@ mod tests {
     #[tokio::test]
     async fn rotation_moves_everything() {
         let (_d, pool) = temp_db().await;
-        let old = MasterKey::from_base64(&generate_key()).unwrap();
-        let new = MasterKey::from_base64(&generate_key()).unwrap();
+        let old = k();
+        let new = k();
         verify_or_init_key(&pool, &old, false).await.unwrap();
         sqlx::query("INSERT INTO secrets (name, blob) VALUES (?, ?)")
             .bind("tmdb_api_key")
@@ -187,7 +225,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(rotate_key(&pool, &old, &new).await.unwrap(), 1);
+        assert_eq!(
+            rotate_key(&pool, &old, &new, b"newsalt-newsalt!")
+                .await
+                .unwrap(),
+            1
+        );
         assert!(matches!(
             verify_or_init_key(&pool, &new, false).await.unwrap(),
             KeyCheck::Ok

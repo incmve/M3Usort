@@ -17,7 +17,10 @@ only reset (see the end of this page).
 
 ## How it works
 
-- `M3USORT_KEY` is 32 random bytes, base64 (44 characters).
+- `M3USORT_KEY` is either a **random key** (32 bytes, base64, 44 characters, used
+  as is) or a **passphrase** of your choice (anything else). A passphrase is
+  stretched with Argon2id (64 MiB, 3 passes) and a random salt stored in the
+  database. The salt is not secret.
 - Two keys are derived from it with HKDF-SHA256: one encrypts credentials
   (XChaCha20-Poly1305), the other signs login sessions.
 - Each credential is encrypted with its own name as associated data, so a value
@@ -50,9 +53,16 @@ docker run --rm incmve/m3usort:rust gen-key
 openssl rand -base64 32
 ```
 
-It must be 32 random bytes in base64 (44 characters). A self-chosen password or
-passphrase such as `MySecret123` is refused on purpose: the key is used directly as
-an encryption key, so it has to be random, not guessable.
+Or use your own passphrase. Your choice, with this trade-off:
+
+| Key | Someone steals the database or a backup |
+|---|---|
+| Random key (44 chars from `gen-key`) | Cannot be brute-forced |
+| Long passphrase (4+ random words) | Practically safe |
+| Short password like `MySecret123` | Can be guessed offline; Argon2id only slows it down |
+
+Passphrases shorter than 16 characters get a warning in the log at every start.
+Nothing is refused.
 
 ### Changing the key before setup is finished
 
@@ -67,7 +77,6 @@ the new key and re-binds the empty database to it (logged as a warning). After
 |---|---|---|
 | empty | none | Shows a generated key (step 1 of setup) |
 | empty | exists | Refuses: "M3USORT_KEY is missing". No new key is generated. |
-| malformed | any | Refuses: "M3USORT_KEY is invalid" |
 | set | none | Creates the database bound to this key, starts the wizard (step 1 skipped) |
 | set, correct | exists | Normal start |
 | set, different | exists, setup not finished | Accepts it, re-binds the empty database (warning in log) |
@@ -93,6 +102,10 @@ Do this when the key may have leaked (for example `.env` was shared or committed
    ```
    It decrypts every credential with the current key, re-encrypts it with a new
    random key, and rewrites the check value, all in one database transaction.
+
+   Want your own passphrase as the new key? Add it temporarily as
+   `M3USORT_NEW_KEY=...` in `.env` before this step. Without it, a random key is
+   generated.
    Either everything moves to the new key or nothing changes.
    It prints:
    ```
@@ -100,7 +113,8 @@ Do this when the key may have leaked (for example `.env` was shared or committed
 
    M3USORT_KEY=<new key>
    ```
-4. Put the new key in `.env` **and** in your password manager. Keep the old key
+4. Put the new key in `.env` as `M3USORT_KEY` (and remove `M3USORT_NEW_KEY` if
+   you used it), **and** in your password manager. Keep the old key
    too, labelled with the date: backups made before the rotation still need it.
 5. Start again: `docker compose up -d`.
 6. Check the web UI opens normally. If it says "does not match", the `.env` still

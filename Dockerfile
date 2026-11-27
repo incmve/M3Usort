@@ -14,6 +14,8 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs \
 
 COPY src ./src
 COPY migrations ./migrations
+# Commit shown in the footer and `m3usort version`; set by CI.
+ARG M3USORT_GIT_SHA=dev
 RUN touch src/main.rs && cargo auditable build --release --locked
 
 # ---- runtime ----

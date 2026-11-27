@@ -27,7 +27,8 @@ is good enough.
    skips the admin password. Behind a reverse proxy, only `M3USORT_TRUSTED_PROXIES`
    may set the client IP via `X-Forwarded-For`.
 4. **Dropped:** demo mode (fake Xtream API), Live TV player (for now).
-5. **Secrets:** one `M3USORT_KEY` in `.env`, never in the database. See
+5. **Secrets:** one `M3USORT_KEY` in `.env`, never in the database. Random key or
+   own passphrase (Argon2id), user's choice; short ones get a log warning. See
    [KEY-MANAGEMENT.md](KEY-MANAGEMENT.md).
    - Admin password: Argon2id hash (OWASP minimum m=19 MiB, t=2, p=1).
    - Credentials: XChaCha20-Poly1305 with a key derived from `M3USORT_KEY`.
@@ -42,10 +43,15 @@ is good enough.
 8. **Credentials viewable** by admin after re-entering the admin password.
    Forgotten admin password: `m3usort reset-admin` from the host.
 
+9. **Version + update check:** version from `Cargo.toml` plus git commit, shown in
+   the footer, `m3usort version` and `/api/version`. The app checks GitHub releases
+   tagged `rust-v*` every 12 h and shows a banner; never auto-updates. Opt out with
+   `M3USORT_UPDATE_CHECK=false`. See [RELEASING.md](RELEASING.md).
+
 ## Milestones
 
-- [x] **0. Skeleton:** key handling, key check, key rotation, data-dir lock,
-      healthcheck, Docker image
+- [x] **0. Skeleton:** key handling (random key or passphrase), key check, key
+      rotation, data-dir lock, healthcheck, version + update check, Docker image, CI releases
 - [ ] **1. Setup wizard + admin login + guest access**
 - [ ] **2. Catalog import** (Xtream `get_vod_streams` / `get_series`) into SQLite + FTS5 search
 - [ ] **3. Wanted lists → .strm writing**, compatible with existing folders; scheduler

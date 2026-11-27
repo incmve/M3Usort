@@ -1,13 +1,14 @@
 mod config;
 mod crypto;
 mod db;
+mod version;
 mod web;
 
 use anyhow::Context;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
-use crate::crypto::MasterKey;
+use crate::crypto::{KeyKind, MasterKey};
 use crate::db::KeyCheck;
 use crate::web::Blocked;
 
@@ -18,6 +19,7 @@ Commands:
   serve         Run the web app (default)
   gen-key       Print a new random M3USORT_KEY
   rotate-key    Re-encrypt all stored credentials with a new key (stop the app first)
+  version       Print version and commit
   healthcheck   Exit 0 if the running app answers on /healthcheck (for Docker HEALTHCHECK)
 ";
 
@@ -39,6 +41,10 @@ async fn main() {
         }
         "rotate-key" => rotate_key().await,
         "healthcheck" => healthcheck().await,
+        "version" | "-V" | "--version" => {
+            println!("{}", version::version_line());
+            Ok(())
+        }
         "-h" | "--help" | "help" => {
             print!("{USAGE}");
             Ok(())
@@ -57,6 +63,8 @@ async fn serve() -> anyhow::Result<()> {
         .with_context(|| format!("cannot create data dir {}", cfg.data_dir.display()))?;
     let _lock = lock_data_dir(&cfg)?;
     let db_exists = cfg.db_path().exists();
+    info!("{}", version::version_line());
+    let update = version::spawn_checker();
 
     let router = match (&cfg.key, db_exists) {
         (None, false) => {
@@ -72,35 +80,40 @@ async fn serve() -> anyhow::Result<()> {
             );
             web::blocked_router(Blocked::KeyMissingForExistingDb)
         }
-        (Some(raw), _) => match MasterKey::from_base64(raw) {
-            Err(e) => {
-                error!("{e}");
-                web::blocked_router(Blocked::InvalidKey(e.to_string()))
-            }
-            Ok(key) => {
-                let pool = db::open(&cfg.db_path(), true).await?;
-                match db::verify_or_init_key(&pool, &key, true).await? {
-                    KeyCheck::Initialised => {
-                        info!("new database created and bound to M3USORT_KEY");
-                        web::app_router(pool)
-                    }
-                    KeyCheck::Ok => {
-                        info!("M3USORT_KEY verified");
-                        web::app_router(pool)
-                    }
-                    KeyCheck::Rebound => {
-                        warn!(
-                            "M3USORT_KEY changed before setup was finished; database re-bound to the new key"
-                        );
-                        web::app_router(pool)
-                    }
-                    KeyCheck::Mismatch => {
-                        error!("M3USORT_KEY does not match this database; nothing was changed");
-                        web::blocked_router(Blocked::KeyMismatch)
-                    }
+        (Some(raw), _) => {
+            let pool = db::open(&cfg.db_path(), true).await?;
+            let key = derive_key(raw, &pool).await?;
+            if let KeyKind::Passphrase(n) = key.kind() {
+                if n < crypto::SHORT_PASSPHRASE {
+                    warn!(
+                        "M3USORT_KEY is a short passphrase ({n} characters). Fine on a trusted LAN, but a \
+                         stolen database or backup can be brute-forced offline. `m3usort gen-key` makes a random key."
+                    );
+                } else {
+                    info!("M3USORT_KEY is a passphrase, stretched with Argon2id");
                 }
             }
-        },
+            match db::verify_or_init_key(&pool, &key, true).await? {
+                KeyCheck::Initialised => {
+                    info!("new database created and bound to M3USORT_KEY");
+                    web::app_router(pool, update.clone())
+                }
+                KeyCheck::Ok => {
+                    info!("M3USORT_KEY verified");
+                    web::app_router(pool, update.clone())
+                }
+                KeyCheck::Rebound => {
+                    warn!(
+                        "M3USORT_KEY changed before setup was finished; database re-bound to the new key"
+                    );
+                    web::app_router(pool, update.clone())
+                }
+                KeyCheck::Mismatch => {
+                    error!("M3USORT_KEY does not match this database; nothing was changed");
+                    web::blocked_router(Blocked::KeyMismatch)
+                }
+            }
+        }
     };
 
     let listener = tokio::net::TcpListener::bind(cfg.listen)
@@ -119,7 +132,6 @@ async fn rotate_key() -> anyhow::Result<()> {
         .key
         .as_deref()
         .context("M3USORT_KEY (the current key) must be set to rotate")?;
-    let old = MasterKey::from_base64(raw)?;
     let _lock = lock_data_dir(&cfg)?;
     anyhow::ensure!(
         cfg.db_path().exists(),
@@ -128,6 +140,7 @@ async fn rotate_key() -> anyhow::Result<()> {
     );
 
     let pool = db::open(&cfg.db_path(), false).await?;
+    let old = derive_key(raw, &pool).await?;
     match db::verify_or_init_key(&pool, &old, false).await? {
         KeyCheck::Ok => {}
         KeyCheck::Mismatch => {
@@ -139,17 +152,45 @@ async fn rotate_key() -> anyhow::Result<()> {
         KeyCheck::Rebound => unreachable!("rebind is disabled for rotate-key"),
     }
 
-    let new_b64 = crypto::generate_key();
-    let new = MasterKey::from_base64(&new_b64)?;
-    let n = db::rotate_key(&pool, &old, &new).await?;
+    // New key: your own (M3USORT_NEW_KEY, random key or passphrase) or a generated one.
+    let own = std::env::var("M3USORT_NEW_KEY")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if let Some(n) = &own {
+        anyhow::ensure!(
+            n.trim() != raw.trim(),
+            "M3USORT_NEW_KEY is the same as M3USORT_KEY"
+        );
+    }
+    let new_value = own.clone().unwrap_or_else(crypto::generate_key);
+    let new_salt = crypto::random_bytes::<{ crypto::SALT_LEN }>();
+    let new = {
+        let v = new_value.clone();
+        tokio::task::spawn_blocking(move || MasterKey::derive(&v, &new_salt)).await??
+    };
+    let n = db::rotate_key(&pool, &old, &new, &new_salt).await?;
     pool.close().await;
 
-    println!("Re-encrypted {n} credential(s). Replace the line in .env with:\n");
-    println!("M3USORT_KEY={new_b64}\n");
+    println!("Re-encrypted {n} credential(s).\n");
+    if own.is_some() {
+        println!("Now set M3USORT_KEY in .env to the value you gave as M3USORT_NEW_KEY,");
+        println!("and remove the M3USORT_NEW_KEY line.\n");
+    } else {
+        println!("Replace the M3USORT_KEY line in .env with:\n");
+        println!("M3USORT_KEY={new_value}\n");
+    }
     println!(
         "Then recreate the container (docker compose up -d). Backups made before now still need the OLD key."
     );
     Ok(())
+}
+
+/// Derive the master key using this database's salt. Argon2id (for passphrases)
+/// is CPU/memory heavy, so it runs off the async runtime.
+async fn derive_key(raw: &str, pool: &sqlx::SqlitePool) -> anyhow::Result<MasterKey> {
+    let salt = db::kdf_salt(pool).await?;
+    let raw = raw.to_string();
+    tokio::task::spawn_blocking(move || MasterKey::derive(&raw, &salt)).await?
 }
 
 /// Exclusive lock on the data dir for as long as the returned file is alive.

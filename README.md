@@ -23,6 +23,7 @@ Everything about the key (rotation, restore, what happens when it's wrong):
 [docs/KEY-MANAGEMENT.md](docs/KEY-MANAGEMENT.md).
 
 All environment settings: [.env.example](.env.example).
+Versions and update check: [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Commands
 
@@ -30,6 +31,7 @@ All environment settings: [.env.example](.env.example).
 m3usort serve         Run the web app (default)
 m3usort gen-key       Print a new random M3USORT_KEY
 m3usort rotate-key    Re-encrypt stored credentials with a new key (app must be stopped)
+m3usort version       Print version and commit
 m3usort healthcheck   Used by the Docker HEALTHCHECK
 ```
 
