@@ -36,7 +36,11 @@ admin password. 5 wrong passwords from one IP lock that IP out for 30 minutes.
 Lockouts are stored in the database (they survive a restart); clear one with
 `docker exec m3usort-rs m3usort reset-ip 192.168.1.20`.
 
-Everything about the key (rotation, restore, what happens when it's wrong):
+**Backups:** daily to `/data/backups` (inside the data volume, newest 7 kept), optionally
+also to an SMB share; restore under Admin → Backups or on a fresh install from the
+wizard's first page. **Logs:** Admin → Logs (files in `/data/logs`, 14 days).
+
+Everything about the key (rotation, backup and restore, what happens when it's wrong):
 [docs/KEY-MANAGEMENT.md](docs/KEY-MANAGEMENT.md).
 
 All environment settings: [.env.example](.env.example).
@@ -51,6 +55,8 @@ m3usort rotate-key    Re-encrypt stored credentials with a new key (app must be 
 m3usort reset-admin   New random admin password, logs out all admin sessions
 m3usort reset-ip IP   Clear a login lockout (or --all)
 m3usort locked-ips    List IPs that are locked out
+m3usort restore FILE  Check a backup and put it in place at the next start
+                      (--without-credentials for a backup made with another key)
 m3usort version       Print version and commit
 m3usort healthcheck   Used by the Docker HEALTHCHECK
 ```

@@ -1,5 +1,6 @@
 mod account;
 mod auth;
+mod backup;
 mod catalog;
 mod config;
 mod crypto;
@@ -35,10 +36,28 @@ Commands:
   rotate-key    Re-encrypt all stored credentials with a new key (stop the app first)
   reset-admin   Set a new random admin password and log out all admin sessions
   reset-ip IP   Clear the login lockout for one IP (or --all for every IP)
+  restore FILE  Check a backup (.db.gz) against M3USORT_KEY and put it in place at the next start
+                (add --without-credentials for a backup made with another key)
   locked-ips    List IPs that are locked out right now
   version       Print version and commit
   healthcheck   Exit 0 if the running app answers on /healthcheck (for Docker HEALTHCHECK)
 ";
+
+/// M3USORT_LOG_LEVEL (default info). The SMB library logs every share connect
+/// at info, so it is kept at warn unless the value names smb2 itself.
+fn log_filter() -> String {
+    let v = std::env::var("M3USORT_LOG_LEVEL").unwrap_or_default();
+    let v = if v.trim().is_empty() {
+        "info".to_string()
+    } else {
+        v.trim().to_string()
+    };
+    if v.contains("smb2") {
+        v
+    } else {
+        format!("{v},smb2=warn")
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -47,8 +66,8 @@ async fn main() {
         .with_ansi(false)
         .with_writer(logfile::Tee)
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("M3USORT_LOG_LEVEL")
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_new(log_filter())
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,smb2=warn")),
         )
         .init();
 
@@ -62,6 +81,13 @@ async fn main() {
         "rotate-key" => rotate_key().await,
         "reset-admin" => reset_admin().await,
         "reset-ip" => reset_ip(std::env::args().nth(2)).await,
+        "restore" => {
+            restore(
+                std::env::args().nth(2),
+                std::env::args().any(|a| a == "--without-credentials"),
+            )
+            .await
+        }
         "locked-ips" => locked_ips().await,
         "healthcheck" => healthcheck().await,
         "version" | "-V" | "--version" => {
@@ -88,6 +114,16 @@ async fn serve() -> anyhow::Result<()> {
     if let Err(e) = logfile::enable(&cfg.data_dir.join("logs")) {
         tracing::warn!("no log files (log viewer empty): {e}");
     }
+    match backup::apply_pending(&cfg.data_dir, &cfg.db_path()) {
+        Ok(true) => tracing::info!(
+            "restored the database from a backup; the previous one is kept as m3usort.db.before-restore-…"
+        ),
+        Ok(false) => {}
+        Err(e) => {
+            tracing::error!("restoring the staged backup failed (current database kept): {e:#}")
+        }
+    }
+    backup::init(&cfg.data_dir, cfg.key.as_deref().unwrap_or_default());
     warn_if_not_a_volume(&cfg.data_dir);
     let db_exists = cfg.db_path().exists();
     info!("{}", version::version_line());
@@ -122,7 +158,7 @@ async fn serve() -> anyhow::Result<()> {
             }
             match db::verify_or_init_key(&pool, &key, true).await? {
                 KeyCheck::Initialised => {
-                    info!("new database created and bound to M3USORT_KEY");
+                    info!("database bound to M3USORT_KEY (new install, or a backup restored without its credentials)");
                     start_app(pool, key, update.clone()).await?
                 }
                 KeyCheck::Ok => {
@@ -385,4 +421,40 @@ async fn shutdown_signal() {
     let term = std::future::pending::<()>();
     tokio::select! { _ = ctrl_c => {}, _ = term => {} }
     info!("shutting down");
+}
+
+/// `m3usort restore FILE`: check a backup against M3USORT_KEY and stage it; the
+/// app puts it in place at its next start (restart the container).
+async fn restore(file: Option<String>, without_credentials: bool) -> anyhow::Result<()> {
+    let Some(file) = file else {
+        anyhow::bail!("usage: m3usort restore /data/backups/m3usort-backup-….db.gz");
+    };
+    let cfg = config::Config::from_env()?;
+    let key = cfg.key.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "M3USORT_KEY is not set; the backup can only be opened with the key it was made with"
+        )
+    })?;
+    let data = std::fs::read(&file).with_context(|| format!("cannot read {file}"))?;
+    let info = backup::stage_restore_in(&cfg.data_dir, &key, data, without_credentials).await?;
+    println!(
+        "Backup OK: setup {}, {}, {} movie(s) and {} series in the library, {} catalog titles.",
+        if info.setup_done {
+            "finished"
+        } else {
+            "not finished"
+        },
+        if info.without_credentials {
+            "made with another key: restored WITHOUT its credentials (enter them again under Admin → Settings)".to_string()
+        } else {
+            format!("{} stored credential(s)", info.secrets)
+        },
+        info.library_movies,
+        info.library_series,
+        info.catalog
+    );
+    println!(
+        "Restart the container to put it in place (the current database is kept as m3usort.db.before-restore-…)."
+    );
+    Ok(())
 }

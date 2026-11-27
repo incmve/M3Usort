@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Admin</h1>
+{% include "_adminnav.html" %}
+{% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
+{% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
+
+<h2>Backups</h2>
+<div class="card">
+  {% match last %}
+  {% when Some(l) %}
+    <p>Last backup: {{ last_when }} — {% if l.ok %}{{ l.message }}{% else %}<span style="color:#ff9a9a">{{ l.message }}</span>{% endif %}{% if !l.smb.is_empty() %}<br><span class="help">SMB: {{ l.smb }}</span>{% endif %}</p>
+  {% when None %}<p class="help">No backup made yet.</p>
+  {% endmatch %}
+  <p class="help">{{ schedule }} · <a href="/admin/settings/7">Change</a></p>
+  <form method="post" action="/admin/backups/run" class="actions"><span class="help">Backups hold your settings and credentials (encrypted with M3USORT_KEY), library and wanted list. Keep your key safe as well: without it a backup can't be restored.</span><button class="btn" type="submit">Back up now</button></form>
+</div>
+
+<div class="card" style="padding:0">
+<table>
+  {% for b in backups %}
+  <tr><td>{{ b.when }}</td><td class="help">{{ b.size }}</td>
+    <td class="act"><a class="btn secondary" href="/admin/backups/download/{{ b.name }}">Download</a></td>
+    <td class="act"><form method="post" action="/admin/backups/delete/{{ b.name }}" style="margin:0" onsubmit="return confirm('Delete this backup?')"><button class="btn secondary" type="submit">Delete</button></form></td></tr>
+  {% endfor %}
+  {% if backups.is_empty() %}<tr><td class="help">No backups in /data/backups yet.</td></tr>{% endif %}
+</table>
+</div>
+
+<h2>Restore</h2>
+<div class="card">
+{% include "_restore.html" %}
+</div>
+<p class="help">Without the web page: <code>docker exec m3usort-rs m3usort restore /data/backups/&lt;file&gt;</code>, then restart the container.</p>
+{% endblock %}

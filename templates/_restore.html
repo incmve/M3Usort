@@ -1,0 +1,41 @@
+<div id="restore-box">
+  <label for="rfile">Backup file (.db.gz)</label>
+  <input type="file" id="rfile" accept=".gz,.db">
+  {% if ask_code %}<label for="rcode">Setup code</label>
+  <input type="text" id="rcode" autocomplete="off" placeholder="From the container log">{% endif %}
+  <label class="check"><input type="checkbox" id="rnocred"> The backup was made with another M3USORT_KEY: restore it without its stored credentials</label>
+  <p class="help">Normally the backup must have been made with the <strong>same M3USORT_KEY</strong> as in your .env now.
+  With the box ticked, everything else comes back (settings, library, wanted list, admin password) and you enter the provider,
+  Jellyfin, TMDB and SMB passwords again under Admin → Settings. It is checked first;
+  if it's fine, M3Usort restarts and replaces its database with the backup. The current database is kept as
+  <code>m3usort.db.before-restore-…</code> in the data folder.</p>
+  <div class="actions"><span id="rstatus" class="help"></span><button class="btn" type="button" id="rgo">Check and restore</button></div>
+</div>
+<script>
+(function () {
+  const go = document.getElementById('rgo'), st = document.getElementById('rstatus');
+  go.addEventListener('click', async () => {
+    const f = document.getElementById('rfile').files[0];
+    if (!f) { st.textContent = 'Choose a backup file first.'; return; }
+    const code = document.getElementById('rcode');
+    if (!confirm('Restore "' + f.name + '"? Everything changed since that backup is replaced.')) return;
+    go.disabled = true; st.textContent = 'Uploading and checking…';
+    try {
+      const r = await fetch('{{ restore_url }}', {method: 'POST', body: f,
+        headers: Object.assign({'Content-Type': 'application/octet-stream'},
+          code ? {'X-Setup-Code': code.value.trim()} : {},
+          document.getElementById('rnocred').checked ? {'X-Without-Credentials': '1'} : {})});
+      const j = await r.json();
+      if (!j.ok) { st.textContent = j.message; go.disabled = false; return; }
+      st.textContent = j.message + ' Restarting…';
+      const t0 = Date.now();
+      await new Promise(res => setTimeout(res, 3000));
+      for (;;) {
+        try { const h = await fetch('/healthcheck', {cache: 'no-store'}); if (h.ok) { location.href = '/'; return; } } catch (e) {}
+        if (Date.now() - t0 > 90000) { st.textContent = j.message + ' M3Usort did not come back by itself: start the container again.'; return; }
+        await new Promise(res => setTimeout(res, 2000));
+      }
+    } catch (e) { st.textContent = 'Upload failed: ' + e; go.disabled = false; }
+  });
+})();
+</script>

@@ -406,6 +406,9 @@ pub fn spawn_scheduler(st: AppState) {
             if let Err(e) = crate::account::maybe_check(&st).await {
                 tracing::debug!("account check: {e:#}");
             }
+            if let Err(e) = crate::backup::maybe_run_daily(&st).await {
+                tracing::warn!("backup scheduler: {e:#}");
+            }
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });

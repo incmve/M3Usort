@@ -46,8 +46,11 @@ is good enough.
    (`/3/search/movie?api_key=…&query=…&language=en-US`).
    A one-time setup code from the container log is required, so nobody else on the
    LAN can claim the admin account first.
-7. **Backup/restore:** backup = database snapshot (no key inside). Restore from the
-   wizard's first screen or Settings, needs the matching key.
+7. **Backup/restore:** backup = gzip'd database snapshot (`VACUUM INTO`, no key
+   inside), daily with retention, optional SMB copy (pure-Rust `smb2` client, no C
+   libraries). Restore from the wizard's first screen, Admin → Backups or the
+   `restore` CLI: checked (M3Usort DB, not newer, key matches), staged, applied at
+   the next start; old DB kept. With another key: opt-in restore without credentials.
 8. **Admin sessions:** signed cookie (HMAC-SHA256, key derived from `M3USORT_KEY`),
    7 days, `HttpOnly; SameSite=Strict`. A password change or `reset-admin` bumps a
    generation counter that logs out every session. Lockout per IP (5 tries / 30 min),
@@ -123,9 +126,16 @@ is good enough.
       video; Jellyfin DELETE /Items (which also deletes files), our .strm folder,
       and the library_movies/library_series row (else the VOD run re-adds series).
       If Jellyfin's delete fails, files are still removed and a library scan starts.
-- [ ] **7. Admin extras:** log viewer, file browser (bulk delete), DB backup/restore
-      (download + restore in the wizard), SMB backup with retention,
-      subscription expiry warning
+- [x] **7. Admin extras:** Admin tabs Settings · Logs · Files · Backups.
+      Logs: daily files in /data/logs (14 days), credentials in URLs masked (also in
+      docker logs); viewer with day, level, search, auto-refresh, download.
+      Files: browse movie/series folders, bulk delete of .strm content only; refuses
+      real video (also in season subfolders), paths outside the folder and symlink
+      escapes; deleted title folders leave the library list. Python could delete
+      real video files from its browser; this one can't.
+      Backups: see 7 above; settings step 7 (also in the wizard); tested against
+      Samba 4.19 (login, folder creation, write, retention).
+      Subscription: get_user_info every 6 h; dashboard card and warning from 30 days.
 - [ ] **8. Trusted networks + Python import:** guest access limited to configured
       networks; optional one-time import of the Python app's playlist groups and
       custom channels from its `config.py`

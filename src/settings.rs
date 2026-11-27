@@ -29,6 +29,14 @@ pub const TMDB_ENRICH_ENABLED: &str = "tmdb_enrich_enabled";
 pub const TMDB_ENRICH_TIME: &str = "tmdb_enrich_time";
 pub const CAST_ENRICH_ENABLED: &str = "cast_enrich_enabled";
 pub const CAST_ENRICH_TIME: &str = "cast_enrich_time";
+pub const BACKUP_ENABLED: &str = "backup_enabled";
+pub const BACKUP_TIME: &str = "backup_time";
+pub const BACKUP_KEEP: &str = "backup_keep";
+pub const SMB_ENABLED: &str = "smb_enabled";
+pub const SMB_HOST: &str = "smb_host";
+pub const SMB_SHARE: &str = "smb_share";
+pub const SMB_PATH: &str = "smb_path";
+pub const SMB_USERNAME: &str = "smb_username";
 
 // Secret names (encrypted, see crypto.rs).
 pub const SECRET_PROVIDER_USERNAME: &str = "provider_username";
@@ -37,11 +45,13 @@ pub const SECRET_PROVIDER_PASSWORD: &str = "provider_password";
 pub const LEGACY_SECRET_PROVIDER_URL: &str = "provider_url";
 pub const SECRET_JELLYFIN_API_KEY: &str = "jellyfin_api_key";
 pub const SECRET_TMDB_API_KEY: &str = "tmdb_api_key";
+pub const SECRET_SMB_PASSWORD: &str = "smb_password";
 pub const ALL_SECRETS: &[(&str, &str)] = &[
     (SECRET_PROVIDER_USERNAME, "Provider / proxy username"),
     (SECRET_PROVIDER_PASSWORD, "Provider / proxy password"),
     (SECRET_JELLYFIN_API_KEY, "Jellyfin API key"),
     (SECRET_TMDB_API_KEY, "TMDB API key"),
+    (SECRET_SMB_PASSWORD, "SMB password"),
 ];
 
 pub async fn get(pool: &SqlitePool, name: &str) -> anyhow::Result<Option<String>> {

@@ -150,6 +150,14 @@ pub fn app_router(state: AppState) -> Router {
         .route("/playlist/custom/add", post(custom_add_one))
         .route("/logout", post(logout))
         .route("/account/check", post(account_check))
+        .route("/backups", get(backups_page))
+        .route("/backups/run", post(backups_run))
+        .route("/backups/download/{name}", get(backups_download))
+        .route("/backups/delete/{name}", post(backups_delete))
+        .route(
+            "/backups/restore",
+            post(backups_restore).layer(axum::extract::DefaultBodyLimit::max(RESTORE_MAX_BYTES)),
+        )
         .route("/files", get(files_page))
         .route("/files/delete", post(files_delete))
         .route("/logs", get(logs_page))
@@ -185,6 +193,10 @@ pub fn app_router(state: AppState) -> Router {
         .route("/playlist/refresh", post(playlist_refresh))
         .route("/m3u/{file}", get(m3u_download))
         .route("/setup", get(setup::start))
+        .route(
+            "/setup/restore",
+            post(setup::restore).layer(axum::extract::DefaultBodyLimit::max(RESTORE_MAX_BYTES)),
+        )
         .route("/setup/summary", get(setup::summary))
         .route("/setup/finish", post(setup::finish))
         .route(
@@ -1597,6 +1609,41 @@ async fn admin_render(
                 ),
             ],
         ),
+        (
+            7,
+            setup::step_info(7).title,
+            vec![
+                (
+                    "Daily backup".into(),
+                    if all.get(s::BACKUP_ENABLED).is_none_or(|x| x == "1") {
+                        format!(
+                            "Yes ({}, keep {})",
+                            all.get(s::BACKUP_TIME)
+                                .cloned()
+                                .unwrap_or_else(|| crate::backup::DEFAULT_TIME.into()),
+                            all.get(s::BACKUP_KEEP)
+                                .cloned()
+                                .unwrap_or_else(|| crate::backup::DEFAULT_KEEP.to_string())
+                        )
+                    } else {
+                        "No".into()
+                    },
+                ),
+                (
+                    "SMB copy".into(),
+                    if yn(s::SMB_ENABLED) == "Yes" {
+                        format!(
+                            "\\\\{}\\{}\\{}",
+                            v(s::SMB_HOST),
+                            v(s::SMB_SHARE),
+                            all.get(s::SMB_PATH).cloned().unwrap_or_default()
+                        )
+                    } else {
+                        "No".into()
+                    },
+                ),
+            ],
+        ),
     ];
     let playlist_password_set = all
         .get(s::PLAYLIST_PASSWORD_HASH)
@@ -2251,5 +2298,169 @@ async fn files_delete(State(st): State<AppState>, body: String) -> Response {
         back("msg", &msg)
     } else {
         back("err", &format!("{msg} Not deleted: {}", refused.join("; ")))
+    }
+}
+
+// ------------------------------------------------------------------ backups (admin)
+
+/// Largest backup accepted for restore (the database compresses well; this is
+/// far above any real one).
+const RESTORE_MAX_BYTES: usize = 2 * 1024 * 1024 * 1024;
+
+#[derive(Template)]
+#[template(path = "backups.html")]
+struct BackupsTpl {
+    page: Page,
+    tab: &'static str,
+    message: String,
+    error: String,
+    last: Option<crate::backup::Last>,
+    last_when: String,
+    schedule: String,
+    backups: Vec<crate::backup::Local>,
+    ask_code: bool,
+    restore_url: &'static str,
+}
+
+#[derive(Deserialize)]
+struct MsgErrQuery {
+    msg: Option<String>,
+    err: Option<String>,
+}
+
+async fn backups_page(State(st): State<AppState>, Query(q): Query<MsgErrQuery>) -> Response {
+    let last = crate::backup::last(&st.db).await;
+    let all: std::collections::HashMap<String, String> = s::get_all(&st.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let enabled = all.get(s::BACKUP_ENABLED).is_none_or(|v| v == "1");
+    let mut schedule = if enabled {
+        format!(
+            "Daily at {}, keeping the newest {}",
+            all.get(s::BACKUP_TIME)
+                .cloned()
+                .unwrap_or_else(|| crate::backup::DEFAULT_TIME.into()),
+            all.get(s::BACKUP_KEEP)
+                .cloned()
+                .unwrap_or_else(|| crate::backup::DEFAULT_KEEP.to_string())
+        )
+    } else {
+        "Daily backup is off".to_string()
+    };
+    if all.get(s::SMB_ENABLED).map(String::as_str) == Some("1") {
+        schedule.push_str(&format!(
+            ", also copied to \\\\{}\\{}",
+            all.get(s::SMB_HOST).cloned().unwrap_or_default(),
+            all.get(s::SMB_SHARE).cloned().unwrap_or_default()
+        ));
+    }
+    let backups = tokio::task::spawn_blocking(crate::backup::list)
+        .await
+        .unwrap_or_default();
+    render(BackupsTpl {
+        page: Page::admin("Backups"),
+        tab: "backups",
+        message: q.msg.unwrap_or_default(),
+        error: q.err.unwrap_or_default(),
+        last_when: last
+            .as_ref()
+            .map(|l| catalog::ago(l.at))
+            .unwrap_or_default(),
+        last,
+        schedule,
+        backups,
+        ask_code: false,
+        restore_url: "/admin/backups/restore",
+    })
+}
+
+async fn backups_run(State(st): State<AppState>) -> Response {
+    let last = crate::backup::run(&st, "manual").await;
+    let text = if last.smb.is_empty() {
+        last.message.clone()
+    } else {
+        format!("{} — SMB: {}", last.message, last.smb)
+    };
+    if last.ok {
+        redirect_with_msg("/admin/backups", &text)
+    } else {
+        redirect_with_err("/admin/backups", &text)
+    }
+}
+
+async fn backups_download(Path(name): Path<String>) -> Response {
+    let Some(path) = crate::backup::local_path(&name) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "application/gzip".to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{name}\""),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn backups_delete(Path(name): Path<String>) -> Response {
+    match crate::backup::delete_local(&name) {
+        Ok(()) => redirect_with_msg("/admin/backups", "Backup deleted."),
+        Err(e) => redirect_with_err("/admin/backups", &format!("Delete failed: {e}")),
+    }
+}
+
+async fn backups_restore(headers: HeaderMap, body: axum::body::Bytes) -> Response {
+    restore_and_restart(body.to_vec(), without_credentials(&headers)).await
+}
+
+/// The restore form's "made with another key" box.
+pub fn without_credentials(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-without-credentials")
+        .and_then(|v| v.to_str().ok())
+        == Some("1")
+}
+
+/// Check and stage a backup, answer, then exit so Docker (restart policy)
+/// starts M3Usort again; at that start the backup replaces the database.
+pub async fn restore_and_restart(data: Vec<u8>, without_credentials: bool) -> Response {
+    let size = data.len();
+    match crate::backup::stage_restore(data, without_credentials).await {
+        Ok(info) => {
+            tracing::warn!(
+                "restore: backup accepted ({}), restarting to put it in place",
+                crate::files::human(size as u64)
+            );
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                std::process::exit(0);
+            });
+            let creds = if info.without_credentials {
+                "made with another key: restored without its credentials; enter the provider (and other) passwords again under Admin → Settings".to_string()
+            } else {
+                format!("{} credential(s)", info.secrets)
+            };
+            Json(serde_json::json!({
+                "ok": true,
+                "message": format!(
+                    "Backup OK ({creds}; {} movie(s) and {} series in the library, {} catalog titles).",
+                    info.library_movies, info.library_series, info.catalog
+                )
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            tracing::warn!("restore refused: {e:#}");
+            Json(serde_json::json!({"ok": false, "message": format!("Not restored: {e:#}")}))
+                .into_response()
+        }
     }
 }

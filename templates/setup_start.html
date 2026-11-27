@@ -7,8 +7,13 @@
   <strong>Nothing is saved until you click Finish.</strong></p>
   <p>You need the <strong>setup code</strong> from the container log (Arcane → container → Logs).</p>
   <div class="actions">
-    <button class="btn secondary" disabled title="Comes with backup/restore in a later version">Restore from backup (later)</button>
+    <a class="btn secondary" href="#restore" onclick="document.getElementById('restore').hidden=false">Restore from backup</a>
     <a class="btn" href="/setup/1">New install →</a>
   </div>
 </div>
+<div class="card" id="restore" hidden>
+  <h2 style="margin-top:0">Restore from a backup</h2>
+  {% include "_restore.html" %}
+</div>
+<script>if (location.hash === '#restore') document.getElementById('restore').hidden = false;</script>
 {% endblock %}

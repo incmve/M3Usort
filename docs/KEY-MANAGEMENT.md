@@ -89,8 +89,8 @@ the error page, and `/healthcheck` returns 503, so Arcane shows it as unhealthy.
 
 Do this when the key may have leaked (for example `.env` was shared or committed).
 
-1. **Make a backup first**: until the backup feature exists, stop the app and copy the
-   data folder. Keep the current key with it.
+1. **Make a backup first**: Admin → Backups → *Back up now* (or keep the latest
+   daily one). Keep the current key with it.
 2. Stop the app. Rotation refuses to run while the app is up, because the running app
    would keep writing with the old key:
    ```
@@ -123,15 +123,40 @@ Do this when the key may have leaked (for example `.env` was shared or committed
 If step 3 fails ("does not match this database"), `.env` does not contain the key
 this database was set up with. Nothing was changed.
 
-## Backup and restore *(planned)*
+## Backup and restore
 
-- A backup is a copy of the database (made with SQLite `VACUUM INTO`, consistent
-  even while the app runs). It does **not** contain the key.
-- Restoring needs the backup file **and the key that was active when the backup was
-  made**. The restore screen checks the key against the backup before overwriting
-  anything.
-- Backup without the matching key: catalog, wanted lists and settings come back;
-  credentials must be re-entered.
+**What a backup is.** A consistent copy of the whole database (SQLite `VACUUM INTO`,
+safe while the app runs), gzip-compressed:
+`/data/backups/m3usort-backup-YYYY-MM-DD_HHMM.db.gz`. It holds settings, library,
+wanted list, playlist choices, the admin password (as an Argon2id hash) and the
+credentials, **encrypted with the key**. The key itself is never in a backup.
+
+**When.** Daily at a time you choose (default 02:30), keeping the newest N (default 7),
+set under Admin → Settings → Backups. *Back up now* on Admin → Backups makes one any
+time. Optionally every backup is also copied to an SMB share (NAS) with the same
+retention there; the settings page tests the share by writing a small file.
+
+**Restore**, three ways. Each checks the file first and changes nothing if it's wrong:
+- Admin → Backups → *Restore*: upload a backup.
+- First run (fresh install): the wizard's first page → *Restore from backup*. Needs
+  the setup code from the container log, like the wizard itself.
+- Command line: `docker exec m3usort-rs m3usort restore /data/backups/<file>`, then
+  restart the container.
+
+The check refuses a file that isn't an M3Usort backup, one made by a **newer**
+M3Usort (update first; older backups are upgraded automatically), and one made with
+a **different key**. When the check passes, M3Usort restarts (Docker's restart
+policy brings it back) and the backup replaces the database. The previous database
+is kept in the data folder as `m3usort.db.before-restore-<time>` (the newest 3).
+
+**Restoring needs the key that was active when the backup was made.** So keep every
+key you ever used, labelled with the date, as long as you keep backups from that time.
+
+**Backup made with another key** (key lost or rotated): tick *made with another
+M3USORT_KEY* (or add `--without-credentials` on the command line). Everything comes
+back except the stored credentials; the app binds the backup to your current key, and
+you enter the provider, Jellyfin, TMDB and SMB passwords again under Admin → Settings.
+The admin password stays as it was in the backup.
 
 ## Viewing stored credentials
 

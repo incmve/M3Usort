@@ -23,7 +23,7 @@ use crate::settings as s;
 use crate::web::{AppState, Page};
 
 pub const SETUP_COOKIE: &str = "m3usort_setup";
-pub const LAST_STEP: u8 = 6;
+pub const LAST_STEP: u8 = 7;
 /// Provider is the last required step; after it, Finish is allowed.
 const REQUIRED_STEPS: u8 = 2;
 
@@ -59,6 +59,16 @@ pub struct Draft {
     tmdb_enrich_time: String,
     cast_enrich_enabled: bool,
     cast_enrich_time: String,
+    backup_enabled: bool,
+    backup_time: String,
+    backup_keep: String,
+    smb_enabled: bool,
+    smb_host: String,
+    smb_share: String,
+    smb_path: String,
+    smb_username: String,
+    smb_password: String,
+    smb_result: String,
     /// Highest step completed, so you can't skip the required ones.
     done: u8,
 }
@@ -92,6 +102,16 @@ impl Default for Draft {
             tmdb_enrich_time: "03:00".into(),
             cast_enrich_enabled: false,
             cast_enrich_time: "04:00".into(),
+            backup_enabled: true,
+            backup_time: crate::backup::DEFAULT_TIME.into(),
+            backup_keep: crate::backup::DEFAULT_KEEP.to_string(),
+            smb_enabled: false,
+            smb_host: String::new(),
+            smb_share: String::new(),
+            smb_path: String::new(),
+            smb_username: String::new(),
+            smb_password: String::new(),
+            smb_result: String::new(),
             done: 0,
         }
     }
@@ -162,6 +182,18 @@ impl Draft {
             tmdb_enrich_time: txt(s::TMDB_ENRICH_TIME, &d.tmdb_enrich_time),
             cast_enrich_enabled: flag(s::CAST_ENRICH_ENABLED),
             cast_enrich_time: txt(s::CAST_ENRICH_TIME, &d.cast_enrich_time),
+            backup_enabled: all
+                .get(s::BACKUP_ENABLED)
+                .map_or(d.backup_enabled, |v| v == "1"),
+            backup_time: txt(s::BACKUP_TIME, &d.backup_time),
+            backup_keep: txt(s::BACKUP_KEEP, &d.backup_keep),
+            smb_enabled: flag(s::SMB_ENABLED),
+            smb_host: txt(s::SMB_HOST, ""),
+            smb_share: txt(s::SMB_SHARE, ""),
+            smb_path: txt(s::SMB_PATH, ""),
+            smb_username: txt(s::SMB_USERNAME, ""),
+            smb_password: secret(s::SECRET_SMB_PASSWORD).await,
+            smb_result: String::new(),
             done: LAST_STEP,
         })
     }
@@ -271,9 +303,14 @@ pub fn step_info(step: u8) -> StepInfo {
             title: "TMDB (optional)",
             intro: "Used for posters, cast and actor search. Free key at themoviedb.org → Settings → API. Leave empty to skip.",
         },
-        _ => StepInfo {
+        6 => StepInfo {
             title: "Schedules (optional)",
             intro: "How often playlists and VOD are refreshed. The defaults are fine; you can change them later.",
+        },
+        _ => StepInfo {
+            title: "Backups (optional)",
+            intro: "A daily copy of the database (settings, encrypted credentials, library, wanted list) in /data/backups. \
+                    Optionally also copied to an SMB share (NAS). Restoring needs the same M3USORT_KEY.",
         },
     }
 }
@@ -394,7 +431,7 @@ fn fields(step: u8, d: &Draft, in_wizard: bool) -> Vec<Field> {
             "The \"API Key\" (v3) from themoviedb.org, same as the Python version uses. A v4 read access token also works.",
             &d.tmdb_api_key,
         )],
-        _ => vec![
+        6 => vec![
             Field::number(
                 "playlist_refresh_hours",
                 "Refresh playlist every (hours)",
@@ -471,6 +508,46 @@ fn fields(step: u8, d: &Draft, in_wizard: bool) -> Vec<Field> {
                 "Cast enrichment time",
                 &d.cast_enrich_time,
             ),
+        ],
+        _ => vec![
+            Field::checkbox(
+                "backup_enabled",
+                "Daily backup",
+                "To /data/backups inside the container",
+                d.backup_enabled,
+            ),
+            Field::time("backup_time", "Backup time", &d.backup_time),
+            Field::number("backup_keep", "Keep backups", &d.backup_keep, 1, 365),
+            Field::checkbox(
+                "smb_enabled",
+                "Also copy to an SMB share",
+                "After every backup, with the same number kept there",
+                d.smb_enabled,
+            ),
+            Field::text(
+                "smb_host",
+                "SMB host",
+                "Name or IP of the NAS, e.g. 192.168.0.20 (port 445; add :port for another)",
+                &d.smb_host,
+            ),
+            Field::text("smb_share", "SMB share", "e.g. backups", &d.smb_share),
+            Field::text(
+                "smb_path",
+                "Folder in the share (optional)",
+                "e.g. m3usort. Created when missing.",
+                &d.smb_path,
+            ),
+            Field::text("smb_username", "SMB username", "", &d.smb_username),
+            if !in_wizard && !d.smb_password.is_empty() {
+                Field::password(
+                    "smb_password",
+                    "SMB password",
+                    "Set. Leave empty to keep it. Untick the SMB copy to remove it.",
+                    "",
+                )
+            } else {
+                Field::password("smb_password", "SMB password", "", &d.smb_password)
+            },
         ],
     }
 }
@@ -584,6 +661,47 @@ pub async fn apply_step(
             d.cast_enrich_time = f("cast_enrich_time");
             validate_schedules(d)
         }
+        7 => {
+            d.backup_enabled = on("backup_enabled");
+            d.backup_time = f("backup_time");
+            d.backup_keep = f("backup_keep");
+            d.smb_enabled = on("smb_enabled");
+            d.smb_host = f("smb_host");
+            d.smb_share = f("smb_share");
+            d.smb_path = f("smb_path");
+            d.smb_username = f("smb_username");
+            // Password used as typed (no trim).
+            let pass_in = form.get("smb_password").cloned().unwrap_or_default();
+            if !(keep_secrets && pass_in.is_empty()) {
+                d.smb_password = pass_in;
+            }
+            if !is_hh_mm(&d.backup_time) {
+                return Err("Backup time must be HH:MM (24-hour).".into());
+            }
+            if !d
+                .backup_keep
+                .parse::<u32>()
+                .is_ok_and(|n| (1..=365).contains(&n))
+            {
+                return Err("Keep backups must be a number from 1 to 365.".into());
+            }
+            if !d.smb_enabled {
+                d.smb_result = "Not used".into();
+                return Ok(());
+            }
+            if d.smb_host.is_empty() || d.smb_share.is_empty() {
+                return Err("Fill in the SMB host and share, or untick the SMB copy.".into());
+            }
+            d.smb_result = crate::backup::smb_test(&crate::backup::smb_config(
+                &d.smb_host,
+                &d.smb_share,
+                &d.smb_path,
+                &d.smb_username,
+                &d.smb_password,
+            ))
+            .await?;
+            Ok(())
+        }
         _ => Err("Unknown step".into()),
     }
 }
@@ -667,6 +785,14 @@ pub async fn save_draft(
         (s::TMDB_ENRICH_TIME, d.tmdb_enrich_time.clone()),
         (s::CAST_ENRICH_ENABLED, b(d.cast_enrich_enabled)),
         (s::CAST_ENRICH_TIME, d.cast_enrich_time.clone()),
+        (s::BACKUP_ENABLED, b(d.backup_enabled)),
+        (s::BACKUP_TIME, d.backup_time.clone()),
+        (s::BACKUP_KEEP, d.backup_keep.clone()),
+        (s::SMB_ENABLED, b(d.smb_enabled)),
+        (s::SMB_HOST, d.smb_host.clone()),
+        (s::SMB_SHARE, d.smb_share.clone()),
+        (s::SMB_PATH, d.smb_path.clone()),
+        (s::SMB_USERNAME, d.smb_username.clone()),
     ];
     for (name, value) in &plain {
         s::set(&mut **tx, name, value).await?;
@@ -709,6 +835,11 @@ pub async fn save_draft(
     } else {
         s::set_secret(&mut **tx, &st.key, s::SECRET_TMDB_API_KEY, &d.tmdb_api_key).await?;
     }
+    if d.smb_enabled && !d.smb_password.is_empty() {
+        s::set_secret(&mut **tx, &st.key, s::SECRET_SMB_PASSWORD, &d.smb_password).await?;
+    } else {
+        s::delete_secret(&mut **tx, s::SECRET_SMB_PASSWORD).await?;
+    }
     Ok(())
 }
 
@@ -718,6 +849,8 @@ pub async fn save_draft(
 #[template(path = "setup_start.html")]
 struct StartTpl {
     page: Page,
+    ask_code: bool,
+    restore_url: &'static str,
 }
 
 /// One form page. Used by the wizard and by Admin → Settings sections.
@@ -810,7 +943,39 @@ pub async fn start(State(st): State<AppState>) -> Response {
     }
     render(StartTpl {
         page: Page::new("Setup"),
+        ask_code: true,
+        restore_url: "/setup/restore",
     })
+}
+
+/// First run: restore a backup instead of a new install. Needs the setup code
+/// (as the wizard), and only works while setup isn't finished.
+pub async fn restore(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let reply = |ok: bool, message: String| {
+        axum::Json(serde_json::json!({"ok": ok, "message": message})).into_response()
+    };
+    if st.is_setup_done() {
+        return reply(
+            false,
+            "Setup is already finished; restore under Admin → Backups.".into(),
+        );
+    }
+    let code = headers
+        .get("x-setup-code")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .trim();
+    if code.is_empty() || !code.eq_ignore_ascii_case(&st.setup_code) {
+        return reply(
+            false,
+            "Wrong setup code. It is in the container log as \"Setup code: …\".".into(),
+        );
+    }
+    crate::web::restore_and_restart(body.to_vec(), crate::web::without_credentials(&headers)).await
 }
 
 /// Current draft for this browser, if the setup cookie matches.
@@ -1047,6 +1212,21 @@ fn summary_rows(d: &Draft) -> Vec<(String, String)> {
                 format!("daily at {}", d.cast_enrich_time),
             ),
         ),
+        (
+            "Backups".into(),
+            on_off(
+                d.backup_enabled,
+                format!("daily at {}, keep {}", d.backup_time, d.backup_keep),
+            ),
+        ),
+        (
+            "SMB copy".into(),
+            if d.smb_enabled {
+                d.smb_result.clone()
+            } else {
+                "Off".into()
+            },
+        ),
     ]
 }
 
@@ -1180,6 +1360,7 @@ pub async fn admin_section_save(
                 2 => d.provider_result.clone(),
                 4 => d.jellyfin_result.clone(),
                 5 => d.tmdb_result.clone(),
+                7 => d.smb_result.clone(),
                 _ => String::new(),
             };
             let msg = if result.is_empty() {
