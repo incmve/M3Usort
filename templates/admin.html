@@ -41,7 +41,7 @@
 <form method="post" action="/admin/playlist-password" class="card" autocomplete="off">
   <label for="p_cur">Current admin password</label><input type="password" id="p_cur" name="current" autocomplete="current-password">
   <label for="p_new">{% if playlist_password_set %}New playlist password{% else %}Playlist password{% endif %}</label><input type="password" id="p_new" name="new" autocomplete="new-password">
-  <label for="p_new2">New playlist password (again)</label><input type="password" id="p_new2" name="new2" autocomplete="new-password">
+  <label for="p_new2">{% if playlist_password_set %}New playlist password{% else %}Playlist password{% endif %} (again)</label><input type="password" id="p_new2" name="new2" autocomplete="new-password">
   <div class="actions"><span></span><button class="btn" type="submit">{% if playlist_password_set %}Change{% else %}Set{% endif %}</button></div>
 </form>
 {% endblock %}
