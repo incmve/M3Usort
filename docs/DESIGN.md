@@ -124,8 +124,15 @@ is good enough.
       and the library_movies/library_series row (else the VOD run re-adds series).
       If Jellyfin's delete fails, files are still removed and a library scan starts.
 - [ ] **7. Admin extras:** log viewer, file browser (bulk delete), DB backup/restore
-      (download + restore in the wizard), SMB backup with retention, Gluetun card,
+      (download + restore in the wizard), SMB backup with retention,
       subscription expiry warning
 - [ ] **8. Trusted networks + Python import:** guest access limited to configured
       networks; optional one-time import of the Python app's playlist groups and
       custom channels from its `config.py`
+
+### Nice to have
+
+- Gluetun card (VPN status, public IP). Gluetun and the IPTV proxy run on their
+  own LXC; M3Usort runs on the Jellyfin LXC. Needs Gluetun's control server
+  (port 8001) reachable from the M3Usort LXC, preferably with an API key.
+- Live TV player in the browser.
