@@ -1,0 +1,6 @@
+<nav class="subnav">
+  <a href="/admin"{% if tab == "settings" %} class="on"{% endif %}>Settings</a>
+  <a href="/admin/logs"{% if tab == "logs" %} class="on"{% endif %}>Logs</a>
+  <a href="/admin/files"{% if tab == "files" %} class="on"{% endif %}>Files</a>
+  <a href="/admin/backups"{% if tab == "backups" %} class="on"{% endif %}>Backups</a>
+</nav>

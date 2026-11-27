@@ -24,7 +24,16 @@ const SERIES_CALL_DELAY: Duration = Duration::from_millis(500);
 /// (the Python version would add all of them, e.g. "the" → thousands of folders).
 const MAX_STRING_MATCHES: usize = 25;
 const FUZZY_THRESHOLD: f64 = 75.0;
-const VIDEO_EXTS: &[&str] = &["mkv", "mp4", "avi", "m4v"];
+/// Real video files (anything Jellyfin would play besides .strm).
+pub const VIDEO_EXTS: &[&str] = &[
+    "mkv", "mp4", "avi", "m4v", "ts", "m2ts", "mts", "mov", "wmv", "mpg", "mpeg", "webm", "flv",
+    "vob", "iso", "divx", "ogm", "3gp", "rmvb",
+];
+
+pub fn is_video_name(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| VIDEO_EXTS.contains(&ext.to_lowercase().as_str()))
+}
 
 // ------------------------------------------------------------------ run summary
 
@@ -581,25 +590,21 @@ enum Content {
     Mixed,
 }
 
+/// What a folder holds, including subfolders (season folders), so a real
+/// video one level down still counts.
 async fn folder_content(dir: &Path) -> std::io::Result<Content> {
-    let mut rd = tokio::fs::read_dir(dir).await?;
-    let (mut strm, mut video, mut any) = (false, false, false);
-    while let Some(e) = rd.next_entry().await? {
-        any = true;
-        let name = e.file_name().to_string_lossy().to_lowercase();
-        let ext = name.rsplit('.').next().unwrap_or("");
-        if ext == "strm" {
-            strm = true;
-        } else if VIDEO_EXTS.contains(&ext) {
-            video = true;
-        }
-    }
-    Ok(match (any, strm, video) {
-        (false, _, _) => Content::Empty,
-        (_, true, true) => Content::Mixed,
-        (_, false, true) => Content::VideoOnly,
-        _ => Content::StrmOnly,
-    })
+    let dir = dir.to_path_buf();
+    let scan = tokio::task::spawn_blocking(move || crate::files::scan(&dir))
+        .await
+        .map_err(std::io::Error::other)??;
+    Ok(
+        match (scan.files + scan.dirs > 0, scan.strm > 0, scan.video > 0) {
+            (false, _, _) => Content::Empty,
+            (_, true, true) => Content::Mixed,
+            (_, false, true) => Content::VideoOnly,
+            _ => Content::StrmOnly,
+        },
+    )
 }
 
 /// True when a folder holds real video files (not only .strm).

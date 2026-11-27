@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+{% include "_adminnav.html" %}
+<form method="get" action="/admin/logs" class="filters" id="logform">
+  <select name="date" onchange="this.form.submit()">
+    {% for d in dates %}<option value="{{ d }}"{% if d.as_str() == date.as_str() %} selected{% endif %}>{{ d }}{% if loop.first %} (today){% endif %}</option>{% endfor %}
+  </select>
+  <select name="level" onchange="this.form.submit()">
+    <option value="DEBUG"{% if level == "DEBUG" %} selected{% endif %}>All levels</option>
+    <option value="INFO"{% if level == "INFO" %} selected{% endif %}>Info and up</option>
+    <option value="WARN"{% if level == "WARN" %} selected{% endif %}>Warnings and errors</option>
+    <option value="ERROR"{% if level == "ERROR" %} selected{% endif %}>Errors only</option>
+  </select>
+  <input type="search" name="q" value="{{ q }}" placeholder="Search…" style="flex:1 1 14rem;width:auto">
+  <button class="btn secondary" type="submit">Filter</button>
+  <label class="check" style="margin:0"><input type="checkbox" id="live"{% if live %} checked{% endif %}> Auto-refresh</label>
+  {% if !date.is_empty() %}<a class="btn secondary" href="/admin/logs/download?date={{ date }}">Download</a>{% endif %}
+</form>
+{% if !note.is_empty() %}<p class="help">{{ note }}</p>{% endif %}
+<p class="help">{{ total }} line(s){% if pages > 1 %} · page {{ page_no }} of {{ pages }}{% endif %} · newest first · kept {{ keep_days }} days · passwords in URLs are masked</p>
+<div class="card logbox">
+{% if lines.is_empty() %}<p class="help">No lines.</p>{% endif %}
+{% for l in lines %}<div class="ll lv-{{ l.level }}"><span class="t">{{ l.time }}</span><span class="lv">{{ l.level }}</span><span class="x">{{ l.text }}</span></div>
+{% endfor %}
+</div>
+{% if pages > 1 %}<div class="actions">
+  {% if page_no > 1 %}<a class="btn secondary" href="{{ base_url }}&page={{ page_no - 1 }}">Newer</a>{% else %}<span></span>{% endif %}
+  {% if page_no < pages %}<a class="btn secondary" href="{{ base_url }}&page={{ page_no + 1 }}">Older</a>{% endif %}
+</div>{% endif %}
+<style>
+.logbox{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;padding:.6rem .8rem;overflow-x:auto}
+.ll{display:flex;gap:.7rem;padding:.12rem 0;border-bottom:1px solid #1d2028;white-space:pre-wrap;word-break:break-word}
+.ll .t{color:var(--muted);flex:none}.ll .lv{flex:none;width:3.2rem;font-weight:600}.ll .x{flex:1}
+.lv-ERROR .lv{color:#ff8a8a}.lv-ERROR .x{color:#ffc4c4}.lv-WARN .lv{color:#e8c987}.lv-INFO .lv{color:#7cc4ff}.lv-DEBUG .lv{color:#8a8f99}
+</style>
+<script>
+(function () {
+  const live = document.getElementById('live');
+  let timer = null;
+  function arm() {
+    clearTimeout(timer);
+    if (live.checked) timer = setTimeout(() => {
+      const u = new URL(location.href); u.searchParams.set('live', '1'); u.searchParams.delete('page'); location.replace(u);
+    }, 5000);
+  }
+  live.addEventListener('change', () => {
+    const u = new URL(location.href);
+    if (live.checked) u.searchParams.set('live', '1'); else u.searchParams.delete('live');
+    history.replaceState(null, '', u); arm();
+  });
+  arm();
+})();
+</script>
+{% endblock %}

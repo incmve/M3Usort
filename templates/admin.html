@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Admin</h1>
+{% include "_adminnav.html" %}
 {% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
 {% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
 

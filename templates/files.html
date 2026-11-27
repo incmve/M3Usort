@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+{% include "_adminnav.html" %}
+{% if !message.is_empty() %}<div class="msg ok">{{ message }}</div>{% endif %}
+{% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
+<div class="filters">
+  <a class="btn{% if root != "movies" %} secondary{% endif %}" href="/admin/files?root=movies">Movies</a>
+  <a class="btn{% if root != "series" %} secondary{% endif %}" href="/admin/files?root=series">Series</a>
+  <input type="search" id="ff" placeholder="Filter {{ entries.len() }} item(s)…" style="flex:1 1 14rem;width:auto">
+</div>
+<p class="help"><a href="/admin/files?root={{ root }}">{{ root_dir }}</a>{% for (label, link) in crumbs %} / <a href="{{ link }}">{{ label }}</a>{% endfor %}</p>
+{% if !root_dir.is_empty() %}
+<form method="post" action="/admin/files/delete" id="fform">
+  <input type="hidden" name="root" value="{{ root }}">
+  <input type="hidden" name="path" value="{{ path }}">
+  <div class="card" style="padding:0">
+  <table class="files">
+    <tr><th style="width:2rem"><input type="checkbox" id="fall" title="Select all shown"></th><th>Name</th><th>Content</th><th>Size</th><th>Modified</th></tr>
+    {% if !path.is_empty() %}<tr><td></td><td colspan="4"><a href="{{ up_link }}">⬑ Up</a></td></tr>{% endif %}
+    {% for e in entries %}
+    <tr class="fr" data-name="{{ e.name.to_lowercase() }}">
+      <td>{% if e.deletable %}<input type="checkbox" name="name" value="{{ e.name }}">{% else %}<span title="Holds real video files; not deleted from here">🔒</span>{% endif %}</td>
+      <td>{% if e.is_dir %}📁 <a href="{{ self_link }}{{ e.name|urlencode }}">{{ e.name }}</a>{% else %}{{ e.name }}{% endif %}{% if e.in_library %} <span class="badge on" title="In M3Usort's library">library</span>{% endif %}</td>
+      <td><span class="badge k-{{ e.kind }}">{% if e.kind == "strm" %}.strm{% else if e.kind == "video" %}video{% else if e.kind == "mixed" %}.strm + video{% else if e.kind == "empty" %}empty{% else %}other{% endif %}</span> <span class="help">{{ e.detail }}</span></td>
+      <td class="help">{{ e.size }}</td>
+      <td class="help">{{ e.modified }}</td>
+    </tr>
+    {% endfor %}
+    {% if entries.is_empty() %}<tr><td></td><td colspan="4" class="help">Empty folder.</td></tr>{% endif %}
+  </table>
+  </div>
+  <div class="actions"><span class="help"><span id="fsel">0</span> selected. Folders with real video files (🔒) and video files are never deleted here.</span>
+    <button class="btn danger" type="submit" id="fdel" disabled>Delete selected</button></div>
+</form>
+{% endif %}
+<style>
+table.files th{text-align:left;color:var(--muted);font-weight:500;font-size:.85rem}
+table.files td,table.files th{padding:.4rem .6rem;word-break:normal}
+table.files td:first-child,table.files th:first-child{width:2rem;color:inherit}
+table.files td:nth-child(2){word-break:break-word}
+table.files td:nth-child(4),table.files td:nth-child(5){white-space:nowrap}
+.badge.k-strm{background:#1f2f3a;color:#7cc4ff}.badge.k-video{background:#3a1f1f;color:#ffb0b0}.badge.k-mixed{background:#3a321f;color:#e8c987}
+.badge.k-empty,.badge.k-other{background:#2a2e38;color:#c8ccd4}
+.btn.danger{background:#8e2f2f;border-color:#8e2f2f;color:#fff}.btn.danger:disabled{opacity:.5}
+</style>
+<script>
+(function () {
+  const form = document.getElementById('fform'); if (!form) return;
+  const rows = [...form.querySelectorAll('tr.fr')];
+  const boxes = () => [...form.querySelectorAll('input[name=name]')];
+  const sel = document.getElementById('fsel'), del = document.getElementById('fdel'), all = document.getElementById('fall');
+  function update() { const n = boxes().filter(b => b.checked).length; sel.textContent = n; del.disabled = n === 0; }
+  form.addEventListener('change', update);
+  all.addEventListener('change', () => { boxes().forEach(b => { if (b.closest('tr').style.display !== 'none') b.checked = all.checked; }); update(); });
+  document.getElementById('ff').addEventListener('input', (ev) => {
+    const q = ev.target.value.toLowerCase();
+    rows.forEach(r => { r.style.display = r.dataset.name.includes(q) ? '' : 'none'; });
+  });
+  form.addEventListener('submit', (ev) => {
+    const n = boxes().filter(b => b.checked).length;
+    if (!confirm('Delete ' + n + ' item(s)? Deleted title folders are also taken off M3Usort\'s library list.')) ev.preventDefault();
+  });
+})();
+</script>
+{% endblock %}

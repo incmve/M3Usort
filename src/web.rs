@@ -150,6 +150,10 @@ pub fn app_router(state: AppState) -> Router {
         .route("/playlist/custom/add", post(custom_add_one))
         .route("/logout", post(logout))
         .route("/account/check", post(account_check))
+        .route("/files", get(files_page))
+        .route("/files/delete", post(files_delete))
+        .route("/logs", get(logs_page))
+        .route("/logs/download", get(logs_download))
         .route("/jellyfin", get(jellyfin_page))
         .route("/jellyfin/img/{id}", get(jellyfin_img))
         .route("/jellyfin/seasons/{id}", get(jellyfin_seasons))
@@ -1462,6 +1466,7 @@ struct AdminTpl {
     playlist_password_set: bool,
     account: Option<crate::account::View>,
     warn_days: i64,
+    tab: &'static str,
 }
 
 async fn admin_render(
@@ -1605,6 +1610,7 @@ async fn admin_render(
         playlist_password_set,
         account: crate::account::view(&st.db).await,
         warn_days: crate::account::WARN_DAYS,
+        tab: "settings",
     })
 }
 
@@ -1936,5 +1942,314 @@ async fn jellyfin_remove(State(st): State<AppState>, Path(id): Path<String>) -> 
     match crate::jellyfin::remove(&st, &id).await {
         Ok(m) => Json(serde_json::json!({"ok": true, "message": m})).into_response(),
         Err(e) => Json(serde_json::json!({"ok": false, "message": e})).into_response(),
+    }
+}
+
+// ------------------------------------------------------------------ log viewer (admin)
+
+const LOG_LINES_PER_PAGE: usize = 300;
+
+#[derive(Template)]
+#[template(path = "logs.html")]
+struct LogsTpl {
+    page: Page,
+    tab: &'static str,
+    dates: Vec<String>,
+    date: String,
+    level: String,
+    q: String,
+    live: bool,
+    lines: Vec<crate::logfile::Line>,
+    total: usize,
+    page_no: usize,
+    pages: usize,
+    base_url: String,
+    note: String,
+    keep_days: i64,
+}
+
+#[derive(Deserialize)]
+struct LogsQuery {
+    date: Option<String>,
+    level: Option<String>,
+    q: Option<String>,
+    page: Option<usize>,
+    live: Option<String>,
+}
+
+async fn logs_page(Query(q): Query<LogsQuery>) -> Response {
+    let mut dates = crate::logfile::dates();
+    let today = crate::localtime::today();
+    if !dates.contains(&today) {
+        dates.insert(0, today.clone());
+    }
+    let date = q.date.filter(|d| dates.contains(d)).unwrap_or(today);
+    let level = match q.level.as_deref() {
+        Some(l @ ("DEBUG" | "INFO" | "WARN" | "ERROR")) => l.to_string(),
+        _ => "INFO".to_string(),
+    };
+    let search = q.q.unwrap_or_default();
+    let note = if crate::logfile::dir().is_none() {
+        "Log files are off (the data folder isn't writable); only docker logs has the output."
+            .to_string()
+    } else {
+        String::new()
+    };
+    let (d2, l2, s2) = (date.clone(), level.clone(), search.clone());
+    let all = tokio::task::spawn_blocking(move || crate::logfile::read(&d2, &l2, &s2))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default();
+    let total = all.len();
+    let pages = total.div_ceil(LOG_LINES_PER_PAGE).max(1);
+    let page_no = q.page.unwrap_or(1).clamp(1, pages);
+    let lines: Vec<_> = all
+        .into_iter()
+        .skip((page_no - 1) * LOG_LINES_PER_PAGE)
+        .take(LOG_LINES_PER_PAGE)
+        .collect();
+    let base_url = format!(
+        "/admin/logs?{}",
+        url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("date", &date)
+            .append_pair("level", &level)
+            .append_pair("q", &search)
+            .finish()
+    );
+    render(LogsTpl {
+        page: Page::admin("Logs"),
+        tab: "logs",
+        dates,
+        date,
+        level,
+        q: search,
+        live: q.live.is_some(),
+        lines,
+        total,
+        page_no,
+        pages,
+        base_url,
+        note,
+        keep_days: crate::logfile::LOG_DAYS,
+    })
+}
+
+#[derive(Deserialize)]
+struct DateQuery {
+    date: Option<String>,
+}
+
+async fn logs_download(Query(q): Query<DateQuery>) -> Response {
+    let date = q.date.unwrap_or_else(crate::localtime::today);
+    let Some(path) = crate::logfile::file_for(&date) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [
+                (
+                    header::CONTENT_TYPE,
+                    "text/plain; charset=utf-8".to_string(),
+                ),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"m3usort-{date}.log\""),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+// ------------------------------------------------------------------ file browser (admin)
+
+#[derive(Template)]
+#[template(path = "files.html")]
+struct FilesTpl {
+    page: Page,
+    tab: &'static str,
+    message: String,
+    error: String,
+    root: &'static str,
+    root_dir: String,
+    path: String,
+    crumbs: Vec<(String, String)>,
+    up_link: String,
+    self_link: String,
+    entries: Vec<crate::files::Entry>,
+}
+
+#[derive(Deserialize)]
+struct FilesQuery {
+    root: Option<String>,
+    path: Option<String>,
+    msg: Option<String>,
+    err: Option<String>,
+}
+
+fn files_link(root: &str, path: &str) -> String {
+    format!(
+        "/admin/files?{}",
+        url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("root", root)
+            .append_pair("path", path)
+            .finish()
+    )
+}
+
+async fn files_page(State(st): State<AppState>, Query(q): Query<FilesQuery>) -> Response {
+    use crate::files::{Root, clean_rel, list, root_dir};
+    let root = q
+        .root
+        .as_deref()
+        .and_then(Root::parse)
+        .unwrap_or(Root::Movies);
+    let rel = q.path.as_deref().and_then(clean_rel).unwrap_or_default();
+    let path = rel.to_string_lossy().to_string();
+    let mut error = q.err.unwrap_or_default();
+    let mut entries = Vec::new();
+    let base = root_dir(&st, root).await;
+    match &base {
+        None => {
+            error = format!(
+                "No {} folder set (Admin → Settings → Folders).",
+                if root == Root::Movies {
+                    "movies"
+                } else {
+                    "series"
+                }
+            )
+        }
+        Some(base) => {
+            let table = if root == Root::Movies {
+                "library_movies"
+            } else {
+                "library_series"
+            };
+            let lib: std::collections::HashSet<String> =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT folder FROM {table}")))
+                    .fetch_all(&st.db)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+            let (b, r) = (base.clone(), rel.clone());
+            match tokio::task::spawn_blocking(move || list(&b, &r, &lib)).await {
+                Ok(Ok(e)) => entries = e,
+                Ok(Err(e)) => error = e,
+                Err(e) => error = e.to_string(),
+            }
+        }
+    }
+    let mut crumbs = Vec::new();
+    let mut acc = std::path::PathBuf::new();
+    for c in rel.components() {
+        acc.push(c);
+        crumbs.push((
+            c.as_os_str().to_string_lossy().to_string(),
+            files_link(root.as_str(), &acc.to_string_lossy()),
+        ));
+    }
+    let up = rel
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let prefix = if path.is_empty() {
+        String::new()
+    } else {
+        format!("{path}/")
+    };
+    render(FilesTpl {
+        page: Page::admin("Files"),
+        tab: "files",
+        message: q.msg.unwrap_or_default(),
+        error,
+        root: root.as_str(),
+        root_dir: base.map(|b| b.display().to_string()).unwrap_or_default(),
+        crumbs,
+        up_link: files_link(root.as_str(), &up),
+        self_link: format!(
+            "{}{}",
+            files_link(root.as_str(), ""),
+            url::form_urlencoded::byte_serialize(prefix.as_bytes()).collect::<String>()
+        ),
+        path,
+        entries,
+    })
+}
+
+async fn files_delete(State(st): State<AppState>, body: String) -> Response {
+    use crate::files::{Root, clean_rel, delete, root_dir};
+    let root = Root::parse(&form_value(&body, "root")).unwrap_or(Root::Movies);
+    let rel_s = form_value(&body, "path");
+    let back = |key: &str, text: &str| {
+        let q: String = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("root", root.as_str())
+            .append_pair("path", &rel_s)
+            .append_pair(key, text)
+            .finish();
+        Redirect::to(&format!("/admin/files?{q}")).into_response()
+    };
+    let Some(rel) = clean_rel(&rel_s) else {
+        return back("err", "invalid path");
+    };
+    let Some(base) = root_dir(&st, root).await else {
+        return back("err", "folder not set");
+    };
+    let names = form_list(&body, "name");
+    if names.is_empty() {
+        return back("err", "nothing selected");
+    }
+    let (b, r, n) = (base.clone(), rel.clone(), names.clone());
+    let Ok((done, refused, top)) = tokio::task::spawn_blocking(move || delete(&b, &r, &n)).await
+    else {
+        return back("err", "delete failed");
+    };
+    // Deleted title folders leave M3Usort's library, so the VOD run doesn't re-add them.
+    let table = if root == Root::Movies {
+        "library_movies"
+    } else {
+        "library_series"
+    };
+    let mut unlisted = 0;
+    for f in &top {
+        unlisted += sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE folder = ?"
+        )))
+        .bind(f)
+        .execute(&st.db)
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+    }
+    tracing::info!(
+        "file browser: deleted {done} item(s) in {}/{}{}",
+        base.display(),
+        rel.display(),
+        if refused.is_empty() {
+            String::new()
+        } else {
+            format!("; refused: {}", refused.join("; "))
+        }
+    );
+    if done > 0 {
+        *st.jellyfin.lock().await = None;
+        let st2 = st.clone();
+        tokio::spawn(async move {
+            let mut log = crate::library::RunLog::default();
+            crate::library::refresh_jellyfin(&st2, &mut log).await;
+        });
+    }
+    let mut msg = format!("Deleted {done} item(s).");
+    if unlisted > 0 {
+        msg.push_str(&format!(" {unlisted} taken off the library list."));
+    }
+    if refused.is_empty() {
+        back("msg", &msg)
+    } else {
+        back("err", &format!("{msg} Not deleted: {}", refused.join("; ")))
     }
 }

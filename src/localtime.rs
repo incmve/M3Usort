@@ -24,6 +24,13 @@ pub fn date(ts: i64) -> String {
         .unwrap_or_default()
 }
 
+/// Local time of day "HH:MM" for a Unix timestamp.
+pub fn time_of(ts: i64) -> String {
+    jiff::Timestamp::from_second(ts)
+        .map(|t| t.to_zoned_datetime(zone()).strftime("%H:%M").to_string())
+        .unwrap_or_default()
+}
+
 /// Today's local date, "2026-11-27".
 pub fn today() -> String {
     now().strftime("%Y-%m-%d").to_string()

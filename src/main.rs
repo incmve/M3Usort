@@ -5,10 +5,12 @@ mod config;
 mod crypto;
 mod db;
 mod enrich;
+mod files;
 mod integrations;
 mod jellyfin;
 mod library;
 mod localtime;
+mod logfile;
 mod playlist;
 mod settings;
 mod setup;
@@ -42,6 +44,8 @@ Commands:
 async fn main() {
     tracing_subscriber::fmt()
         .with_timer(localtime::LogTimer)
+        .with_ansi(false)
+        .with_writer(logfile::Tee)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("M3USORT_LOG_LEVEL")
                 .unwrap_or_else(|_| "info".into()),
@@ -81,6 +85,9 @@ async fn serve() -> anyhow::Result<()> {
     std::fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("cannot create data dir {}", cfg.data_dir.display()))?;
     let _lock = lock_data_dir(&cfg)?;
+    if let Err(e) = logfile::enable(&cfg.data_dir.join("logs")) {
+        tracing::warn!("no log files (log viewer empty): {e}");
+    }
     warn_if_not_a_volume(&cfg.data_dir);
     let db_exists = cfg.db_path().exists();
     info!("{}", version::version_line());
