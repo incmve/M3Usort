@@ -343,7 +343,7 @@ struct LibraryTpl {
     found: Vec<WantedRow>,
     movies: Vec<MovieRow>,
     series: Vec<SeriesRow>,
-    bulk: enrich::BulkCounts,
+    ids: enrich::IdCounts,
     last_run: String,
     last_run_failed: bool,
     running: bool,
@@ -499,7 +499,7 @@ async fn library_page(
         found,
         movies,
         series,
-        bulk: enrich::bulk_id_counts(&st.db).await.unwrap_or_default(),
+        ids: enrich::id_counts(&st.db).await.unwrap_or_default(),
         last_run: last
             .as_ref()
             .map(|(t, _, m)| {

@@ -91,17 +91,26 @@ is good enough.
       keeps the provider's `#EXTM3U url-tvg=…` header. Fix vs Python: the custom group
       follows the saved order (Python wrote the provider's order).
 - [x] **5. Metadata:** detail page per movie/series, filled on first open (provider
-      `get_vod_info`/`get_series_info`, then TMDB search when there is no id, then one
-      TMDB details call with `append_to_response=credits,external_ids` for poster, plot,
-      rating, IMDb id, cast, seasons and status). Actor pages and actor-name search.
-      Daily jobs at local time (`TZ`): "TMDB ID enrichment" (provider, 1 s apart) and
-      "Cast enrichment" (TMDB, one retry on 429); run-now with live progress.
-      Faster than Python: TMDB ids from the provider's bulk lists are used directly
-      (no provider lookup); the provider job only covers titles without an id and
-      asks once per title+year group; the TMDB job searches once per cleaned
-      title+year and fetches details once per TMDB id, 8 in parallel, capped at
-      40 requests/s app-wide (TMDB's CDN allows ~50/s, 20 connections).
-      Mock test, 11,503 titles at 150 ms per request: 4 min 41 s.
+      `get_vod_info`/`get_series_info`, then one TMDB details call by id with
+      `append_to_response=credits,external_ids` for poster, plot, rating, IMDb id,
+      cast, seasons and status). Actor pages and actor-name search.
+      **IDs only, never a name search** (decision Nov 2026: an id is absolute, a
+      search is a guess). `tmdb_source` per item, in order of priority:
+      `list` / `provider` (provider's bulk list or get_*_info) > `jellyfin`
+      (ProviderIds.Tmdb of library items, fixed in Jellyfin with Identify).
+      Titles without an id keep the provider's poster, plot and rating.
+      Daily jobs at local time (`TZ`): "TMDB ID enrichment" (provider, at most 1
+      request/s counted from the start of the previous one, one at a time; skips a
+      kind after 50 answers without any id) and "Cast enrichment" (Jellyfin ids, then
+      TMDB details once per TMDB id, 8 in parallel, capped at 40 requests/s app-wide;
+      TMDB's CDN allows ~50/s, 20 connections).
+      Checked with the real provider (Nov 2026): get_vod_info has `tmdb_id`; the bulk
+      lists and get_series_info have no series TMDB id (episode blocks carry an
+      empty `tmdb_id`). So movies get provider ids, library series Jellyfin ids.
+      Migration 0009 cleans ids stored by earlier builds that searched by name:
+      bulk-list and provider-only ids kept, name-search ids removed with their
+      poster/plot/cast, ids of unclear origin marked `unverified` and re-asked
+      (provider confirms → `provider`, otherwise removed).
       Tiles fall back to the TMDB poster when the provider's image is dead.
 - [x] **6. Jellyfin:** library refresh, library view with watch status per user
       Admin → Jellyfin. One snapshot (5 min cache, Refresh link) from a handful of

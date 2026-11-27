@@ -105,42 +105,6 @@ async fn get(
     Err("TMDB rate limit".into())
 }
 
-/// Search by title (+ year when known). Returns the first hit's id and poster.
-pub async fn search(
-    client: &Client,
-    base: &str,
-    key: &str,
-    is_movie: bool,
-    title: &str,
-    year: Option<i32>,
-) -> Result<Option<(i64, Option<String>)>, String> {
-    let year_s = year.map(|y| y.to_string()).unwrap_or_default();
-    let year_param = if is_movie {
-        "year"
-    } else {
-        "first_air_date_year"
-    };
-    let mut params = vec![("query", title), ("language", "en-US")];
-    if !year_s.is_empty() {
-        params.push((year_param, year_s.as_str()));
-    }
-    let path = format!("search/{}", media(is_movie));
-    let mut body = get(client, base, key, &path, &params).await?;
-    // Retry without the year: providers' years are sometimes off by one.
-    if year.is_some() && first_result(&body).is_none() {
-        body = get(client, base, key, &path, &params[..2]).await?;
-    }
-    Ok(first_result(&body).map(|r| {
-        let id = r.get("id").and_then(Value::as_i64).unwrap_or(0);
-        (id, poster_url(r))
-    }))
-    .map(|o| o.filter(|(id, _)| *id > 0))
-}
-
-fn first_result(body: &Option<Value>) -> Option<&Value> {
-    body.as_ref()?.get("results")?.as_array()?.first()
-}
-
 fn poster_url(v: &Value) -> Option<String> {
     v.get("poster_path")
         .and_then(Value::as_str)

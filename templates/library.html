@@ -28,14 +28,21 @@
 <div class="card" id="enrich">
   {% if !has_tmdb_key %}<div class="msg err">No TMDB key: only the provider's info is used. Set one under Admin → Settings → TMDB.</div>{% endif %}
   <table>
-    <tr><td><strong>TMDB ID enrichment</strong><div class="help">Asks the provider for TMDB ids, plots and ratings (1 per second), only for titles without an id from the provider's list. Same title and year in several categories is asked once. If the first 50 answers for movies or series hold no id at all, the rest of that kind is skipped for this run.</div></td>
+    <tr><td><strong>TMDB ID enrichment</strong><div class="help">Asks the provider for each title's TMDB id (get_vod_info / get_series_info), one request per second, one at a time. Also confirms or removes ids still to verify. If the first 50 answers for movies or series hold no id at all, the rest of that kind is skipped for this run.</div></td>
       <td id="st-provider">{% if enrich_provider.running %}running: {{ enrich_provider.processed }} / {{ enrich_provider.total }}{% else %}last: {{ enrich_provider.last }}{% if !enrich_provider.message.is_empty() %} — {{ enrich_provider.message }}{% endif %}{% endif %}</td>
       <td class="act"><form method="post" action="/enrich/provider" style="margin:0"><button class="btn secondary" type="submit"{% if enrich_provider.running %} disabled{% endif %}>Run now</button></form></td></tr>
-    <tr><td><strong>Cast enrichment</strong><div class="help">Searches TMDB for titles without an id, then gets cast, posters, seasons and status. {{ tmdb_parallel }} requests at a time; each title and TMDB id only once.</div></td>
+    <tr><td><strong>Cast enrichment</strong><div class="help">Reads Jellyfin's TMDB ids for titles in your library, then gets cast, posters, seasons and status from TMDB for every title with an id ({{ tmdb_parallel }} requests at a time, each TMDB id once). Never searches by name.</div></td>
       <td id="st-tmdb">{% if enrich_tmdb.running %}running: {{ enrich_tmdb.processed }} / {{ enrich_tmdb.total }}{% else %}last: {{ enrich_tmdb.last }}{% if !enrich_tmdb.message.is_empty() %} — {{ enrich_tmdb.message }}{% endif %}{% endif %}</td>
       <td class="act"><form method="post" action="/enrich/tmdb" style="margin:0"><button class="btn secondary" type="submit"{% if enrich_tmdb.running || !has_tmdb_key %} disabled{% endif %}>Run now</button></form></td></tr>
   </table>
-  <p class="help">TMDB ids from the provider's list: <strong>{{ bulk.movies_bulk }}</strong> of {{ bulk.movies }} movies, <strong>{{ bulk.series_bulk }}</strong> of {{ bulk.series }} series{% if bulk.movies_bulk == 0 && bulk.series_bulk == 0 && bulk.movies > 0 %} (your provider doesn't send them, so the provider lookup is still needed){% endif %}. With a TMDB id now: {{ bulk.movies_with_id }} movies, {{ bulk.series_with_id }} series.</p>
+  <table style="margin-top:.8rem">
+    <tr><td>TMDB ids</td><td><strong>Movies</strong></td><td><strong>Series</strong></td></tr>
+    <tr><td>From the provider</td><td>{{ ids.movies_provider }}</td><td>{{ ids.series_provider }}</td></tr>
+    <tr><td>From Jellyfin (library titles)</td><td>{{ ids.movies_jellyfin }}</td><td>{{ ids.series_jellyfin }}</td></tr>
+    <tr><td>Still to verify with the provider</td><td>{{ ids.movies_unverified }}</td><td>{{ ids.series_unverified }}</td></tr>
+    <tr><td>In the catalog</td><td>{{ ids.movies }}</td><td>{{ ids.series }}</td></tr>
+  </table>
+  <p class="help">Titles without an id keep the provider's own poster, plot and rating.</p>
   <p class="help" style="margin-bottom:0">Daily times are set under Settings → Schedules. Opening a movie or series fills in its details right away.</p>
 </div>
 <script>

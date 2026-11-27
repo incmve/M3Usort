@@ -1,13 +1,14 @@
-//! Metadata enrichment, as in the Python version:
-//! - on demand when a detail page is opened (provider info, then TMDB), and
-//! - two optional daily jobs (Settings → Schedules):
-//!   "TMDB ID enrichment": get_vod_info / get_series_info at the provider, 1 s apart,
-//!   only for titles without a TMDB id from the provider's bulk list;
-//!   "Cast enrichment": TMDB search + details (cast, poster, plot, seasons, status),
-//!   several requests in parallel, paced well under TMDB's limit.
+//! Metadata enrichment. Only real TMDB ids are used, never a guess from a
+//! name search ("tmdb_source" records where each id came from):
+//!   1. the provider's bulk list (get_vod_streams / get_series), when it has one;
+//!   2. the provider's get_vod_info / get_series_info ("TMDB ID enrichment",
+//!      one request per second, one at a time);
+//!   3. Jellyfin's match for items in the library (ProviderIds.Tmdb), read at
+//!      the start of "Cast enrichment" (Jellyfin matches are fixed with Identify).
 //!
-//! Titles that appear more than once (same name and year in NL, EN and 4K
-//! categories) are looked up once and the answer is shared.
+//! "Cast enrichment" then fetches TMDB details (cast, poster, plot, seasons,
+//! status) by id: once per TMDB id, a few in parallel, capped app-wide in tmdb.rs.
+//! Titles without an id keep the provider's own poster, plot and rating.
 //!
 //! "checked" timestamps mean "asked, even if nothing came back", so nothing is
 //! asked twice. Network errors don't set them, so those are retried later.
@@ -19,25 +20,31 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
+use sqlx::SqliteConnection;
 
 use crate::catalog::{self, Kind, now_secs};
 use crate::integrations::{self, as_text};
-use crate::library::{cut_quality_tags, strip_year};
 use crate::settings as s;
 use crate::tmdb;
 use crate::web::AppState;
 
-const PROVIDER_DELAY: Duration = Duration::from_secs(1); // as Python
-/// Parallel TMDB lookups. TMDB allows 20 connections per IP; the request rate
-/// itself is capped in tmdb.rs (40/s, under TMDB's ~50/s).
+/// At most one provider request per second, one at a time (as Python).
+const PROVIDER_DELAY: Duration = Duration::from_secs(1);
 /// Provider answers per kind to look at before deciding it never sends TMDB ids.
 const PROBE_LOOKUPS: usize = 50;
+/// Parallel TMDB detail requests. TMDB allows 20 connections per IP; the request
+/// rate itself is capped in tmdb.rs (40/s, under TMDB's ~50/s).
 pub const TMDB_PARALLEL: usize = 8;
 /// Stop a job after this many network errors in a row (provider or TMDB down).
 const MAX_ERRORS_IN_A_ROW: usize = 20;
 
 pub const JOB_PROVIDER: &str = "provider";
 pub const JOB_TMDB: &str = "tmdb";
+
+pub const SRC_LIST: &str = "list";
+pub const SRC_PROVIDER: &str = "provider";
+pub const SRC_JELLYFIN: &str = "jellyfin";
+pub const SRC_UNVERIFIED: &str = "unverified";
 
 fn kind_parts(kind: Kind) -> (&'static str, &'static str, &'static str, bool) {
     match kind {
@@ -54,81 +61,144 @@ async fn tmdb_key(st: &AppState) -> Option<String> {
         .filter(|k| !k.is_empty())
 }
 
-/// Copy a valid TMDB id from the provider's bulk list (get_vod_streams /
-/// get_series) into tmdb_id, so those titles skip the slow provider lookup.
-/// Never overwrites an id that is already there. Returns how many got one.
+/// A TMDB id as providers and Jellyfin send it: digits, not 0.
+pub fn clean_tmdb_id(v: &str) -> Option<String> {
+    let v = v.trim();
+    (!v.is_empty()
+        && v.chars().all(|c| c.is_ascii_digit())
+        && !v.trim_start_matches('0').is_empty())
+    .then(|| v.trim_start_matches('0').to_string())
+}
+
+/// Copy a valid TMDB id from the provider's bulk list into tmdb_id. Never
+/// overwrites a provider id; replaces a Jellyfin or unverified one only when it
+/// differs (then the details are fetched again). Returns how many changed.
 pub async fn adopt_bulk_ids(db: &sqlx::SqlitePool) -> anyhow::Result<u64> {
     let mut n = 0;
-    for table in ["movies", "series"] {
-        n += sqlx::query(sqlx::AssertSqlSafe(format!(
-            "UPDATE {table} SET tmdb_id = trim(provider_tmdb)
-             WHERE (tmdb_id IS NULL OR tmdb_id = '')
-               AND trim(provider_tmdb) GLOB '[1-9]*' AND trim(provider_tmdb) NOT GLOB '*[^0-9]*'"
-        )))
-        .execute(db)
-        .await?
-        .rows_affected();
+    for kind in [Kind::Movie, Kind::Series] {
+        let (table, id_col, _, _) = kind_parts(kind);
+        let rows: Vec<(i64, String, Option<String>, Option<String>)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT {id_col}, provider_tmdb, NULLIF(tmdb_id, ''), tmdb_source FROM {table}
+                 WHERE trim(provider_tmdb) GLOB '[1-9]*' AND trim(provider_tmdb) NOT GLOB '*[^0-9]*'
+                   AND (tmdb_source IS NULL OR tmdb_source NOT IN ('list', 'provider'))"
+            )))
+            .fetch_all(db)
+            .await?;
+        let mut tx = db.begin().await?;
+        for (id, bulk, cur, _) in rows {
+            let Some(bulk) = clean_tmdb_id(&bulk) else {
+                continue;
+            };
+            set_id(&mut tx, kind, id, &bulk, cur.as_deref(), SRC_LIST).await?;
+            n += 1;
+        }
+        tx.commit().await?;
     }
     Ok(n)
 }
 
-/// How many titles have a TMDB id from the provider's bulk list (for the Library page).
-pub async fn bulk_id_counts(db: &sqlx::SqlitePool) -> anyhow::Result<BulkCounts> {
+/// Set an item's TMDB id and its source. When the id changes, everything TMDB
+/// filled in for the old one is cleared so the Cast job fetches it again.
+pub(crate) async fn set_id(
+    conn: &mut SqliteConnection,
+    kind: Kind,
+    id: i64,
+    new: &str,
+    current: Option<&str>,
+    source: &str,
+) -> anyhow::Result<()> {
+    let (table, id_col, _, _) = kind_parts(kind);
+    if current != Some(new) && current.is_some() {
+        clear_tmdb_details(conn, kind, id, true).await?;
+    }
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE {table} SET tmdb_id = ?, tmdb_source = ? WHERE {id_col} = ?"
+    )))
+    .bind(new)
+    .bind(source)
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Remove what TMDB filled in for an item (poster, IMDb id, seasons, status,
+/// cast and, when asked, the plot), so it is fetched again or left empty.
+pub async fn clear_tmdb_details(
+    conn: &mut SqliteConnection,
+    kind: Kind,
+    id: i64,
+    plot: bool,
+) -> anyhow::Result<()> {
+    let (table, id_col, _, is_movie) = kind_parts(kind);
+    let extra = match (is_movie, plot) {
+        (true, true) => ", plot = NULL",
+        (true, false) => "",
+        (false, true) => ", plot = NULL, seasons = NULL, status = NULL",
+        (false, false) => ", seasons = NULL, status = NULL",
+    };
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE {table} SET poster = NULL, imdb_id = NULL, tmdb_checked = NULL{extra} WHERE {id_col} = ?"
+    )))
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM cast_members WHERE kind = ? AND item_id = ?")
+        .bind(kind.as_str())
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Where the TMDB ids come from, for the Library page.
+#[derive(Default)]
+pub struct IdCounts {
+    pub movies: i64,
+    pub movies_provider: i64,
+    pub movies_jellyfin: i64,
+    pub movies_unverified: i64,
+    pub series: i64,
+    pub series_provider: i64,
+    pub series_jellyfin: i64,
+    pub series_unverified: i64,
+}
+
+pub async fn id_counts(db: &sqlx::SqlitePool) -> anyhow::Result<IdCounts> {
     let q = |table: &str| {
         sqlx::AssertSqlSafe(format!(
-            "SELECT COUNT(*), COALESCE(SUM(trim(provider_tmdb) GLOB '[1-9]*' AND trim(provider_tmdb) NOT GLOB '*[^0-9]*'), 0),
-                    COALESCE(SUM(tmdb_id IS NOT NULL AND tmdb_id != ''), 0) FROM {table}"
+            "SELECT COUNT(*),
+                    COALESCE(SUM(tmdb_source IN ('list', 'provider')), 0),
+                    COALESCE(SUM(tmdb_source = 'jellyfin'), 0),
+                    COALESCE(SUM(tmdb_source = 'unverified'), 0) FROM {table}"
         ))
     };
-    let (mt, mb, mi): (i64, i64, i64) = sqlx::query_as(q("movies")).fetch_one(db).await?;
-    let (st, sb, si): (i64, i64, i64) = sqlx::query_as(q("series")).fetch_one(db).await?;
-    Ok(BulkCounts {
-        movies: mt,
-        movies_bulk: mb,
-        movies_with_id: mi,
-        series: st,
-        series_bulk: sb,
-        series_with_id: si,
+    let (m, mp, mj, mu): (i64, i64, i64, i64) = sqlx::query_as(q("movies")).fetch_one(db).await?;
+    let (s, sp, sj, su): (i64, i64, i64, i64) = sqlx::query_as(q("series")).fetch_one(db).await?;
+    Ok(IdCounts {
+        movies: m,
+        movies_provider: mp,
+        movies_jellyfin: mj,
+        movies_unverified: mu,
+        series: s,
+        series_provider: sp,
+        series_jellyfin: sj,
+        series_unverified: su,
     })
-}
-
-#[derive(Default)]
-pub struct BulkCounts {
-    pub movies: i64,
-    pub movies_bulk: i64,
-    pub movies_with_id: i64,
-    pub series: i64,
-    pub series_bulk: i64,
-    pub series_with_id: i64,
-}
-
-/// Strip provider prefixes like "NL | ", "EN: " or "4K - " before searching TMDB.
-pub fn search_title(name: &str) -> (String, Option<i32>) {
-    let mut t = name.trim();
-    for sep in [" | ", "| ", ": ", " - "] {
-        if let Some((pre, rest)) = t.split_once(sep)
-            && pre.len() <= 4
-            && pre
-                .chars()
-                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-        {
-            t = rest.trim();
-            break;
-        }
-    }
-    let (bare, year) = strip_year(&cut_quality_tags(t));
-    let bare = bare.trim().to_string();
-    (if bare.is_empty() { t.to_string() } else { bare }, year)
 }
 
 // ------------------------------------------------------------------ one item
 
 /// Provider info (get_vod_info / get_series_info): TMDB id, IMDb id, plot, rating.
-/// Ok(false) on a network error (not marked as checked, retried later).
-async fn provider_info(st: &AppState, kind: Kind, id: i64) -> anyhow::Result<bool> {
+/// The provider's TMDB id wins over any other source. An unverified id the
+/// provider doesn't confirm is removed with what TMDB filled in for it.
+/// Ok(None) on a network error (not marked as checked, retried later);
+/// Ok(Some(had_id)) when the provider answered.
+async fn provider_info(st: &AppState, kind: Kind, id: i64) -> anyhow::Result<Option<bool>> {
     let (table, id_col, action, is_movie) = kind_parts(kind);
     let Some(x) = catalog::load_xtream(st).await? else {
-        return Ok(false);
+        return Ok(None);
     };
     let mut url = x.api_url(action).map_err(anyhow::Error::msg)?;
     url.query_pairs_mut().append_pair(
@@ -149,11 +219,11 @@ async fn provider_info(st: &AppState, kind: Kind, id: i64) -> anyhow::Result<boo
         Ok(r) if r.status().is_success() => r,
         Ok(r) => {
             tracing::debug!("{action} {id}: HTTP {}", r.status());
-            return Ok(false);
+            return Ok(None);
         }
         Err(e) => {
             tracing::debug!("{action} {id}: {e}");
-            return Ok(false);
+            return Ok(None);
         }
     };
     let body: Value = resp.json().await.unwrap_or(Value::Null);
@@ -170,65 +240,47 @@ async fn provider_info(st: &AppState, kind: Kind, id: i64) -> anyhow::Result<boo
                 .filter(|v| !v.is_empty() && v != "0")
         })
     };
-    let tmdb_id = pick(&["tmdb_id", "tmdb"]).filter(|v| v.chars().all(|c| c.is_ascii_digit()));
+    let tmdb_id = pick(&["tmdb_id", "tmdb"]).and_then(|v| clean_tmdb_id(&v));
     let imdb_id = pick(&["imdb_id", "imdb"]);
     let plot = pick(&["plot", "description", "overview"]);
     let rating = pick(&["rating"])
         .and_then(|r| r.parse::<f64>().ok())
         .filter(|r| *r > 0.0);
+
+    let (cur, src): (Option<String>, Option<String>) = sqlx::query_as(sqlx::AssertSqlSafe(
+        format!("SELECT NULLIF(tmdb_id, ''), tmdb_source FROM {table} WHERE {id_col} = ?"),
+    ))
+    .bind(id)
+    .fetch_one(&st.db)
+    .await?;
+    let mut tx = st.db.begin().await?;
+    match &tmdb_id {
+        Some(t) => set_id(&mut tx, kind, id, t, cur.as_deref(), SRC_PROVIDER).await?,
+        None if src.as_deref() == Some(SRC_UNVERIFIED) => {
+            // Not confirmed: it came from a name search. Remove it.
+            clear_tmdb_details(&mut tx, kind, id, true).await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET tmdb_id = NULL, tmdb_source = NULL WHERE {id_col} = ?"
+            )))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        None => {}
+    }
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "UPDATE {table} SET tmdb_id = COALESCE(tmdb_id, ?), imdb_id = COALESCE(imdb_id, ?),
-         plot = COALESCE(NULLIF(plot, ''), ?), rating = COALESCE(NULLIF(rating, 0), ?), provider_checked = ?
-         WHERE {id_col} = ?"
+        "UPDATE {table} SET imdb_id = COALESCE(?, imdb_id), plot = COALESCE(NULLIF(plot, ''), ?),
+         rating = COALESCE(NULLIF(rating, 0), ?), provider_checked = ? WHERE {id_col} = ?"
     )))
-    .bind(tmdb_id)
     .bind(imdb_id)
     .bind(plot)
     .bind(rating)
     .bind(now_secs())
     .bind(id)
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
-    Ok(true)
-}
-
-/// TMDB: search by name when there is no id yet, then details + cast.
-/// Ok(false) on a network error.
-async fn tmdb_info(st: &AppState, key: &str, kind: Kind, id: i64) -> anyhow::Result<bool> {
-    let (table, id_col, _, is_movie) = kind_parts(kind);
-    let (name, tmdb_id): (String, Option<String>) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT name, tmdb_id FROM {table} WHERE {id_col} = ?"
-    )))
-    .bind(id)
-    .fetch_one(&st.db)
-    .await?;
-    let tmdb_id = match tmdb_id.filter(|t| !t.is_empty()) {
-        Some(t) => t,
-        None => {
-            let (title, year) = search_title(&name);
-            match tmdb::search(
-                &st.http,
-                &integrations::tmdb_base(),
-                key,
-                is_movie,
-                &title,
-                year,
-            )
-            .await
-            {
-                Ok(Some((found, _))) => found.to_string(),
-                Ok(None) => {
-                    mark_tmdb_checked(st, kind, &[id]).await?; // nothing to find; don't ask again
-                    return Ok(true);
-                }
-                Err(e) => {
-                    tracing::debug!("TMDB search '{title}': {e}");
-                    return Ok(false);
-                }
-            }
-        }
-    };
-    fetch_details(st, key, kind, &tmdb_id, &[id]).await
+    tx.commit().await?;
+    Ok(Some(tmdb_id.is_some()))
 }
 
 /// TMDB details for one TMDB id, written to every catalog item that has it.
@@ -256,25 +308,29 @@ async fn fetch_details(
     let mut tx = st.db.begin().await?;
     for &id in ids {
         sqlx::query(sqlx::AssertSqlSafe(format!(
-            "UPDATE {table} SET tmdb_id = ?, poster = COALESCE(?, poster), plot = COALESCE(NULLIF(plot, ''), ?),
-             rating = COALESCE(NULLIF(rating, 0), ?), imdb_id = COALESCE(imdb_id, ?), tmdb_checked = ? WHERE {id_col} = ?"
+            "UPDATE {table} SET poster = COALESCE(?, poster), plot = COALESCE(NULLIF(plot, ''), ?),
+             rating = COALESCE(NULLIF(rating, 0), ?), imdb_id = COALESCE(imdb_id, ?), tmdb_checked = ?
+             WHERE {id_col} = ? AND tmdb_id = ?"
         )))
-        .bind(tmdb_id)
         .bind(&d.poster)
         .bind(&d.plot)
         .bind(d.rating)
         .bind(&d.imdb_id)
         .bind(now_secs())
         .bind(id)
+        .bind(tmdb_id)
         .execute(&mut *tx)
         .await?;
         if !is_movie {
-            sqlx::query("UPDATE series SET seasons = ?, status = ? WHERE series_id = ?")
-                .bind(d.seasons)
-                .bind(&d.status)
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "UPDATE series SET seasons = ?, status = ? WHERE series_id = ? AND tmdb_id = ?",
+            )
+            .bind(d.seasons)
+            .bind(&d.status)
+            .bind(id)
+            .bind(tmdb_id)
+            .execute(&mut *tx)
+            .await?;
         }
         sqlx::query("DELETE FROM cast_members WHERE kind = ? AND item_id = ?")
             .bind(kind.as_str())
@@ -313,8 +369,9 @@ async fn mark_tmdb_checked(st: &AppState, kind: Kind, ids: &[i64]) -> anyhow::Re
     Ok(())
 }
 
-/// Called when a detail page opens: fill in whatever hasn't been asked yet.
-/// Bounded in time so a slow provider or TMDB never hangs the page.
+/// Called when a detail page opens: ask the provider if it hasn't been asked,
+/// then TMDB details when there is a real id. Bounded in time so a slow
+/// provider or TMDB never hangs the page.
 pub async fn ensure_details(st: &AppState, kind: Kind, id: i64) {
     let work = async {
         let (table, id_col, _, _) = kind_parts(kind);
@@ -335,7 +392,17 @@ pub async fn ensure_details(st: &AppState, kind: Kind, id: i64) {
         if tmdb_checked.is_none()
             && let Some(key) = tmdb_key(st).await
         {
-            let _ = tmdb_info(st, &key, kind, id).await;
+            let tmdb_id: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT NULLIF(tmdb_id, '') FROM {table} WHERE {id_col} = ?"
+            )))
+            .bind(id)
+            .fetch_one(&st.db)
+            .await
+            .ok()
+            .flatten();
+            if let Some(t) = tmdb_id {
+                let _ = fetch_details(st, &key, kind, &t, &[id]).await;
+            }
         }
     };
     if tokio::time::timeout(Duration::from_secs(12), work)
@@ -396,141 +463,62 @@ fn running_flag<'a>(st: &'a AppState, job: &str) -> &'a AtomicBool {
     }
 }
 
-/// One lookup that covers one or more catalog items of the same kind.
+/// Provider job: items without an id, or with an unverified one. Library items
+/// first, then unverified ones, then newest.
+async fn provider_todo(st: &AppState) -> anyhow::Result<Vec<(Kind, i64)>> {
+    let mut out = Vec::new();
+    for kind in [Kind::Movie, Kind::Series] {
+        let (table, id_col, _, _) = kind_parts(kind);
+        let ids: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT t.{id_col} FROM {table} t
+             WHERE t.provider_checked IS NULL
+               AND (t.tmdb_id IS NULL OR t.tmdb_id = '' OR t.tmdb_source = 'unverified')
+             ORDER BY EXISTS (SELECT 1 FROM library_{table} l WHERE l.{id_col} = t.{id_col}) DESC,
+                      t.tmdb_source = 'unverified' DESC, t.added DESC"
+        )))
+        .fetch_all(&st.db)
+        .await?;
+        out.extend(ids.into_iter().map(|i| (kind, i)));
+    }
+    Ok(out)
+}
+
+/// One TMDB details request, written to every catalog item with that id.
 struct Group {
     kind: Kind,
-    /// Search: (title, year). Details: the TMDB id (title unused).
-    title: String,
-    year: Option<i32>,
-    tmdb_id: Option<String>,
-    /// Catalog ids, library items first, then newest.
+    tmdb_id: String,
     ids: Vec<i64>,
 }
 
-/// (id, name, tmdb_id) of items still to do, library items first, then newest.
-async fn todo_rows(
-    st: &AppState,
-    kind: Kind,
-    cond: &str,
-) -> anyhow::Result<Vec<(i64, String, Option<String>)>> {
-    let (table, id_col, _, _) = kind_parts(kind);
-    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT t.{id_col}, t.name, NULLIF(t.tmdb_id, '') FROM {table} t
-         WHERE {cond}
-         ORDER BY EXISTS (SELECT 1 FROM library_{table} l WHERE l.{id_col} = t.{id_col}) DESC, t.added DESC"
-    )))
-    .fetch_all(&st.db)
-    .await?)
-}
-
-/// Group rows by a key, keeping the order of first appearance.
-fn group_by<K: std::hash::Hash + Eq>(
-    rows: impl IntoIterator<Item = (K, i64, Group)>,
-) -> Vec<Group> {
-    let mut index: HashMap<K, usize> = HashMap::new();
+/// Cast job: items with an id and no details yet, one request per TMDB id,
+/// library items first, then newest.
+async fn details_groups(st: &AppState) -> anyhow::Result<Vec<Group>> {
     let mut out: Vec<Group> = Vec::new();
-    for (key, id, g) in rows {
-        match index.get(&key) {
-            Some(&i) => out[i].ids.push(id),
-            None => {
-                index.insert(key, out.len());
-                out.push(g);
+    for kind in [Kind::Movie, Kind::Series] {
+        let (table, id_col, _, _) = kind_parts(kind);
+        let rows: Vec<(i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT t.{id_col}, t.tmdb_id FROM {table} t
+             WHERE t.tmdb_checked IS NULL AND t.tmdb_id IS NOT NULL AND t.tmdb_id != ''
+             ORDER BY EXISTS (SELECT 1 FROM library_{table} l WHERE l.{id_col} = t.{id_col}) DESC, t.added DESC"
+        )))
+        .fetch_all(&st.db)
+        .await?;
+        let mut index: HashMap<String, usize> = HashMap::new();
+        for (id, t) in rows {
+            match index.get(&t) {
+                Some(&i) => out[i].ids.push(id),
+                None => {
+                    index.insert(t.clone(), out.len());
+                    out.push(Group {
+                        kind,
+                        tmdb_id: t,
+                        ids: vec![id],
+                    });
+                }
             }
         }
     }
-    out
-}
-
-/// Search groups: same kind + cleaned title + year = same TMDB query = same answer.
-async fn search_groups(st: &AppState) -> anyhow::Result<Vec<Group>> {
-    let mut rows = Vec::new();
-    for kind in [Kind::Movie, Kind::Series] {
-        for (id, name, _) in todo_rows(
-            st,
-            kind,
-            "t.tmdb_checked IS NULL AND (t.tmdb_id IS NULL OR t.tmdb_id = '')",
-        )
-        .await?
-        {
-            let (title, year) = search_title(&name);
-            let key = (kind.as_str(), title.to_lowercase(), year);
-            rows.push((
-                key,
-                id,
-                Group {
-                    kind,
-                    title,
-                    year,
-                    tmdb_id: None,
-                    ids: vec![id],
-                },
-            ));
-        }
-    }
-    Ok(group_by(rows))
-}
-
-/// Details groups: one request per TMDB id.
-async fn details_groups(st: &AppState) -> anyhow::Result<Vec<Group>> {
-    let mut rows = Vec::new();
-    for kind in [Kind::Movie, Kind::Series] {
-        for (id, _, tmdb_id) in todo_rows(
-            st,
-            kind,
-            "t.tmdb_checked IS NULL AND t.tmdb_id IS NOT NULL AND t.tmdb_id != ''",
-        )
-        .await?
-        {
-            let Some(t) = tmdb_id else { continue };
-            let key = (kind.as_str(), t.clone());
-            rows.push((
-                key,
-                id,
-                Group {
-                    kind,
-                    title: String::new(),
-                    year: None,
-                    tmdb_id: Some(t),
-                    ids: vec![id],
-                },
-            ));
-        }
-    }
-    Ok(group_by(rows))
-}
-
-/// Provider groups. Only titles with a year are grouped ("Dune (2021)" in NL and
-/// EN is one film; a bare "Dune" could be 1984 or 2021). Titles with a TMDB id
-/// (from the bulk list or earlier) are skipped.
-async fn provider_groups(st: &AppState) -> anyhow::Result<Vec<Group>> {
-    let mut rows = Vec::new();
-    for kind in [Kind::Movie, Kind::Series] {
-        for (id, name, _) in todo_rows(
-            st,
-            kind,
-            "t.provider_checked IS NULL AND (t.tmdb_id IS NULL OR t.tmdb_id = '')",
-        )
-        .await?
-        {
-            let (title, year) = search_title(&name);
-            let key = match year {
-                Some(y) => (kind.as_str(), title.to_lowercase(), y, 0),
-                None => (kind.as_str(), String::new(), 0, id),
-            };
-            rows.push((
-                key,
-                id,
-                Group {
-                    kind,
-                    title,
-                    year,
-                    tmdb_id: None,
-                    ids: vec![id],
-                },
-            ));
-        }
-    }
-    Ok(group_by(rows))
+    Ok(out)
 }
 
 /// Run one job to completion. Only one run per job at a time.
@@ -549,19 +537,17 @@ struct Progress {
     run_id: i64,
     /// Items handled (done or failed); shown as "processed / total".
     processed: AtomicI64,
-    /// Items that got an answer (even "not found").
+    /// Items that got an answer (even "no id").
     done: AtomicI64,
     errors_in_a_row: AtomicUsize,
     stopped: AtomicBool,
 }
 
 impl Progress {
-    fn ok(&self, items: usize, counted: bool) {
+    fn ok(&self, items: usize) {
         self.errors_in_a_row.store(0, Ordering::SeqCst);
-        if counted {
-            self.processed.fetch_add(items as i64, Ordering::SeqCst);
-            self.done.fetch_add(items as i64, Ordering::SeqCst);
-        }
+        self.processed.fetch_add(items as i64, Ordering::SeqCst);
+        self.done.fetch_add(items as i64, Ordering::SeqCst);
     }
     fn failed(&self, items: usize) {
         self.processed.fetch_add(items as i64, Ordering::SeqCst);
@@ -584,23 +570,29 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
         anyhow::bail!("no TMDB API key set");
     }
     adopt_bulk_ids(&st.db).await?;
-    let (first, items) = if job == JOB_PROVIDER {
-        let g = provider_groups(st).await?;
-        let n: usize = g.iter().map(|g| g.ids.len()).sum();
-        (g, n)
+    let mut notes: Vec<String> = Vec::new();
+    // Provider job: per item. Cast job: Jellyfin ids first, then per TMDB id.
+    let (provider_items, groups) = if job == JOB_PROVIDER {
+        (provider_todo(st).await?, Vec::new())
     } else {
-        // Total = everything without TMDB details yet; searches that find an id
-        // are counted when their details arrive.
-        let g = search_groups(st).await?;
-        let with_id: i64 = sqlx::query_scalar(
-            "SELECT (SELECT COUNT(*) FROM movies WHERE tmdb_checked IS NULL AND tmdb_id IS NOT NULL AND tmdb_id != '')
-                  + (SELECT COUNT(*) FROM series WHERE tmdb_checked IS NULL AND tmdb_id IS NOT NULL AND tmdb_id != '')",
-        )
-        .fetch_one(&st.db)
-        .await?;
-        let n = g.iter().map(|g| g.ids.len()).sum::<usize>() + with_id as usize;
-        (g, n)
+        match crate::jellyfin::sync_ids(st).await {
+            Ok(Some((changed, seen))) => {
+                tracing::info!(
+                    "Jellyfin: {seen} library item(s) with a TMDB id, {changed} new or changed"
+                );
+                if changed > 0 {
+                    notes.push(format!("{changed} id(s) from Jellyfin"));
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!("Jellyfin ids: {e}");
+                notes.push(format!("Jellyfin ids not read: {e}"));
+            }
+        }
+        (Vec::new(), details_groups(st).await?)
     };
+    let items = provider_items.len() + groups.iter().map(|g| g.ids.len()).sum::<usize>();
     let run_id: i64 = sqlx::query_scalar(
         "INSERT INTO enrich_runs (job, started, total) VALUES (?, ?, ?) RETURNING id",
     )
@@ -609,7 +601,6 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
     .bind(items as i64)
     .fetch_one(&st.db)
     .await?;
-    let lookups = first.len();
     tracing::info!(
         "{} enrichment: {items} item(s) to do",
         if job == JOB_PROVIDER {
@@ -635,17 +626,14 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
         })
     };
     let mut skipped = Vec::new();
+    let mut found = 0usize;
     let result = if job == JOB_PROVIDER {
-        run_provider(st, first, &p).await.map(|s| skipped = s)
+        run_provider(st, provider_items, &p).await.map(|(s, f)| {
+            skipped = s;
+            found = f;
+        })
     } else {
-        let key = key.unwrap_or_default();
-        match run_tmdb_pool(st, &key, first, &p).await {
-            Ok(()) if !p.stopped.load(Ordering::SeqCst) => {
-                let second = details_groups(st).await?;
-                run_tmdb_pool(st, &key, second, &p).await
-            }
-            r => r,
-        }
+        run_tmdb_pool(st, &key.unwrap_or_default(), groups, &p).await
     };
     writer.abort();
     p.save(&st.db).await;
@@ -655,11 +643,12 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
         format!(
             "{done} of {items} done; stopped after {MAX_ERRORS_IN_A_ROW} failed requests in a row (rest is retried next run)"
         )
-    } else if job == JOB_PROVIDER && lookups < items {
-        format!("{done} of {items} done ({lookups} lookups; duplicates shared)")
     } else {
         format!("{done} of {items} done")
     };
+    if job == JOB_PROVIDER && done > 0 {
+        msg.push_str(&format!("; {found} with a TMDB id"));
+    }
     if !skipped.is_empty() {
         let parts: Vec<String> = skipped
             .iter()
@@ -674,10 +663,14 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
                 )
             })
             .collect();
-        msg = format!(
-            "{done} of {items} done; skipped {}: no TMDB id in the first {PROBE_LOOKUPS} provider answers (the Cast job finds them by name)",
+        msg.push_str(&format!(
+            "; skipped {}: no TMDB id in the first {PROBE_LOOKUPS} provider answers",
             parts.join(" and ")
-        );
+        ));
+    }
+    for n in &notes {
+        msg.push_str("; ");
+        msg.push_str(n);
     }
     sqlx::query("UPDATE enrich_runs SET finished = ?, ok = ?, message = ? WHERE id = ?")
         .bind(now_secs())
@@ -693,94 +686,76 @@ async fn run_job_inner(st: &AppState, job: &'static str) -> anyhow::Result<Strin
     Ok(msg)
 }
 
-/// Provider lookups, one per second (as Python). Per group: ask the first item;
-/// if the provider has no TMDB id for it, try the next one; share the answer.
+/// Provider lookups: one request per second, one at a time, every item asked
+/// itself (no sharing between titles with the same name: only the provider's
+/// own answer counts).
 ///
 /// If the first PROBE_LOOKUPS answers for a kind hold no TMDB id at all, the rest
-/// of that kind is skipped for this run: the provider (or a proxy in between,
-/// e.g. iptv-proxy drops the field from get_series_info) doesn't send it, so
-/// thousands of 1-per-second calls would gain nothing. The next run probes again
-/// with new titles, so a fixed proxy is picked up by itself.
-/// Returns the kinds that were skipped and how many items each.
+/// of that kind is skipped for this run: the provider doesn't send it there (e.g.
+/// get_series_info without a series TMDB id), so thousands of calls would gain
+/// nothing. The next run probes again with new titles. Unverified ids are never
+/// skipped: they must be confirmed or removed.
+/// Returns the skipped kinds with their counts, and how many answers had an id.
 async fn run_provider(
     st: &AppState,
-    groups: Vec<Group>,
+    items: Vec<(Kind, i64)>,
     p: &Progress,
-) -> anyhow::Result<Vec<(Kind, usize)>> {
-    // At most one request per second, one at a time. The second counts from the
-    // start of the previous request, so a slow answer (proxy + VPN) isn't
-    // followed by another full second of waiting (Python slept 1 s after each).
+) -> anyhow::Result<(Vec<(Kind, usize)>, usize)> {
+    // The second counts from the start of the previous request, so a slow
+    // answer (proxy + VPN) isn't followed by another full second of waiting.
     let mut next_start = tokio::time::Instant::now();
-    // per kind: (answers, answers with an id)
     let mut probe: HashMap<&'static str, (usize, usize)> = HashMap::new();
     let mut skipped: Vec<(Kind, usize)> = Vec::new();
-    for g in groups {
-        if let Some(s) = skipped.iter_mut().find(|(k, _)| *k == g.kind) {
-            s.1 += g.ids.len();
-            p.processed.fetch_add(g.ids.len() as i64, Ordering::SeqCst);
+    let mut found = 0usize;
+    for (kind, id) in items {
+        if p.stopped.load(Ordering::SeqCst) {
+            break;
+        }
+        let (answers, with_id) = probe.get(kind.as_str()).copied().unwrap_or_default();
+        if answers >= PROBE_LOOKUPS && with_id == 0 && !is_unverified(st, kind, id).await? {
+            match skipped.iter_mut().find(|(k, _)| *k == kind) {
+                Some(s) => s.1 += 1,
+                None => {
+                    tracing::info!(
+                        "provider sent no TMDB id in {answers} {} lookups; skipping the rest of them this run",
+                        kind.as_str()
+                    );
+                    skipped.push((kind, 1));
+                }
+            }
+            p.processed.fetch_add(1, Ordering::SeqCst);
             continue;
         }
-        let (answers, with_id) = probe.get(g.kind.as_str()).copied().unwrap_or_default();
-        if answers >= PROBE_LOOKUPS && with_id == 0 {
-            tracing::info!(
-                "provider sent no TMDB id in {answers} {} lookups; skipping the rest of them this run",
-                g.kind.as_str()
-            );
-            skipped.push((g.kind, g.ids.len()));
-            p.processed.fetch_add(g.ids.len() as i64, Ordering::SeqCst);
-            continue;
-        }
-        let (table, id_col, _, _) = kind_parts(g.kind);
-        let mut found: Option<(String, Option<String>)> = None;
-        let mut asked = 0;
-        for &id in &g.ids {
-            if p.stopped.load(Ordering::SeqCst) {
-                return Ok(skipped);
+        tokio::time::sleep_until(next_start).await;
+        next_start = tokio::time::Instant::now() + PROVIDER_DELAY;
+        match provider_info(st, kind, id).await? {
+            None => p.failed(1),
+            Some(had_id) => {
+                p.ok(1);
+                let c = probe.entry(kind.as_str()).or_default();
+                c.0 += 1;
+                if had_id {
+                    c.1 += 1;
+                    found += 1;
+                }
             }
-            tokio::time::sleep_until(next_start).await;
-            next_start = tokio::time::Instant::now() + PROVIDER_DELAY;
-            asked += 1;
-            if !provider_info(st, g.kind, id).await? {
-                p.failed(1);
-                continue;
-            }
-            p.ok(1, true);
-            let counts = probe.entry(g.kind.as_str()).or_default();
-            counts.0 += 1;
-            let row: (Option<String>, Option<String>) = sqlx::query_as(sqlx::AssertSqlSafe(
-                format!("SELECT NULLIF(tmdb_id, ''), imdb_id FROM {table} WHERE {id_col} = ?"),
-            ))
-            .bind(id)
-            .fetch_one(&st.db)
-            .await?;
-            if let (Some(t), imdb) = row {
-                counts.1 += 1;
-                found = Some((t, imdb));
-                break;
-            }
-        }
-        let rest = &g.ids[asked..];
-        if let (Some((t, imdb)), false) = (found, rest.is_empty()) {
-            let mut tx = st.db.begin().await?;
-            for &id in rest {
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "UPDATE {table} SET tmdb_id = COALESCE(NULLIF(tmdb_id, ''), ?), imdb_id = COALESCE(imdb_id, ?), provider_checked = ? WHERE {id_col} = ?"
-                )))
-                .bind(&t)
-                .bind(&imdb)
-                .bind(now_secs())
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-            }
-            tx.commit().await?;
-            p.ok(rest.len(), true);
         }
     }
-    Ok(skipped)
+    Ok((skipped, found))
 }
 
-/// TMDB lookups (searches or details) on a few parallel workers. A search that finds an id isn't counted yet: its details are.
+async fn is_unverified(st: &AppState, kind: Kind, id: i64) -> anyhow::Result<bool> {
+    let (table, id_col, _, _) = kind_parts(kind);
+    let src: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT tmdb_source FROM {table} WHERE {id_col} = ?"
+    )))
+    .bind(id)
+    .fetch_one(&st.db)
+    .await?;
+    Ok(src.as_deref() == Some(SRC_UNVERIFIED))
+}
+
+/// TMDB detail requests on a few parallel workers.
 async fn run_tmdb_pool(
     st: &AppState,
     key: &str,
@@ -799,7 +774,10 @@ async fn run_tmdb_pool(
                 let Some(g) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() else {
                     return Ok(());
                 };
-                tmdb_group(&st, &key, g, &p).await?;
+                match fetch_details(&st, &key, g.kind, &g.tmdb_id, &g.ids).await? {
+                    true => p.ok(g.ids.len()),
+                    false => p.failed(g.ids.len()),
+                }
             }
         });
     }
@@ -812,52 +790,6 @@ async fn run_tmdb_pool(
         }
     }
     first_err.map_or(Ok(()), Err)
-}
-
-async fn tmdb_group(st: &AppState, key: &str, g: Group, p: &Progress) -> anyhow::Result<()> {
-    let (table, id_col, _, is_movie) = kind_parts(g.kind);
-    let n = g.ids.len();
-    if let Some(t) = &g.tmdb_id {
-        match fetch_details(st, key, g.kind, t, &g.ids).await? {
-            true => p.ok(n, true),
-            false => p.failed(n),
-        }
-        return Ok(());
-    }
-    match tmdb::search(
-        &st.http,
-        &integrations::tmdb_base(),
-        key,
-        is_movie,
-        &g.title,
-        g.year,
-    )
-    .await
-    {
-        Ok(Some((found, _))) => {
-            let mut tx = st.db.begin().await?;
-            for &id in &g.ids {
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "UPDATE {table} SET tmdb_id = ? WHERE {id_col} = ?"
-                )))
-                .bind(found.to_string())
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-            }
-            tx.commit().await?;
-            p.ok(n, false); // counted when the details arrive
-        }
-        Ok(None) => {
-            mark_tmdb_checked(st, g.kind, &g.ids).await?;
-            p.ok(n, true);
-        }
-        Err(e) => {
-            tracing::debug!("TMDB search '{}': {e}", g.title);
-            p.failed(n);
-        }
-    }
-    Ok(())
 }
 
 /// Start the daily jobs at their local time (Settings → Schedules), once per day.
@@ -908,77 +840,153 @@ pub async fn maybe_run_daily(st: &AppState) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn search_titles() {
-        assert_eq!(
-            search_title("NL | Bitterzoet (2024)"),
-            ("Bitterzoet".into(), Some(2024))
-        );
-        assert_eq!(
-            search_title("EN: The Batman (2022) 4K HDR"),
-            ("The Batman".into(), Some(2022))
-        );
-        assert_eq!(
-            search_title("Spider-Man: No Way Home (2021)"),
-            ("Spider-Man: No Way Home".into(), Some(2021))
-        );
-        assert_eq!(search_title("1923").0, "1923");
-    }
-
-    #[test]
-    fn grouping_keeps_first_order() {
-        let g = |id| Group {
-            kind: Kind::Movie,
-            title: String::new(),
-            year: None,
-            tmdb_id: None,
-            ids: vec![id],
-        };
-        let out = group_by([
-            ("b", 1, g(1)),
-            ("a", 2, g(2)),
-            ("b", 3, g(3)),
-            ("a", 4, g(4)),
-            ("c", 5, g(5)),
-        ]);
-        let ids: Vec<Vec<i64>> = out.iter().map(|g| g.ids.clone()).collect();
-        assert_eq!(ids, vec![vec![1, 3], vec![2, 4], vec![5]]);
-    }
-
-    #[tokio::test]
-    async fn bulk_ids_are_adopted_once_and_only_when_valid() {
+    async fn db() -> (std::path::PathBuf, sqlx::SqlitePool) {
         let dir = std::env::temp_dir().join(format!("m3usort-enr-{}", crate::auth::random_code(8)));
         std::fs::create_dir_all(&dir).unwrap();
         let db = crate::db::open(&dir.join("t.db"), true).await.unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn tmdb_ids_are_cleaned() {
+        assert_eq!(clean_tmdb_id(" 508965 "), Some("508965".into()));
+        assert_eq!(clean_tmdb_id("0"), None);
+        assert_eq!(clean_tmdb_id(""), None);
+        assert_eq!(clean_tmdb_id("tt123"), None);
+        assert_eq!(clean_tmdb_id("00155"), Some("155".into()));
+    }
+
+    #[tokio::test]
+    async fn bulk_ids_respect_sources() {
+        let (dir, db) = db().await;
         sqlx::query(
-            "INSERT INTO movies (stream_id, name, provider_tmdb, tmdb_id, first_seen, last_seen) VALUES
-             (1, 'a', '155', NULL, 0, 0), (2, 'b', '0', NULL, 0, 0), (3, 'c', '', NULL, 0, 0),
-             (4, 'd', 'tt123', NULL, 0, 0), (5, 'e', ' 27205 ', NULL, 0, 0), (6, 'f', '999', '42', 0, 0)",
+            "INSERT INTO movies (stream_id, name, provider_tmdb, tmdb_id, tmdb_source, poster, tmdb_checked, first_seen, last_seen) VALUES
+             (1, 'a', '155', NULL, NULL, NULL, NULL, 0, 0),
+             (2, 'b', '0', NULL, NULL, NULL, NULL, 0, 0),
+             (3, 'c', 'tt1', NULL, NULL, NULL, NULL, 0, 0),
+             (4, 'd', '27205', '42', 'provider', 'p', 1, 0, 0),
+             (5, 'e', '27205', '99', 'unverified', 'p', 1, 0, 0),
+             (6, 'f', '27205', '27205', 'jellyfin', 'p', 1, 0, 0)",
         )
         .execute(&db)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO series (series_id, name, provider_tmdb, first_seen, last_seen) VALUES (7, 's', '1396', 0, 0)")
-            .execute(&db)
-            .await
-            .unwrap();
         assert_eq!(adopt_bulk_ids(&db).await.unwrap(), 3);
-        assert_eq!(adopt_bulk_ids(&db).await.unwrap(), 0);
-        let ids: Vec<Option<String>> =
-            sqlx::query_scalar("SELECT tmdb_id FROM movies ORDER BY stream_id")
+        let rows: Vec<(Option<String>, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT tmdb_id, tmdb_source, poster FROM movies ORDER BY stream_id")
                 .fetch_all(&db)
                 .await
                 .unwrap();
-        let ids: Vec<Option<&str>> = ids.iter().map(|o| o.as_deref()).collect();
+        let s = |v: &Option<String>| v.clone().unwrap_or_default();
+        let got: Vec<(String, String, String)> =
+            rows.iter().map(|(a, b, c)| (s(a), s(b), s(c))).collect();
+        let w = |a: &str, b: &str, c: &str| (a.to_string(), b.to_string(), c.to_string());
         assert_eq!(
-            ids,
-            vec![Some("155"), None, None, None, Some("27205"), Some("42")]
+            got,
+            vec![
+                w("155", "list", ""),
+                w("", "", ""),
+                w("", "", ""),
+                w("42", "provider", "p"), // provider id never overwritten
+                w("27205", "list", ""),   // differing unverified id replaced, details cleared
+                w("27205", "list", "p"),  // same id: details kept
+            ]
         );
-        let c = bulk_id_counts(&db).await.unwrap();
+        let c = id_counts(&db).await.unwrap();
         assert_eq!(
-            (c.movies, c.movies_bulk, c.movies_with_id, c.series_bulk),
-            (6, 3, 3, 1)
+            (
+                c.movies,
+                c.movies_provider,
+                c.movies_jellyfin,
+                c.movies_unverified
+            ),
+            (6, 4, 0, 0)
         );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// The migration's classification of ids stored by earlier versions.
+    #[tokio::test]
+    async fn migration_classifies_old_ids() {
+        let dir = std::env::temp_dir().join(format!("m3usort-mig-{}", crate::auth::random_code(8)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.db");
+        // Build the schema up to 0008, add old-style rows, then run 0009.
+        let opts = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let pool = sqlx::SqlitePool::connect_with(opts).await.unwrap();
+        for f in [
+            "0001_init",
+            "0002_settings",
+            "0003_login_failures",
+            "0004_catalog",
+            "0005_library",
+            "0006_playlist",
+            "0007_enrichment",
+            "0008_bulk_tmdb",
+        ] {
+            let sql = std::fs::read_to_string(format!("migrations/{f}.sql")).unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO movies (stream_id, name, provider_tmdb, tmdb_id, provider_checked, tmdb_checked, poster, plot, first_seen, last_seen) VALUES
+             (1, 'list',     '155', '155', NULL, 5, 'p', 'x', 0, 0),
+             (2, 'provider', NULL,  '42',  1,    NULL, NULL, 'x', 0, 0),
+             (3, 'unsure',   NULL,  '43',  1,    5, 'p', 'x', 0, 0),
+             (4, 'guess',    NULL,  '44',  NULL, 5, 'p', 'x', 0, 0),
+             (5, 'notfound', NULL,  NULL,  1,    5, NULL, 'x', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO cast_members (kind, item_id, person_id, name, ord) VALUES ('movie', 4, 1, 'A', 0), ('movie', 3, 1, 'A', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let sql = std::fs::read_to_string("migrations/0009_tmdb_source.sql").unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&pool)
+            .await
+            .unwrap();
+        type Row = (
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+        );
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT tmdb_id, tmdb_source, provider_checked, tmdb_checked, poster, plot FROM movies ORDER BY stream_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let o = |v: &str| Some(v.to_string());
+        assert_eq!(
+            rows[0],
+            (o("155"), o("list"), None, Some(5), o("p"), o("x"))
+        );
+        assert_eq!(
+            rows[1],
+            (o("42"), o("provider"), Some(1), None, None, o("x"))
+        );
+        assert_eq!(
+            rows[2],
+            (o("43"), o("unverified"), None, Some(5), o("p"), o("x"))
+        );
+        assert_eq!(rows[3], (None, None, None, None, None, None));
+        assert_eq!(rows[4], (None, None, Some(1), None, None, o("x")));
+        let cast: Vec<i64> =
+            sqlx::query_scalar("SELECT item_id FROM cast_members ORDER BY item_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(cast, vec![3]);
         std::fs::remove_dir_all(dir).ok();
     }
 }

@@ -595,3 +595,85 @@ pub async fn seasons(st: &AppState, id: &str) -> Result<Vec<Season>, String> {
     let snap = snapshot(st, false).await?;
     Ok(snap.seasons.get(id).cloned().unwrap_or_default())
 }
+
+// ------------------------------------------------------------------ TMDB ids
+
+/// Read Jellyfin's TMDB id (ProviderIds.Tmdb) for movies and series in M3Usort's
+/// library. Jellyfin matched them and mistakes are fixed there with Identify,
+/// so this is an id, not a guess. A provider or bulk-list id always wins.
+/// Ok(None) when Jellyfin isn't set up; otherwise (changed, seen).
+pub async fn sync_ids(st: &AppState) -> Result<Option<(usize, usize)>, String> {
+    use crate::catalog::Kind;
+    use crate::enrich::{SRC_JELLYFIN, SRC_LIST, SRC_PROVIDER, clean_tmdb_id, set_id};
+    let Some(c) = conn(st).await else {
+        return Ok(None);
+    };
+    let items = c
+        .items(
+            st,
+            &[
+                ("IncludeItemTypes", "Movie,Series"),
+                ("Fields", "Path,ProviderIds"),
+                ("EnableImages", "false"),
+            ],
+        )
+        .await?;
+    let (mut changed, mut seen) = (0, 0);
+    let mut tx = st.db.begin().await.map_err(|e| e.to_string())?;
+    for v in &items {
+        let Some(tmdb) = v
+            .get("ProviderIds")
+            .and_then(|p| p.get("Tmdb"))
+            .map(as_text)
+            .and_then(|t| clean_tmdb_id(&t))
+        else {
+            continue;
+        };
+        let is_movie = text(v, "Type") == "Movie";
+        let path = text(v, "Path");
+        // Only the folder name is shared between Jellyfin's mount and ours.
+        let folder = if is_movie {
+            Path::new(&path).parent().and_then(Path::file_name)
+        } else {
+            Path::new(&path).file_name()
+        };
+        let Some(folder) = folder.map(|f| f.to_string_lossy().to_string()) else {
+            continue;
+        };
+        let (kind, sql) = if is_movie {
+            (
+                Kind::Movie,
+                "SELECT m.stream_id, NULLIF(m.tmdb_id, ''), m.tmdb_source FROM library_movies l
+                 JOIN movies m ON m.stream_id = l.stream_id WHERE l.folder = ?",
+            )
+        } else {
+            (
+                Kind::Series,
+                "SELECT s.series_id, NULLIF(s.tmdb_id, ''), s.tmdb_source FROM library_series l
+                 JOIN series s ON s.series_id = l.series_id WHERE l.folder = ?",
+            )
+        };
+        let row: Option<(i64, Option<String>, Option<String>)> = sqlx::query_as(sql)
+            .bind(&folder)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        let Some((id, cur, src)) = row else {
+            continue;
+        };
+        seen += 1;
+        let src = src.unwrap_or_default();
+        if src == SRC_PROVIDER
+            || src == SRC_LIST
+            || (src == SRC_JELLYFIN && cur.as_deref() == Some(tmdb.as_str()))
+        {
+            continue;
+        }
+        set_id(&mut tx, kind, id, &tmdb, cur.as_deref(), SRC_JELLYFIN)
+            .await
+            .map_err(|e| e.to_string())?;
+        changed += 1;
+    }
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(Some((changed, seen)))
+}
