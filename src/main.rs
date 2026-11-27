@@ -24,6 +24,8 @@ Commands:
   gen-key       Print a new random M3USORT_KEY
   rotate-key    Re-encrypt all stored credentials with a new key (stop the app first)
   reset-admin   Set a new random admin password and log out all admin sessions
+  reset-ip IP   Clear the login lockout for one IP (or --all for every IP)
+  locked-ips    List IPs that are locked out right now
   version       Print version and commit
   healthcheck   Exit 0 if the running app answers on /healthcheck (for Docker HEALTHCHECK)
 ";
@@ -46,6 +48,8 @@ async fn main() {
         }
         "rotate-key" => rotate_key().await,
         "reset-admin" => reset_admin().await,
+        "reset-ip" => reset_ip(std::env::args().nth(2)).await,
+        "locked-ips" => locked_ips().await,
         "healthcheck" => healthcheck().await,
         "version" | "-V" | "--version" => {
             println!("{}", version::version_line());
@@ -217,6 +221,52 @@ async fn reset_admin() -> anyhow::Result<()> {
     pool.close().await;
     println!("New admin password: {password}");
     println!("All admin sessions are logged out. Change it under Admin after logging in.");
+    Ok(())
+}
+
+async fn open_existing_db() -> anyhow::Result<sqlx::SqlitePool> {
+    let cfg = Config::from_env()?;
+    anyhow::ensure!(
+        cfg.db_path().exists(),
+        "no database at {}",
+        cfg.db_path().display()
+    );
+    db::open(&cfg.db_path(), false).await
+}
+
+/// Clear a login lockout. Works while the app runs (`docker exec`): lockouts live
+/// in the database, and the app checks them there on every attempt.
+async fn reset_ip(arg: Option<String>) -> anyhow::Result<()> {
+    let arg = arg.context("usage: m3usort reset-ip <ip> | --all   (see: m3usort locked-ips)")?;
+    let ip = if arg == "--all" {
+        None
+    } else {
+        Some(
+            arg.parse::<std::net::IpAddr>()
+                .map_err(|_| anyhow::anyhow!("'{arg}' is not an IP address"))?,
+        )
+    };
+    let pool = open_existing_db().await?;
+    let n = auth::reset_ip(&pool, ip).await?;
+    pool.close().await;
+    match (ip, n) {
+        (Some(ip), 0) => println!("{ip} had no failed logins; nothing to reset."),
+        (Some(ip), _) => println!("Lockout and failed-login count cleared for {ip}."),
+        (None, n) => println!("Cleared failed logins for {n} IP(s)."),
+    }
+    Ok(())
+}
+
+async fn locked_ips() -> anyhow::Result<()> {
+    let pool = open_existing_db().await?;
+    let list = auth::locked_ips(&pool).await?;
+    pool.close().await;
+    if list.is_empty() {
+        println!("No IPs are locked out.");
+    }
+    for (ip, min) in list {
+        println!("{ip}\tlocked for {min} more minute(s)");
+    }
     Ok(())
 }
 

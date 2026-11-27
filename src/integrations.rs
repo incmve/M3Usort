@@ -163,12 +163,24 @@ pub async fn test_jellyfin(client: &Client, base: &str, api_key: &str) -> Result
     Ok(format!("Connected to \"{name}\", Jellyfin {version}"))
 }
 
-/// TMDB `GET /3/configuration`. Accepts a v3 API key or a v4 read access token.
+pub const TMDB_BASE: &str = "https://api.themoviedb.org";
+
+/// TMDB key test, using the same call the Python version uses in production:
+/// `GET /3/search/movie?api_key=…&query=…&language=en-US` (v3 API key as query
+/// parameter). A v4 read access token (a JWT, starts with `eyJ`) is sent as a
+/// Bearer header instead, which TMDB also accepts on v3 endpoints.
 pub async fn test_tmdb(client: &Client, key: &str) -> Result<String, String> {
+    test_tmdb_at(client, TMDB_BASE, key).await
+}
+
+pub async fn test_tmdb_at(client: &Client, base: &str, key: &str) -> Result<String, String> {
     let key = key.trim();
-    let mut url = Url::parse("https://api.themoviedb.org/3/configuration").expect("static URL");
+    let mut url = Url::parse(&format!("{base}/3/search/movie")).map_err(|e| e.to_string())?;
+    url.query_pairs_mut()
+        .append_pair("query", "Inception")
+        .append_pair("language", "en-US");
     let req = if key.starts_with("eyJ") {
-        client.get(url).bearer_auth(key) // v4 read access token (a JWT)
+        client.get(url).bearer_auth(key)
     } else {
         url.query_pairs_mut().append_pair("api_key", key);
         client.get(url)
@@ -178,10 +190,22 @@ pub async fn test_tmdb(client: &Client, key: &str) -> Result<String, String> {
         .await
         .map_err(|e| format!("Cannot reach TMDB: {}", root_cause(&e)))?;
     match resp.status().as_u16() {
-        200 => Ok("TMDB key accepted".into()),
-        401 => Err("TMDB refused the key".into()),
-        s => Err(format!("TMDB answered HTTP {s}")),
+        200 => {}
+        401 => return Err("TMDB refused the key (HTTP 401)".into()),
+        s => return Err(format!("TMDB answered HTTP {s}")),
     }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|_| "Answer is not TMDB JSON".to_string())?;
+    let n = body
+        .get("results")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    Ok(format!(
+        "TMDB key accepted (test search returned {n} result(s))"
+    ))
 }
 
 /// Folder must exist inside the container and be writable by the app's user.
@@ -275,5 +299,83 @@ mod tests {
         assert!(test_folder("/definitely/not/here").await.is_err());
         let d = std::env::temp_dir();
         assert!(test_folder(d.to_str().unwrap()).await.is_ok());
+    }
+
+    /// Tiny in-process stand-in for TMDB and an Xtream proxy.
+    async fn mock_server() -> String {
+        use axum::extract::Query;
+        use axum::http::{HeaderMap, StatusCode};
+        use axum::routing::get;
+        use std::collections::HashMap;
+        let app = axum::Router::new()
+            .route(
+                "/3/search/movie",
+                get(|Query(q): Query<HashMap<String, String>>, h: HeaderMap| async move {
+                    let bearer = h.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer eyJgood");
+                    let ok = q.get("api_key").map(String::as_str) == Some("goodkey") || bearer;
+                    if ok && q.contains_key("query") && q.get("language").map(String::as_str) == Some("en-US") {
+                        (StatusCode::OK, r#"{"results":[{"id":27205}]}"#)
+                    } else {
+                        (StatusCode::UNAUTHORIZED, r#"{"status_code":7}"#)
+                    }
+                }),
+            )
+            .route(
+                "/player_api.php",
+                get(|Query(q): Query<HashMap<String, String>>, h: HeaderMap| async move {
+                    let ua_ok = h.get("user-agent").and_then(|v| v.to_str().ok()).is_some_and(|v| v.contains("VLC"));
+                    let ok = ua_ok && q.get("username").map(String::as_str) == Some("u") && q.get("password").map(String::as_str) == Some("p");
+                    format!(r#"{{"user_info":{{"auth":{},"status":"Active","exp_date":"2524876541","max_connections":"2"}}}}"#, u8::from(ok))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    fn local_client() -> Client {
+        Client::builder().no_proxy().build().unwrap()
+    }
+
+    #[tokio::test]
+    async fn tmdb_like_python_version() {
+        let base = mock_server().await;
+        let c = local_client();
+        assert!(
+            test_tmdb_at(&c, &base, "goodkey")
+                .await
+                .unwrap()
+                .contains("1 result")
+        );
+        assert!(
+            test_tmdb_at(&c, &base, "eyJgood").await.is_ok(),
+            "v4 token as Bearer"
+        );
+        assert!(
+            test_tmdb_at(&c, &base, "badkey")
+                .await
+                .unwrap_err()
+                .contains("401")
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_login() {
+        let base = mock_server().await;
+        let c = local_client();
+        let ok = test_provider(
+            &c,
+            &format!("{base}/get.php?username=u&password=p&type=m3u_plus"),
+        )
+        .await
+        .unwrap();
+        assert!(ok.contains("2050-01-04") && ok.contains("max connections: 2"));
+        assert!(
+            test_provider(&c, &format!("{base}/get.php?username=u&password=x"))
+                .await
+                .unwrap_err()
+                .contains("refused")
+        );
     }
 }

@@ -5,10 +5,12 @@
 {% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
 
 <h2>Settings</h2>
+{% for (step, title, rows) in sections %}
 <div class="card">
-  <table>{% for (k, v) in settings %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}</table>
-  <p class="help">Editing settings comes in a later version. Credentials are not listed here; see below.</p>
+  <div class="actions" style="margin-top:0"><strong>{{ title }}</strong><a class="btn secondary" href="/admin/settings/{{ step }}">Edit</a></div>
+  <table>{% for (k, v) in rows %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}</table>
 </div>
+{% endfor %}
 
 <h2>Stored credentials</h2>
 {% if credentials.is_empty() %}
@@ -34,11 +36,12 @@
   <div class="actions"><span></span><button class="btn" type="submit">Change</button></div>
 </form>
 
-<h2>Change playlist password</h2>
+<h2>Playlist password</h2>
+{% if !playlist_password_set %}<div class="msg err">No playlist password set: playlist downloads are off until you set one.</div>{% endif %}
 <form method="post" action="/admin/playlist-password" class="card" autocomplete="off">
   <label for="p_cur">Current admin password</label><input type="password" id="p_cur" name="current" autocomplete="current-password">
-  <label for="p_new">New playlist password</label><input type="password" id="p_new" name="new" autocomplete="new-password">
+  <label for="p_new">{% if playlist_password_set %}New playlist password{% else %}Playlist password{% endif %}</label><input type="password" id="p_new" name="new" autocomplete="new-password">
   <label for="p_new2">New playlist password (again)</label><input type="password" id="p_new2" name="new2" autocomplete="new-password">
-  <div class="actions"><span></span><button class="btn" type="submit">Change</button></div>
+  <div class="actions"><span></span><button class="btn" type="submit">{% if playlist_password_set %}Change{% else %}Set{% endif %}</button></div>
 </form>
 {% endblock %}

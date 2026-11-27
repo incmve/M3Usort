@@ -40,6 +40,7 @@ impl AppState {
     pub async fn new(db: SqlitePool, key: MasterKey, update: SharedStatus) -> anyhow::Result<Self> {
         let setup_done = s::setup_completed(&db).await?;
         let setup_code = auth::random_code(8);
+        let limiter = Arc::new(LoginLimiter::new(db.clone()));
         if !setup_done {
             tracing::warn!("Setup not finished. Setup code: {setup_code}");
         }
@@ -49,7 +50,7 @@ impl AppState {
             db,
             update,
             http: crate::integrations::http_client()?,
-            limiter: Arc::new(LoginLimiter::default()),
+            limiter,
             setup_code: Arc::new(setup_code),
             draft: Arc::new(Mutex::new(None)),
             setup_done: Arc::new(AtomicBool::new(setup_done)),
@@ -90,6 +91,9 @@ impl Page {
             show_nav: false,
         }
     }
+    pub fn admin(title: &str) -> Self {
+        Self::nav(title, true)
+    }
     fn nav(title: &str, is_admin: bool) -> Self {
         Self {
             is_admin,
@@ -118,6 +122,10 @@ pub fn app_router(state: AppState) -> Router {
         .route("/password", post(change_admin_password))
         .route("/playlist-password", post(change_playlist_password))
         .route("/credentials", post(show_credentials))
+        .route(
+            "/settings/{step}",
+            get(setup::admin_section).post(setup::admin_section_save),
+        )
         .route("/logout", post(logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
 
@@ -226,7 +234,7 @@ async fn check_admin_password(
     password: String,
 ) -> Result<(), String> {
     let ip = addr.ip();
-    if let Err(min) = st.limiter.check(ip) {
+    if let Err(min) = st.limiter.check(ip).await {
         return Err(format!(
             "Too many wrong passwords. Try again in {min} minutes."
         ));
@@ -240,10 +248,10 @@ async fn check_admin_password(
         .await
         .unwrap_or(false);
     if ok {
-        st.limiter.reset(ip);
+        st.limiter.reset(ip).await;
         Ok(())
     } else {
-        st.limiter.fail(ip);
+        st.limiter.fail(ip).await;
         tracing::warn!("wrong admin password from {ip}");
         Err("Wrong password.".into())
     }
@@ -293,14 +301,18 @@ async fn logout() -> Response {
 
 // ------------------------------------------------------------------ admin
 
+/// (wizard step, title, rows) for one settings card on the admin page.
+type Section = (u8, &'static str, Vec<(String, String)>);
+
 #[derive(Template)]
 #[template(path = "admin.html")]
 struct AdminTpl {
     page: Page,
     message: String,
     error: String,
-    settings: Vec<(String, String)>,
+    sections: Vec<Section>,
     credentials: Vec<(String, String)>,
+    playlist_password_set: bool,
 }
 
 async fn admin_render(
@@ -309,20 +321,132 @@ async fn admin_render(
     error: String,
     credentials: Vec<(String, String)>,
 ) -> Response {
-    let settings = s::get_all(&st.db)
+    let all: std::collections::HashMap<String, String> = s::get_all(&st.db)
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|(k, _)| {
-            !k.ends_with("_hash") && k != s::SESSION_GENERATION && k != s::SETUP_COMPLETED
-        })
         .collect();
+    let has_secret = |name: &str| {
+        let db = st.db.clone();
+        let name = name.to_string();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM secrets WHERE name = ?")
+                .bind(name)
+                .fetch_one(&db)
+                .await
+                .unwrap_or(0)
+                > 0
+        }
+    };
+    let v = |k: &str| {
+        let x = all.get(k).cloned().unwrap_or_default();
+        if x.is_empty() {
+            "Not set".to_string()
+        } else {
+            x
+        }
+    };
+    let yn = |k: &str| {
+        if all.get(k).map(String::as_str) == Some("1") {
+            "Yes"
+        } else {
+            "No"
+        }
+        .to_string()
+    };
+    let set_or_not = |b: bool| if b { "Set (encrypted)" } else { "Not set" }.to_string();
+    let sections = vec![
+        (
+            2,
+            setup::step_info(2).title,
+            vec![(
+                "Provider URL".to_string(),
+                set_or_not(has_secret(s::SECRET_PROVIDER_URL).await),
+            )],
+        ),
+        (
+            3,
+            setup::step_info(3).title,
+            vec![
+                ("Movies".into(), v(s::MOVIES_DIR)),
+                ("Series".into(), v(s::SERIES_DIR)),
+            ],
+        ),
+        (
+            4,
+            setup::step_info(4).title,
+            vec![
+                ("Enabled".into(), yn(s::JELLYFIN_ENABLED)),
+                ("URL".into(), v(s::JELLYFIN_URL)),
+                (
+                    "API key".into(),
+                    set_or_not(has_secret(s::SECRET_JELLYFIN_API_KEY).await),
+                ),
+            ],
+        ),
+        (
+            5,
+            setup::step_info(5).title,
+            vec![(
+                "API key".into(),
+                set_or_not(has_secret(s::SECRET_TMDB_API_KEY).await),
+            )],
+        ),
+        (
+            6,
+            setup::step_info(6).title,
+            vec![
+                (
+                    "Playlist".into(),
+                    format!(
+                        "every {} h → {}",
+                        v(s::PLAYLIST_REFRESH_HOURS),
+                        v(s::PLAYLIST_OUTPUT)
+                    ),
+                ),
+                ("Custom group".into(), v(s::CUSTOM_GROUP_TITLE)),
+                (
+                    "VOD scheduler".into(),
+                    format!(
+                        "{} (every {} h)",
+                        yn(s::VOD_SCHEDULER_ENABLED),
+                        v(s::VOD_SCAN_HOURS)
+                    ),
+                ),
+                (
+                    "Overwrite movies / episodes".into(),
+                    format!("{} / {}", yn(s::OVERWRITE_MOVIES), yn(s::OVERWRITE_SERIES)),
+                ),
+                ("Matching".into(), v(s::MATCH_TYPE)),
+                (
+                    "TMDB enrichment".into(),
+                    format!(
+                        "{} ({})",
+                        yn(s::TMDB_ENRICH_ENABLED),
+                        v(s::TMDB_ENRICH_TIME)
+                    ),
+                ),
+                (
+                    "Cast enrichment".into(),
+                    format!(
+                        "{} ({})",
+                        yn(s::CAST_ENRICH_ENABLED),
+                        v(s::CAST_ENRICH_TIME)
+                    ),
+                ),
+            ],
+        ),
+    ];
+    let playlist_password_set = all
+        .get(s::PLAYLIST_PASSWORD_HASH)
+        .is_some_and(|h| !h.is_empty());
     render(AdminTpl {
-        page: Page::nav("Admin", true),
+        page: Page::admin("Admin"),
         message,
         error,
-        settings,
+        sections,
         credentials,
+        playlist_password_set,
     })
 }
 

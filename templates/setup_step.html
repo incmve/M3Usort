@@ -1,11 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="steps">{% for i in 1..=last_step %}<span{% if i <= step %} class="on"{% endif %}></span>{% endfor %}</div>
-<h1>Step {{ step }} of {{ last_step }}: {{ title }}</h1>
+{% match progress %}
+  {% when Some((step, last)) %}
+    <div class="steps">{% for i in 1..=*last %}<span{% if i <= *step %} class="on"{% endif %}></span>{% endfor %}</div>
+  {% when None %}
+{% endmatch %}
+<h1>{{ heading }}</h1>
 <p>{{ intro }}</p>
 {% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% endif %}
 {% if !success.is_empty() %}<div class="msg ok">{{ success }}</div>{% endif %}
-<form method="post" action="/setup/{{ step }}" class="card" autocomplete="off">
+<form method="post" action="{{ action }}" class="card" autocomplete="off">
+  <input type="hidden" name="_submitted" value="1">
   {% for f in fields %}
     {% if f.is_checkbox() %}
       <div class="check"><input type="checkbox" id="{{ f.name }}" name="{{ f.name }}"{% if f.checked %} checked{% endif %}><label for="{{ f.name }}">{{ f.label }}</label></div>
@@ -31,8 +36,11 @@
     {% if !f.help.is_empty() %}<div class="help">{{ f.help }}</div>{% endif %}
   {% endfor %}
   <div class="actions">
-    {% if step > 1 %}<a class="btn secondary" href="/setup/{{ step - 1 }}">← Back</a>{% else %}<a class="btn secondary" href="/setup">← Back</a>{% endif %}
-    <button class="btn" type="submit">{% if step == 2 || step == 4 || step == 5 %}Test &amp; next →{% else %}Next →{% endif %}</button>
+    <a class="btn secondary" href="{{ back }}">← Back</a>
+    <span style="display:flex;gap:.6rem;align-items:center">
+      {% if finish_link %}<a href="/setup/summary">Skip to finish</a>{% endif %}
+      <button class="btn" type="submit">{{ submit_label }}</button>
+    </span>
   </div>
 </form>
 {% endblock %}

@@ -7,10 +7,10 @@
   {% for (k, v) in rows %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
   </table>
 </div>
-<p class="help">Credentials are stored encrypted with your <code>M3USORT_KEY</code>. Passwords are stored as salted Argon2id hashes.</p>
+<p class="help">Anything "Not set" can be filled in later under Admin → Settings. Credentials are stored encrypted with your <code>M3USORT_KEY</code>. Passwords are stored as salted Argon2id hashes.</p>
 <form method="post" action="/setup/finish">
   <div class="actions">
-    <a class="btn secondary" href="/setup/6">← Back</a>
+    <a class="btn secondary" href="javascript:history.back()">← Back</a>
     <button class="btn" type="submit">Finish</button>
   </div>
 </form>

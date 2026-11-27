@@ -34,8 +34,13 @@ is good enough.
    - Credentials: XChaCha20-Poly1305 with a key derived from `M3USORT_KEY`.
 6. **Setup wizard.** Step 1 is the key (app stops until `M3USORT_KEY` is set and the
    container is recreated). Then: admin password → provider/proxy (tested) →
-   folders (write-tested) → Jellyfin (optional, tested) → TMDB (optional) →
-   schedules → summary → Finish. Nothing is saved before Finish; one transaction.
+   folders → Jellyfin → TMDB → schedules → summary → Finish. **Only the admin password
+   and provider are required**; after the provider you can skip to Finish. Optional
+   parts are set later under Admin → Settings, which reuses the wizard's forms and
+   tests. Stored secrets are never put back into form HTML: an empty field keeps the
+   stored value. Nothing is saved before Finish; one transaction.
+   TMDB is tested with the same call the Python version uses
+   (`/3/search/movie?api_key=…&query=…&language=en-US`).
    A one-time setup code from the container log is required, so nobody else on the
    LAN can claim the admin account first.
 7. **Backup/restore:** backup = database snapshot (no key inside). Restore from the
@@ -43,7 +48,8 @@ is good enough.
 8. **Admin sessions:** signed cookie (HMAC-SHA256, key derived from `M3USORT_KEY`),
    7 days, `HttpOnly; SameSite=Strict`. A password change or `reset-admin` bumps a
    generation counter that logs out every session. Lockout per IP (5 tries / 30 min),
-   so a guest can't lock the admin out from another device.
+   so a guest can't lock the admin out from another device. Lockouts live in the
+   database so `m3usort reset-ip <ip>` can clear them while the app runs.
    **Credentials viewable** by admin after re-entering the admin password.
    Forgotten admin password: `m3usort reset-admin` from the host.
 

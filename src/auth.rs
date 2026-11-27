@@ -1,9 +1,9 @@
 //! Passwords, admin sessions and login rate limiting.
 
-use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use sqlx::SqlitePool;
 
 use argon2::{Algorithm, Argon2, Params, PasswordHasher, PasswordVerifier, Version};
 use base64::Engine;
@@ -143,50 +143,113 @@ fn now_secs() -> u64 {
 
 // ---------------------------------------------------------------- rate limiting
 
-/// Per-IP failure counter. Per IP (not global like the Python version) so a guest
-/// typing wrong passwords can't lock the admin out from another device.
-#[derive(Default)]
+/// Per-IP failure counter, stored in the database. Per IP (not global like the
+/// Python version) so a guest typing wrong passwords can't lock the admin out
+/// from another device. Clear with `m3usort reset-ip <ip>`.
+#[derive(Clone)]
 pub struct LoginLimiter {
-    inner: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+    db: SqlitePool,
 }
 
 impl LoginLimiter {
-    /// `Err(minutes_left)` while locked.
-    pub fn check(&self, ip: IpAddr) -> Result<(), u64> {
-        let mut m = self.inner.lock().expect("limiter lock");
-        match m.get(&ip) {
-            Some((n, since)) if *n >= MAX_FAILURES => {
-                let elapsed = since.elapsed();
-                if elapsed < LOCKOUT {
-                    Err((LOCKOUT - elapsed).as_secs().div_ceil(60))
-                } else {
-                    m.remove(&ip);
-                    Ok(())
-                }
-            }
+    pub fn new(db: SqlitePool) -> Self {
+        Self { db }
+    }
+
+    /// `Err(minutes_left)` while locked. A database error never locks anyone out.
+    pub async fn check(&self, ip: IpAddr) -> Result<(), u64> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT locked_until FROM login_failures WHERE ip = ?")
+                .bind(ip.to_string())
+                .fetch_optional(&self.db)
+                .await
+                .unwrap_or(None);
+        let now = now_secs() as i64;
+        match row {
+            Some((until,)) if until > now => Err(((until - now) as u64).div_ceil(60)),
             _ => Ok(()),
         }
     }
 
-    pub fn fail(&self, ip: IpAddr) {
-        let mut m = self.inner.lock().expect("limiter lock");
-        let e = m.entry(ip).or_insert((0, Instant::now()));
-        if e.1.elapsed() > LOCKOUT {
-            *e = (0, Instant::now());
-        }
-        e.0 += 1;
-        if e.0 == MAX_FAILURES {
-            e.1 = Instant::now(); // lockout starts now
-            tracing::warn!(
-                "too many failed logins from {ip}; locked for {} minutes",
-                LOCKOUT.as_secs() / 60
-            );
+    pub async fn fail(&self, ip: IpAddr) {
+        let now = now_secs() as i64;
+        let window = LOCKOUT.as_secs() as i64;
+        // Start a new window if the previous one is older than the lockout period
+        // (or a previous lockout has expired); otherwise count up.
+        let res: Result<(i64,), _> = sqlx::query_as(
+            "INSERT INTO login_failures (ip, failures, first_failure, locked_until) VALUES (?1, 1, ?2, 0)
+             ON CONFLICT(ip) DO UPDATE SET
+               failures      = CASE WHEN first_failure < ?2 - ?3 OR (locked_until > 0 AND locked_until <= ?2)
+                                    THEN 1 ELSE failures + 1 END,
+               first_failure = CASE WHEN first_failure < ?2 - ?3 OR (locked_until > 0 AND locked_until <= ?2)
+                                    THEN ?2 ELSE first_failure END,
+               locked_until  = CASE WHEN locked_until > 0 AND locked_until <= ?2 THEN 0 ELSE locked_until END
+             RETURNING failures",
+        )
+        .bind(ip.to_string())
+        .bind(now)
+        .bind(window)
+        .fetch_one(&self.db)
+        .await;
+        if let Ok((n,)) = res
+            && n >= i64::from(MAX_FAILURES)
+        {
+            let _ = sqlx::query(
+                "UPDATE login_failures SET locked_until = ? WHERE ip = ? AND locked_until <= ?",
+            )
+            .bind(now + window)
+            .bind(ip.to_string())
+            .bind(now)
+            .execute(&self.db)
+            .await;
+            if n == i64::from(MAX_FAILURES) {
+                tracing::warn!(
+                    "too many failed logins from {ip}; locked for {} minutes (clear with: m3usort reset-ip {ip})",
+                    LOCKOUT.as_secs() / 60
+                );
+            }
         }
     }
 
-    pub fn reset(&self, ip: IpAddr) {
-        self.inner.lock().expect("limiter lock").remove(&ip);
+    pub async fn reset(&self, ip: IpAddr) {
+        let _ = sqlx::query("DELETE FROM login_failures WHERE ip = ?")
+            .bind(ip.to_string())
+            .execute(&self.db)
+            .await;
     }
+}
+
+/// IPs that are locked right now, with minutes left. For `m3usort locked-ips`.
+pub async fn locked_ips(db: &SqlitePool) -> anyhow::Result<Vec<(String, u64)>> {
+    let now = now_secs() as i64;
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT ip, locked_until FROM login_failures WHERE locked_until > ? ORDER BY ip",
+    )
+    .bind(now)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(ip, u)| (ip, ((u - now) as u64).div_ceil(60)))
+        .collect())
+}
+
+/// Remove one IP's failures (or all with `None`). Returns rows removed.
+pub async fn reset_ip(db: &SqlitePool, ip: Option<IpAddr>) -> anyhow::Result<u64> {
+    let res = match ip {
+        Some(ip) => {
+            sqlx::query("DELETE FROM login_failures WHERE ip = ?")
+                .bind(ip.to_string())
+                .execute(db)
+                .await?
+        }
+        None => {
+            sqlx::query("DELETE FROM login_failures")
+                .execute(db)
+                .await?
+        }
+    };
+    Ok(res.rows_affected())
 }
 
 #[cfg(test)]
@@ -219,20 +282,27 @@ mod tests {
         assert!(!s.verify("garbage", 3));
     }
 
-    #[test]
-    fn limiter_locks_after_five() {
-        let l = LoginLimiter::default();
+    #[tokio::test]
+    async fn limiter_locks_after_five_and_resets() {
+        let dir = std::env::temp_dir().join(format!("m3usort-lim-{}", random_code(8)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = crate::db::open(&dir.join("t.db"), true).await.unwrap();
+        let l = LoginLimiter::new(db.clone());
         let ip: IpAddr = "192.168.1.5".parse().unwrap();
         let other: IpAddr = "192.168.1.6".parse().unwrap();
         for _ in 0..4 {
-            l.fail(ip);
+            l.fail(ip).await;
         }
-        assert!(l.check(ip).is_ok());
-        l.fail(ip);
-        assert!(l.check(ip).is_err());
-        assert!(l.check(other).is_ok(), "other IPs unaffected");
-        l.reset(ip);
-        assert!(l.check(ip).is_ok());
+        assert!(l.check(ip).await.is_ok());
+        l.fail(ip).await;
+        assert!(l.check(ip).await.is_err());
+        assert!(l.check(other).await.is_ok(), "other IPs unaffected");
+        assert_eq!(locked_ips(&db).await.unwrap().len(), 1);
+        assert_eq!(reset_ip(&db, Some(ip)).await.unwrap(), 1);
+        assert!(l.check(ip).await.is_ok());
+        l.fail(other).await;
+        assert_eq!(reset_ip(&db, None).await.unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1,10 +1,11 @@
-//! First-run setup wizard.
+//! First-run setup wizard, and the admin "Settings" sections that reuse its steps.
 //!
 //! Steps: admin → provider → folders → Jellyfin → TMDB → schedules → summary.
-//! Every step validates (and where possible tests a live connection) before Next.
-//! Answers are kept in memory only; nothing is written until Finish, which saves
-//! everything in one transaction. Step 1 requires the one-time setup code from the
-//! container log, so nobody else on the LAN can claim the admin account first.
+//! Only the admin password and the provider/proxy are required; after the provider
+//! step you can jump to Finish and set the rest later under Admin → Settings.
+//! Every step validates (and tests live connections) before it is accepted.
+//! Wizard answers stay in memory until Finish, which saves everything in one
+//! transaction. Step 1 requires the one-time setup code from the container log.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -14,6 +15,7 @@ use axum::Form;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
+use sqlx::{Sqlite, Transaction};
 
 use crate::auth::{self, ADMIN_COOKIE, SESSION_TTL};
 use crate::integrations::{self, ProviderUrl};
@@ -22,6 +24,11 @@ use crate::web::{AppState, Page};
 
 pub const SETUP_COOKIE: &str = "m3usort_setup";
 pub const LAST_STEP: u8 = 6;
+/// Provider is the last required step; after it, Finish is allowed.
+const REQUIRED_STEPS: u8 = 2;
+
+const SUGGEST_MOVIES: &str = "/data/media/movies";
+const SUGGEST_SERIES: &str = "/data/media/tv";
 
 /// Everything the wizard collects. Defaults match the Python version's config.sample.
 #[derive(Clone)]
@@ -50,7 +57,7 @@ pub struct Draft {
     tmdb_enrich_time: String,
     cast_enrich_enabled: bool,
     cast_enrich_time: String,
-    /// Highest step completed, so you can't skip ahead.
+    /// Highest step completed, so you can't skip the required ones.
     done: u8,
 }
 
@@ -61,8 +68,8 @@ impl Default for Draft {
             playlist_hash: None,
             provider_url: String::new(),
             provider_result: String::new(),
-            movies_dir: "/data/media/movies".into(),
-            series_dir: "/data/media/tv".into(),
+            movies_dir: String::new(),
+            series_dir: String::new(),
             jellyfin_enabled: false,
             jellyfin_url: String::new(),
             jellyfin_api_key: String::new(),
@@ -86,6 +93,55 @@ impl Default for Draft {
     }
 }
 
+impl Draft {
+    /// Current saved configuration, for editing a section under Admin → Settings.
+    pub async fn load(st: &AppState) -> anyhow::Result<Self> {
+        let all: HashMap<String, String> = s::get_all(&st.db).await?.into_iter().collect();
+        let txt = |k: &str, def: &str| all.get(k).cloned().unwrap_or_else(|| def.to_string());
+        let flag = |k: &str| all.get(k).map(String::as_str) == Some("1");
+        let secret = |name: &'static str| async move {
+            s::get_secret(&st.db, &st.key, name)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        };
+        let d = Draft::default();
+        Ok(Self {
+            admin_hash: all.get(s::ADMIN_PASSWORD_HASH).cloned(),
+            playlist_hash: all
+                .get(s::PLAYLIST_PASSWORD_HASH)
+                .cloned()
+                .filter(|h| !h.is_empty()),
+            provider_url: secret(s::SECRET_PROVIDER_URL).await,
+            provider_result: String::new(),
+            movies_dir: txt(s::MOVIES_DIR, ""),
+            series_dir: txt(s::SERIES_DIR, ""),
+            jellyfin_enabled: flag(s::JELLYFIN_ENABLED),
+            jellyfin_url: txt(s::JELLYFIN_URL, ""),
+            jellyfin_api_key: secret(s::SECRET_JELLYFIN_API_KEY).await,
+            jellyfin_result: String::new(),
+            tmdb_api_key: secret(s::SECRET_TMDB_API_KEY).await,
+            tmdb_result: String::new(),
+            playlist_output: txt(s::PLAYLIST_OUTPUT, &d.playlist_output),
+            playlist_refresh_hours: txt(s::PLAYLIST_REFRESH_HOURS, &d.playlist_refresh_hours),
+            custom_group_title: txt(s::CUSTOM_GROUP_TITLE, &d.custom_group_title),
+            vod_scheduler_enabled: all
+                .get(s::VOD_SCHEDULER_ENABLED)
+                .map_or(d.vod_scheduler_enabled, |v| v == "1"),
+            vod_scan_hours: txt(s::VOD_SCAN_HOURS, &d.vod_scan_hours),
+            overwrite_movies: flag(s::OVERWRITE_MOVIES),
+            overwrite_series: flag(s::OVERWRITE_SERIES),
+            match_type: txt(s::MATCH_TYPE, &d.match_type),
+            tmdb_enrich_enabled: flag(s::TMDB_ENRICH_ENABLED),
+            tmdb_enrich_time: txt(s::TMDB_ENRICH_TIME, &d.tmdb_enrich_time),
+            cast_enrich_enabled: flag(s::CAST_ENRICH_ENABLED),
+            cast_enrich_time: txt(s::CAST_ENRICH_TIME, &d.cast_enrich_time),
+            done: LAST_STEP,
+        })
+    }
+}
+
 // ------------------------------------------------------------------ form model
 
 pub enum Kind {
@@ -100,73 +156,39 @@ pub enum Kind {
 pub struct Field {
     pub name: &'static str,
     pub label: &'static str,
-    pub help: &'static str,
+    pub help: String,
     pub kind: Kind,
     pub value: String,
     pub checked: bool,
 }
 
 impl Field {
-    fn text(name: &'static str, label: &'static str, help: &'static str, value: &str) -> Self {
+    fn new(name: &'static str, label: &'static str, help: &str, kind: Kind, value: &str) -> Self {
         Self {
             name,
             label,
-            help,
-            kind: Kind::Text,
+            help: help.into(),
+            kind,
             value: value.into(),
             checked: false,
         }
     }
-    fn password(name: &'static str, label: &'static str, help: &'static str) -> Self {
-        Self {
-            name,
-            label,
-            help,
-            kind: Kind::Password,
-            value: String::new(),
-            checked: false,
-        }
+    fn text(name: &'static str, label: &'static str, help: &str, value: &str) -> Self {
+        Self::new(name, label, help, Kind::Text, value)
     }
-    fn number(
-        name: &'static str,
-        label: &'static str,
-        help: &'static str,
-        value: &str,
-        min: u32,
-        max: u32,
-    ) -> Self {
-        Self {
-            name,
-            label,
-            help,
-            kind: Kind::Number { min, max },
-            value: value.into(),
-            checked: false,
-        }
+    fn password(name: &'static str, label: &'static str, help: &str, value: &str) -> Self {
+        Self::new(name, label, help, Kind::Password, value)
+    }
+    fn number(name: &'static str, label: &'static str, value: &str, min: u32, max: u32) -> Self {
+        Self::new(name, label, "", Kind::Number { min, max }, value)
     }
     fn time(name: &'static str, label: &'static str, value: &str) -> Self {
-        Self {
-            name,
-            label,
-            help: "",
-            kind: Kind::Time,
-            value: value.into(),
-            checked: false,
-        }
+        Self::new(name, label, "", Kind::Time, value)
     }
-    fn checkbox(
-        name: &'static str,
-        label: &'static str,
-        help: &'static str,
-        checked: bool,
-    ) -> Self {
+    fn checkbox(name: &'static str, label: &'static str, help: &str, checked: bool) -> Self {
         Self {
-            name,
-            label,
-            help,
-            kind: Kind::Checkbox,
-            value: String::new(),
             checked,
+            ..Self::new(name, label, help, Kind::Checkbox, "")
         }
     }
     pub fn is_password(&self) -> bool {
@@ -177,6 +199,9 @@ impl Field {
     }
     pub fn is_checkbox(&self) -> bool {
         matches!(self.kind, Kind::Checkbox)
+    }
+    pub fn is_select(&self) -> bool {
+        matches!(self.kind, Kind::Select(_))
     }
     pub fn number_range(&self) -> Option<(u32, u32)> {
         match self.kind {
@@ -190,29 +215,28 @@ impl Field {
             _ => Vec::new(),
         }
     }
-    pub fn is_select(&self) -> bool {
-        matches!(self.kind, Kind::Select(_))
-    }
 }
 
-struct StepInfo {
-    title: &'static str,
-    intro: &'static str,
+pub struct StepInfo {
+    pub title: &'static str,
+    pub intro: &'static str,
 }
 
-fn step_info(step: u8) -> StepInfo {
+pub fn step_info(step: u8) -> StepInfo {
     match step {
         1 => StepInfo {
             title: "Admin",
-            intro: "Enter the setup code from the container log (Arcane → container → Logs) and choose the passwords.",
+            intro: "Enter the setup code from the container log (Arcane → container → Logs) and choose the admin password. \
+                    The playlist password is optional: without it, playlist downloads stay off until you set one under Admin.",
         },
         2 => StepInfo {
             title: "Provider / proxy",
-            intro: "The playlist URL of your iptv-proxy (or provider). The login is tested before you can continue.",
+            intro: "The playlist URL of your iptv-proxy (or provider). Required. The login is tested before you can continue.",
         },
         3 => StepInfo {
-            title: "Folders",
-            intro: "Where .strm files are written, as seen inside the container. Both folders must exist and be writable.",
+            title: "Folders (optional)",
+            intro: "Where .strm files are written, as seen inside the container. Filled-in folders must exist and be writable. \
+                    Leave empty to set later.",
         },
         4 => StepInfo {
             title: "Jellyfin (optional)",
@@ -220,23 +244,17 @@ fn step_info(step: u8) -> StepInfo {
         },
         5 => StepInfo {
             title: "TMDB (optional)",
-            intro: "Used for posters, cast and actor search. Free key at themoviedb.org → Settings → API.",
+            intro: "Used for posters, cast and actor search. Free key at themoviedb.org → Settings → API. Leave empty to skip.",
         },
         _ => StepInfo {
-            title: "Schedules",
-            intro: "How often playlists and VOD are refreshed. You can change all of this later in Settings.",
+            title: "Schedules (optional)",
+            intro: "How often playlists and VOD are refreshed. The defaults are fine; you can change them later.",
         },
     }
 }
 
-fn fields(step: u8, d: &Draft) -> Vec<Field> {
-    let set = |b: bool| {
-        if b {
-            "Already set. Leave empty to keep it."
-        } else {
-            ""
-        }
-    };
+fn fields(step: u8, d: &Draft, in_wizard: bool) -> Vec<Field> {
+    let keep = "Already set. Leave empty to keep it.";
     match step {
         1 => vec![
             Field::text(
@@ -248,30 +266,65 @@ fn fields(step: u8, d: &Draft) -> Vec<Field> {
             Field::password(
                 "admin_password",
                 "Admin password",
-                set(d.admin_hash.is_some()),
+                if d.admin_hash.is_some() { keep } else { "" },
+                "",
             ),
-            Field::password("admin_password2", "Admin password (again)", ""),
+            Field::password("admin_password2", "Admin password (again)", "", ""),
             Field::password(
                 "playlist_password",
-                "Playlist password",
+                "Playlist password (optional)",
                 if d.playlist_hash.is_some() {
-                    "Already set. Leave empty to keep it."
+                    keep
                 } else {
                     "IPTV players use this to download your sorted playlist."
                 },
+                "",
             ),
-            Field::password("playlist_password2", "Playlist password (again)", ""),
+            Field::password("playlist_password2", "Playlist password (again)", "", ""),
         ],
+        2 if !in_wizard && !d.provider_url.is_empty() => vec![Field::text(
+            "provider_url",
+            "Playlist URL",
+            &format!(
+                "Set: {}. Leave empty to keep it (it is tested again), or paste a new URL.",
+                ProviderUrl::masked(&d.provider_url)
+            ),
+            "",
+        )],
         2 => vec![Field::text(
             "provider_url",
             "Playlist URL",
             "e.g. http://iptvproxy.local:8080/get.php?username=…&password=…&type=m3u_plus",
             &d.provider_url,
         )],
-        3 => vec![
-            Field::text("movies_dir", "Movies folder", "", &d.movies_dir),
-            Field::text("series_dir", "Series folder", "", &d.series_dir),
-        ],
+        3 => {
+            // Suggest the usual mounts on the first visit in the wizard only.
+            let first = in_wizard && d.done < 3;
+            let m = if first && d.movies_dir.is_empty() {
+                SUGGEST_MOVIES
+            } else {
+                &d.movies_dir
+            };
+            let t = if first && d.series_dir.is_empty() {
+                SUGGEST_SERIES
+            } else {
+                &d.series_dir
+            };
+            vec![
+                Field::text(
+                    "movies_dir",
+                    "Movies folder",
+                    "Leave empty to set later.",
+                    m,
+                ),
+                Field::text(
+                    "series_dir",
+                    "Series folder",
+                    "Leave empty to set later.",
+                    t,
+                ),
+            ]
+        }
         4 => vec![
             Field::checkbox("jellyfin_enabled", "Use Jellyfin", "", d.jellyfin_enabled),
             Field::text(
@@ -280,28 +333,41 @@ fn fields(step: u8, d: &Draft) -> Vec<Field> {
                 "e.g. http://192.168.1.10:8096",
                 &d.jellyfin_url,
             ),
-            Field {
-                value: d.jellyfin_api_key.clone(),
-                ..Field::password(
+            if !in_wizard && !d.jellyfin_api_key.is_empty() {
+                Field::password(
+                    "jellyfin_api_key",
+                    "Jellyfin API key",
+                    "Set. Leave empty to keep it. Untick \"Use Jellyfin\" to remove it.",
+                    "",
+                )
+            } else {
+                Field::password(
                     "jellyfin_api_key",
                     "Jellyfin API key",
                     "Jellyfin → Dashboard → API Keys",
+                    &d.jellyfin_api_key,
                 )
             },
         ],
-        5 => vec![Field {
-            value: d.tmdb_api_key.clone(),
-            ..Field::password(
+        5 if !in_wizard && !d.tmdb_api_key.is_empty() => vec![
+            Field::password(
                 "tmdb_api_key",
                 "TMDB API key",
-                "API key (v3) or read access token (v4). Leave empty to skip.",
-            )
-        }],
+                "Set. Leave empty to keep it (it is tested again).",
+                "",
+            ),
+            Field::checkbox("tmdb_remove", "Remove the TMDB key", "", false),
+        ],
+        5 => vec![Field::password(
+            "tmdb_api_key",
+            "TMDB API key",
+            "The \"API Key\" (v3) from themoviedb.org, same as the Python version uses. A v4 read access token also works.",
+            &d.tmdb_api_key,
+        )],
         _ => vec![
             Field::number(
                 "playlist_refresh_hours",
                 "Refresh playlist every (hours)",
-                "",
                 &d.playlist_refresh_hours,
                 1,
                 24,
@@ -327,7 +393,6 @@ fn fields(step: u8, d: &Draft) -> Vec<Field> {
             Field::number(
                 "vod_scan_hours",
                 "VOD scan every (hours)",
-                "",
                 &d.vod_scan_hours,
                 1,
                 24,
@@ -344,20 +409,16 @@ fn fields(step: u8, d: &Draft) -> Vec<Field> {
                 "",
                 d.overwrite_series,
             ),
-            Field {
-                value: d.match_type.clone(),
-                ..Field {
-                    name: "match_type",
-                    label: "Matching method",
-                    help: "How wanted titles are matched to the provider's titles",
-                    kind: Kind::Select(vec![
-                        ("string", "Exact (string comparison)"),
-                        ("fuzzy", "Fuzzy"),
-                    ]),
-                    value: String::new(),
-                    checked: false,
-                }
-            },
+            Field::new(
+                "match_type",
+                "Matching method",
+                "How wanted titles are matched to the provider's titles",
+                Kind::Select(vec![
+                    ("string", "Exact (string comparison)"),
+                    ("fuzzy", "Fuzzy"),
+                ]),
+                &d.match_type,
+            ),
             Field::checkbox(
                 "tmdb_enrich_enabled",
                 "Daily TMDB ID enrichment",
@@ -384,6 +445,211 @@ fn fields(step: u8, d: &Draft) -> Vec<Field> {
     }
 }
 
+// ------------------------------------------------------------------ shared step logic
+
+/// Read one step's form into the draft, validate and test it. Steps 2..=6.
+/// With `keep_secrets` (admin settings), an empty secret field keeps the stored value.
+pub async fn apply_step(
+    st: &AppState,
+    step: u8,
+    d: &mut Draft,
+    form: &HashMap<String, String>,
+    keep_secrets: bool,
+) -> Result<(), String> {
+    let f = |k: &str| {
+        form.get(k)
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default()
+    };
+    let on = |k: &str| form.contains_key(k);
+    match step {
+        2 => {
+            let new = f("provider_url");
+            if !(keep_secrets && new.is_empty()) {
+                d.provider_url = new;
+            }
+            if d.provider_url.is_empty() {
+                return Err("The provider/proxy URL is required.".into());
+            }
+            d.provider_result = integrations::test_provider(&st.http, &d.provider_url).await?;
+            Ok(())
+        }
+        3 => {
+            d.movies_dir = f("movies_dir");
+            d.series_dir = f("series_dir");
+            if !d.movies_dir.is_empty() {
+                integrations::test_folder(&d.movies_dir)
+                    .await
+                    .map_err(|e| format!("Movies folder: {e}"))?;
+            }
+            if !d.series_dir.is_empty() {
+                integrations::test_folder(&d.series_dir)
+                    .await
+                    .map_err(|e| format!("Series folder: {e}"))?;
+            }
+            Ok(())
+        }
+        4 => {
+            d.jellyfin_enabled = on("jellyfin_enabled");
+            d.jellyfin_url = f("jellyfin_url").trim_end_matches('/').to_string();
+            let new = f("jellyfin_api_key");
+            if !(keep_secrets && new.is_empty()) {
+                d.jellyfin_api_key = new;
+            }
+            if !d.jellyfin_enabled {
+                d.jellyfin_result = "Not used".into();
+                return Ok(());
+            }
+            if d.jellyfin_url.is_empty() || d.jellyfin_api_key.is_empty() {
+                return Err(
+                    "Fill in the Jellyfin URL and API key, or untick \"Use Jellyfin\".".into(),
+                );
+            }
+            d.jellyfin_result =
+                integrations::test_jellyfin(&st.http, &d.jellyfin_url, &d.jellyfin_api_key).await?;
+            Ok(())
+        }
+        5 => {
+            let new = f("tmdb_api_key");
+            if on("tmdb_remove") {
+                d.tmdb_api_key.clear();
+            } else if !(keep_secrets && new.is_empty()) {
+                d.tmdb_api_key = new;
+            }
+            if d.tmdb_api_key.is_empty() {
+                d.tmdb_result = "Not used".into();
+                return Ok(());
+            }
+            d.tmdb_result = integrations::test_tmdb(&st.http, &d.tmdb_api_key).await?;
+            Ok(())
+        }
+        6 => {
+            d.playlist_refresh_hours = f("playlist_refresh_hours");
+            d.playlist_output = f("playlist_output");
+            d.custom_group_title = f("custom_group_title");
+            d.vod_scheduler_enabled = on("vod_scheduler_enabled");
+            d.vod_scan_hours = f("vod_scan_hours");
+            d.overwrite_movies = on("overwrite_movies");
+            d.overwrite_series = on("overwrite_series");
+            d.match_type = if f("match_type") == "fuzzy" {
+                "fuzzy".into()
+            } else {
+                "string".into()
+            };
+            d.tmdb_enrich_enabled = on("tmdb_enrich_enabled");
+            d.tmdb_enrich_time = f("tmdb_enrich_time");
+            d.cast_enrich_enabled = on("cast_enrich_enabled");
+            d.cast_enrich_time = f("cast_enrich_time");
+            validate_schedules(d)
+        }
+        _ => Err("Unknown step".into()),
+    }
+}
+
+fn validate_schedules(d: &Draft) -> Result<(), String> {
+    let hours = |v: &str, what: &str| match v.parse::<u32>() {
+        Ok(h) if (1..=24).contains(&h) => Ok(()),
+        _ => Err(format!(
+            "{what} must be a whole number of hours from 1 to 24."
+        )),
+    };
+    hours(&d.playlist_refresh_hours, "Playlist refresh")?;
+    hours(&d.vod_scan_hours, "VOD scan")?;
+    let name_ok = !d.playlist_output.is_empty()
+        && !d.playlist_output.contains(['/', '\\'])
+        && !d.playlist_output.starts_with('.')
+        && d.playlist_output.ends_with(".m3u");
+    if !name_ok {
+        return Err(
+            "Playlist file name must be a plain file name ending in .m3u (no folders).".into(),
+        );
+    }
+    if d.custom_group_title.is_empty() {
+        return Err("Custom group title can't be empty.".into());
+    }
+    for (t, what) in [
+        (&d.tmdb_enrich_time, "TMDB enrichment time"),
+        (&d.cast_enrich_time, "Cast enrichment time"),
+    ] {
+        if !is_hh_mm(t) {
+            return Err(format!("{what} must be HH:MM (24-hour)."));
+        }
+    }
+    Ok(())
+}
+
+fn is_hh_mm(t: &str) -> bool {
+    let Some((h, m)) = t.split_once(':') else {
+        return false;
+    };
+    h.len() == 2
+        && m.len() == 2
+        && h.parse::<u8>().is_ok_and(|h| h < 24)
+        && m.parse::<u8>().is_ok_and(|m| m < 60)
+}
+
+/// Write all settings and secrets of the draft. Passwords only when `with_passwords`.
+/// Optional secrets that are empty or disabled are removed.
+pub async fn save_draft(
+    tx: &mut Transaction<'_, Sqlite>,
+    st: &AppState,
+    d: &Draft,
+    with_passwords: bool,
+) -> anyhow::Result<()> {
+    let b = |v: bool| if v { "1".to_string() } else { "0".to_string() };
+    if with_passwords {
+        let admin = d.admin_hash.clone().unwrap_or_default();
+        anyhow::ensure!(!admin.is_empty(), "admin password missing");
+        s::set(&mut **tx, s::ADMIN_PASSWORD_HASH, &admin).await?;
+        s::set(
+            &mut **tx,
+            s::PLAYLIST_PASSWORD_HASH,
+            d.playlist_hash.as_deref().unwrap_or(""),
+        )
+        .await?;
+    }
+    let plain = [
+        (s::MOVIES_DIR, d.movies_dir.clone()),
+        (s::SERIES_DIR, d.series_dir.clone()),
+        (s::JELLYFIN_ENABLED, b(d.jellyfin_enabled)),
+        (s::JELLYFIN_URL, d.jellyfin_url.clone()),
+        (s::PLAYLIST_OUTPUT, d.playlist_output.clone()),
+        (s::PLAYLIST_REFRESH_HOURS, d.playlist_refresh_hours.clone()),
+        (s::CUSTOM_GROUP_TITLE, d.custom_group_title.clone()),
+        (s::VOD_SCHEDULER_ENABLED, b(d.vod_scheduler_enabled)),
+        (s::VOD_SCAN_HOURS, d.vod_scan_hours.clone()),
+        (s::OVERWRITE_MOVIES, b(d.overwrite_movies)),
+        (s::OVERWRITE_SERIES, b(d.overwrite_series)),
+        (s::MATCH_TYPE, d.match_type.clone()),
+        (s::TMDB_ENRICH_ENABLED, b(d.tmdb_enrich_enabled)),
+        (s::TMDB_ENRICH_TIME, d.tmdb_enrich_time.clone()),
+        (s::CAST_ENRICH_ENABLED, b(d.cast_enrich_enabled)),
+        (s::CAST_ENRICH_TIME, d.cast_enrich_time.clone()),
+    ];
+    for (name, value) in &plain {
+        s::set(&mut **tx, name, value).await?;
+    }
+    anyhow::ensure!(!d.provider_url.is_empty(), "provider URL missing");
+    s::set_secret(&mut **tx, &st.key, s::SECRET_PROVIDER_URL, &d.provider_url).await?;
+    if d.jellyfin_enabled && !d.jellyfin_api_key.is_empty() {
+        s::set_secret(
+            &mut **tx,
+            &st.key,
+            s::SECRET_JELLYFIN_API_KEY,
+            &d.jellyfin_api_key,
+        )
+        .await?;
+    } else {
+        s::delete_secret(&mut **tx, s::SECRET_JELLYFIN_API_KEY).await?;
+    }
+    if d.tmdb_api_key.is_empty() {
+        s::delete_secret(&mut **tx, s::SECRET_TMDB_API_KEY).await?;
+    } else {
+        s::set_secret(&mut **tx, &st.key, s::SECRET_TMDB_API_KEY, &d.tmdb_api_key).await?;
+    }
+    Ok(())
+}
+
 // ------------------------------------------------------------------ templates
 
 #[derive(Template)]
@@ -392,17 +658,22 @@ struct StartTpl {
     page: Page,
 }
 
+/// One form page. Used by the wizard and by Admin → Settings sections.
 #[derive(Template)]
 #[template(path = "setup_step.html")]
-struct StepTpl {
-    page: Page,
-    step: u8,
-    last_step: u8,
-    title: &'static str,
-    intro: &'static str,
-    fields: Vec<Field>,
-    error: String,
-    success: String,
+pub struct StepTpl {
+    pub page: Page,
+    pub progress: Option<(u8, u8)>,
+    pub heading: String,
+    pub intro: &'static str,
+    pub fields: Vec<Field>,
+    pub error: String,
+    pub success: String,
+    pub action: String,
+    pub back: String,
+    pub submit_label: &'static str,
+    /// "Skip to finish" link (wizard, after the required steps).
+    pub finish_link: bool,
 }
 
 #[derive(Template)]
@@ -413,7 +684,7 @@ struct SummaryTpl {
     error: String,
 }
 
-fn render(t: impl Template) -> Response {
+pub fn render(t: impl Template) -> Response {
     match t.render() {
         Ok(html) => Html(html).into_response(),
         Err(e) => (
@@ -424,21 +695,52 @@ fn render(t: impl Template) -> Response {
     }
 }
 
-fn step_page(step: u8, d: &Draft, error: String, success: String) -> Response {
+fn step_page(step: u8, d: &Draft, error: String) -> Response {
     let info = step_info(step);
     render(StepTpl {
         page: Page::new(&format!("Setup – {}", info.title)),
-        step,
-        last_step: LAST_STEP,
-        title: info.title,
+        progress: Some((step, LAST_STEP)),
+        heading: format!("Step {step} of {LAST_STEP}: {}", info.title),
         intro: info.intro,
-        fields: fields(step, d),
+        fields: fields(step, d, true),
         error,
-        success,
+        success: String::new(),
+        action: format!("/setup/{step}"),
+        back: if step > 1 {
+            format!("/setup/{}", step - 1)
+        } else {
+            "/setup".into()
+        },
+        submit_label: match step {
+            2 | 4 | 5 => "Test & next →",
+            _ => "Next →",
+        },
+        finish_link: step > REQUIRED_STEPS && d.done >= REQUIRED_STEPS,
     })
 }
 
-// ------------------------------------------------------------------ handlers
+/// Admin → Settings section page (steps 2..=6 of the wizard, saved immediately).
+fn section_page(step: u8, d: &Draft, error: String, success: String) -> Response {
+    let info = step_info(step);
+    render(StepTpl {
+        page: Page::admin(&format!("Settings – {}", info.title)),
+        progress: None,
+        heading: format!("Settings: {}", info.title),
+        intro: info.intro,
+        fields: fields(step, d, false),
+        error,
+        success,
+        action: format!("/admin/settings/{step}"),
+        back: "/admin".into(),
+        submit_label: match step {
+            2 | 4 | 5 => "Test & save",
+            _ => "Save",
+        },
+        finish_link: false,
+    })
+}
+
+// ------------------------------------------------------------------ wizard handlers
 
 pub async fn start(State(st): State<AppState>) -> Response {
     if st.is_setup_done() {
@@ -471,6 +773,12 @@ fn store_draft(st: &AppState, headers: &HeaderMap, d: Draft) {
     }
 }
 
+/// A step may be opened when the step before it is done, or once all required
+/// steps are done (optional steps can be visited in any order or skipped).
+fn may_open(d: &Draft, step: u8) -> bool {
+    d.done + 1 >= step || d.done >= REQUIRED_STEPS
+}
+
 pub async fn show_step(
     State(st): State<AppState>,
     Path(step): Path<u8>,
@@ -486,11 +794,11 @@ pub async fn show_step(
         draft_for(&st, &headers).unwrap_or_default()
     } else {
         match draft_for(&st, &headers) {
-            Some(d) if d.done + 1 >= step => d,
+            Some(d) if may_open(&d, step) => d,
             _ => return Redirect::to("/setup/1").into_response(),
         }
     };
-    step_page(step, &d, String::new(), String::new())
+    step_page(step, &d, String::new())
 }
 
 pub async fn submit_step(
@@ -503,180 +811,16 @@ pub async fn submit_step(
     if st.is_setup_done() {
         return Redirect::to("/").into_response();
     }
-    let f = |k: &str| {
-        form.get(k)
-            .map(|v| v.trim().to_string())
-            .unwrap_or_default()
-    };
-    let on = |k: &str| form.contains_key(k);
-
-    // ---- step 1: setup code + passwords, starts a new draft
     if step == 1 {
-        let ip = addr.ip();
-        let mut d = draft_for(&st, &headers).unwrap_or_default();
-        if let Err(min) = st.limiter.check(ip) {
-            return step_page(
-                1,
-                &d,
-                format!("Too many wrong setup codes. Try again in {min} minutes."),
-                String::new(),
-            );
-        }
-        if !f("setup_code").eq_ignore_ascii_case(&st.setup_code) {
-            st.limiter.fail(ip);
-            return step_page(
-                1,
-                &d,
-                "Wrong setup code. It is in the container log.".into(),
-                String::new(),
-            );
-        }
-        st.limiter.reset(ip);
-
-        let (a1, a2) = (
-            form.get("admin_password").cloned().unwrap_or_default(),
-            form.get("admin_password2").cloned().unwrap_or_default(),
-        );
-        let (p1, p2) = (
-            form.get("playlist_password").cloned().unwrap_or_default(),
-            form.get("playlist_password2").cloned().unwrap_or_default(),
-        );
-        if a1 != a2 {
-            return step_page(
-                1,
-                &d,
-                "The admin passwords don't match.".into(),
-                String::new(),
-            );
-        }
-        if p1 != p2 {
-            return step_page(
-                1,
-                &d,
-                "The playlist passwords don't match.".into(),
-                String::new(),
-            );
-        }
-        if a1.is_empty() && d.admin_hash.is_none() {
-            return step_page(1, &d, "Choose an admin password.".into(), String::new());
-        }
-        if p1.is_empty() && d.playlist_hash.is_none() {
-            return step_page(1, &d, "Choose a playlist password.".into(), String::new());
-        }
-        if !a1.is_empty() {
-            d.admin_hash = Some(hash_off_thread(a1).await);
-        }
-        if !p1.is_empty() {
-            d.playlist_hash = Some(hash_off_thread(p1).await);
-        }
-        d.done = d.done.max(1);
-
-        // New token for every successful step 1: replaces any other browser's draft.
-        let token = auth::random_code(32);
-        *st.draft.lock().expect("draft lock") = Some((token.clone(), d));
-        let mut resp = Redirect::to("/setup/2").into_response();
-        resp.headers_mut().insert(
-            header::SET_COOKIE,
-            auth::set_cookie_header(SETUP_COOKIE, &token, std::time::Duration::from_secs(3600))
-                .parse()
-                .expect("valid header"),
-        );
-        return resp;
+        return submit_step1(&st, addr, &headers, &form).await;
     }
-
-    // ---- steps 2..6 need a draft
-    let Some(mut d) = draft_for(&st, &headers) else {
+    let Some(mut d) = draft_for(&st, &headers).filter(|d| may_open(d, step)) else {
         return Redirect::to("/setup/1").into_response();
     };
-    if d.done + 1 < step {
-        return Redirect::to("/setup/1").into_response();
-    }
-
-    let result: Result<(), String> = match step {
-        2 => {
-            d.provider_url = f("provider_url");
-            match integrations::test_provider(&st.http, &d.provider_url).await {
-                Ok(msg) => {
-                    d.provider_result = msg;
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        }
-        3 => {
-            d.movies_dir = f("movies_dir");
-            d.series_dir = f("series_dir");
-            match (
-                integrations::test_folder(&d.movies_dir).await,
-                integrations::test_folder(&d.series_dir).await,
-            ) {
-                (Ok(_), Ok(_)) => Ok(()),
-                (Err(e), _) => Err(format!("Movies folder: {e}")),
-                (_, Err(e)) => Err(format!("Series folder: {e}")),
-            }
-        }
-        4 => {
-            d.jellyfin_enabled = on("jellyfin_enabled");
-            d.jellyfin_url = f("jellyfin_url").trim_end_matches('/').to_string();
-            d.jellyfin_api_key = f("jellyfin_api_key");
-            if !d.jellyfin_enabled {
-                d.jellyfin_result = "Not used".into();
-                Ok(())
-            } else if d.jellyfin_url.is_empty() || d.jellyfin_api_key.is_empty() {
-                Err("Fill in the Jellyfin URL and API key, or untick \"Use Jellyfin\".".into())
-            } else {
-                match integrations::test_jellyfin(&st.http, &d.jellyfin_url, &d.jellyfin_api_key)
-                    .await
-                {
-                    Ok(msg) => {
-                        d.jellyfin_result = msg;
-                        Ok(())
-                    }
-                    Err(e) => Err(e),
-                }
-            }
-        }
-        5 => {
-            d.tmdb_api_key = f("tmdb_api_key");
-            if d.tmdb_api_key.is_empty() {
-                d.tmdb_result = "Not used".into();
-                Ok(())
-            } else {
-                match integrations::test_tmdb(&st.http, &d.tmdb_api_key).await {
-                    Ok(msg) => {
-                        d.tmdb_result = msg;
-                        Ok(())
-                    }
-                    Err(e) => Err(e),
-                }
-            }
-        }
-        6 => {
-            d.playlist_refresh_hours = f("playlist_refresh_hours");
-            d.playlist_output = f("playlist_output");
-            d.custom_group_title = f("custom_group_title");
-            d.vod_scheduler_enabled = on("vod_scheduler_enabled");
-            d.vod_scan_hours = f("vod_scan_hours");
-            d.overwrite_movies = on("overwrite_movies");
-            d.overwrite_series = on("overwrite_series");
-            d.match_type = if f("match_type") == "fuzzy" {
-                "fuzzy".into()
-            } else {
-                "string".into()
-            };
-            d.tmdb_enrich_enabled = on("tmdb_enrich_enabled");
-            d.tmdb_enrich_time = f("tmdb_enrich_time");
-            d.cast_enrich_enabled = on("cast_enrich_enabled");
-            d.cast_enrich_time = f("cast_enrich_time");
-            validate_schedules(&d)
-        }
-        _ => return Redirect::to("/setup").into_response(),
-    };
-
-    match result {
+    match apply_step(&st, step, &mut d, &form, false).await {
         Err(e) => {
             store_draft(&st, &headers, d.clone()); // keep what was typed
-            step_page(step, &d, e, String::new())
+            step_page(step, &d, e)
         }
         Ok(()) => {
             d.done = d.done.max(step);
@@ -691,66 +835,104 @@ pub async fn submit_step(
     }
 }
 
-fn validate_schedules(d: &Draft) -> Result<(), String> {
-    let hours = |v: &str, what: &str| match v.parse::<u32>() {
-        Ok(h) if (1..=24).contains(&h) => Ok(()),
-        _ => Err(format!(
-            "{what} must be a whole number of hours from 1 to 24."
-        )),
-    };
-    hours(&d.playlist_refresh_hours, "Playlist refresh")?;
-    hours(&d.vod_scan_hours, "VOD scan")?;
-    let name_ok = !d.playlist_output.is_empty()
-        && !d.playlist_output.contains(['/', '\\'])
-        && d.playlist_output != ".."
-        && d.playlist_output.ends_with(".m3u");
-    if !name_ok {
-        return Err(
-            "Playlist file name must be a plain file name ending in .m3u (no folders).".into(),
+async fn submit_step1(
+    st: &AppState,
+    addr: SocketAddr,
+    headers: &HeaderMap,
+    form: &HashMap<String, String>,
+) -> Response {
+    let ip = addr.ip();
+    let raw = |k: &str| form.get(k).cloned().unwrap_or_default();
+    let mut d = draft_for(st, headers).unwrap_or_default();
+    if let Err(min) = st.limiter.check(ip).await {
+        return step_page(
+            1,
+            &d,
+            format!(
+                "Too many wrong setup codes. Try again in {min} minutes, or run: m3usort reset-ip {ip}"
+            ),
         );
     }
-    if d.custom_group_title.is_empty() {
-        return Err("Custom group title can't be empty.".into());
+    if !raw("setup_code")
+        .trim()
+        .eq_ignore_ascii_case(&st.setup_code)
+    {
+        st.limiter.fail(ip).await;
+        return step_page(
+            1,
+            &d,
+            "Wrong setup code. It is in the container log.".into(),
+        );
     }
-    for (t, what) in [
-        (&d.tmdb_enrich_time, "TMDB enrichment time"),
-        (&d.cast_enrich_time, "Cast enrichment time"),
-    ] {
-        if !is_hh_mm(t) {
-            return Err(format!("{what} must be HH:MM (24-hour)."));
-        }
+    st.limiter.reset(ip).await;
+
+    let (a1, a2) = (raw("admin_password"), raw("admin_password2"));
+    let (p1, p2) = (raw("playlist_password"), raw("playlist_password2"));
+    if a1 != a2 {
+        return step_page(1, &d, "The admin passwords don't match.".into());
     }
-    Ok(())
+    if p1 != p2 {
+        return step_page(1, &d, "The playlist passwords don't match.".into());
+    }
+    if a1.is_empty() && d.admin_hash.is_none() {
+        return step_page(
+            1,
+            &d,
+            "Choose an admin password. It protects the admin pages and can't be skipped.".into(),
+        );
+    }
+    if !a1.is_empty() {
+        d.admin_hash = Some(hash_off_thread(a1).await);
+    }
+    if !p1.is_empty() {
+        d.playlist_hash = Some(hash_off_thread(p1).await);
+    }
+    d.done = d.done.max(1);
+
+    // New token for every successful step 1: replaces any other browser's draft.
+    let token = auth::random_code(32);
+    *st.draft.lock().expect("draft lock") = Some((token.clone(), d));
+    let mut resp = Redirect::to("/setup/2").into_response();
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        auth::set_cookie_header(SETUP_COOKIE, &token, std::time::Duration::from_secs(3600))
+            .parse()
+            .expect("valid header"),
+    );
+    resp
 }
 
-fn is_hh_mm(t: &str) -> bool {
-    let Some((h, m)) = t.split_once(':') else {
-        return false;
-    };
-    h.len() == 2
-        && m.len() == 2
-        && h.parse::<u8>().is_ok_and(|h| h < 24)
-        && m.parse::<u8>().is_ok_and(|m| m < 60)
+fn or_later(v: &str) -> String {
+    if v.is_empty() {
+        "Not set (set later under Admin → Settings)".into()
+    } else {
+        v.to_string()
+    }
 }
 
-fn yes(b: bool) -> String {
-    if b { "Yes".into() } else { "No".into() }
+fn yes(b: bool) -> &'static str {
+    if b { "Yes" } else { "No" }
 }
 
 fn summary_rows(d: &Draft) -> Vec<(String, String)> {
-    let mut rows = vec![
+    let on_off = |on: bool, text: String| if on { text } else { "Off".into() };
+    vec![
         (
             "Admin password".into(),
             "Set (stored as Argon2id hash)".into(),
         ),
         (
             "Playlist password".into(),
-            "Set (stored as Argon2id hash)".into(),
+            if d.playlist_hash.is_some() {
+                "Set (stored as Argon2id hash)".into()
+            } else {
+                "Not set: playlist downloads are off".into()
+            },
         ),
         ("Provider URL".into(), ProviderUrl::masked(&d.provider_url)),
         ("Provider test".into(), d.provider_result.clone()),
-        ("Movies folder".into(), d.movies_dir.clone()),
-        ("Series folder".into(), d.series_dir.clone()),
+        ("Movies folder".into(), or_later(&d.movies_dir)),
+        ("Series folder".into(), or_later(&d.series_dir)),
         (
             "Jellyfin".into(),
             if d.jellyfin_enabled {
@@ -759,7 +941,14 @@ fn summary_rows(d: &Draft) -> Vec<(String, String)> {
                 "Not used".into()
             },
         ),
-        ("TMDB".into(), d.tmdb_result.clone()),
+        (
+            "TMDB".into(),
+            if d.tmdb_api_key.is_empty() {
+                "Not used".into()
+            } else {
+                d.tmdb_result.clone()
+            },
+        ),
         (
             "Playlist refresh".into(),
             format!(
@@ -770,35 +959,31 @@ fn summary_rows(d: &Draft) -> Vec<(String, String)> {
         ("Custom group".into(), d.custom_group_title.clone()),
         (
             "VOD scheduler".into(),
-            if d.vod_scheduler_enabled {
-                format!("every {} h", d.vod_scan_hours)
-            } else {
-                "Off".into()
-            },
+            on_off(
+                d.vod_scheduler_enabled,
+                format!("every {} h", d.vod_scan_hours),
+            ),
         ),
         (
             "Overwrite movies / episodes".into(),
             format!("{} / {}", yes(d.overwrite_movies), yes(d.overwrite_series)),
         ),
         ("Matching".into(), d.match_type.clone()),
-    ];
-    rows.push((
-        "TMDB enrichment".into(),
-        if d.tmdb_enrich_enabled {
-            format!("daily at {}", d.tmdb_enrich_time)
-        } else {
-            "Off".into()
-        },
-    ));
-    rows.push((
-        "Cast enrichment".into(),
-        if d.cast_enrich_enabled {
-            format!("daily at {}", d.cast_enrich_time)
-        } else {
-            "Off".into()
-        },
-    ));
-    rows
+        (
+            "TMDB enrichment".into(),
+            on_off(
+                d.tmdb_enrich_enabled,
+                format!("daily at {}", d.tmdb_enrich_time),
+            ),
+        ),
+        (
+            "Cast enrichment".into(),
+            on_off(
+                d.cast_enrich_enabled,
+                format!("daily at {}", d.cast_enrich_time),
+            ),
+        ),
+    ]
 }
 
 pub async fn summary(State(st): State<AppState>, headers: HeaderMap) -> Response {
@@ -806,7 +991,7 @@ pub async fn summary(State(st): State<AppState>, headers: HeaderMap) -> Response
         return Redirect::to("/").into_response();
     }
     match draft_for(&st, &headers) {
-        Some(d) if d.done >= LAST_STEP => render(SummaryTpl {
+        Some(d) if d.done >= REQUIRED_STEPS => render(SummaryTpl {
             page: Page::new("Setup – Summary"),
             rows: summary_rows(&d),
             error: String::new(),
@@ -819,10 +1004,19 @@ pub async fn finish(State(st): State<AppState>, headers: HeaderMap) -> Response 
     if st.is_setup_done() {
         return Redirect::to("/").into_response();
     }
-    let Some(d) = draft_for(&st, &headers).filter(|d| d.done >= LAST_STEP) else {
+    let Some(d) = draft_for(&st, &headers).filter(|d| d.done >= REQUIRED_STEPS) else {
         return Redirect::to("/setup/1").into_response();
     };
-    if let Err(e) = save(&st, &d).await {
+    let saved = async {
+        let mut tx = st.db.begin().await?;
+        save_draft(&mut tx, &st, &d, true).await?;
+        s::set(&mut *tx, s::SESSION_GENERATION, "1").await?;
+        s::set(&mut *tx, s::SETUP_COMPLETED, "1").await?;
+        tx.commit().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(e) = saved {
         tracing::error!("setup: saving failed: {e:#}");
         return render(SummaryTpl {
             page: Page::new("Setup – Summary"),
@@ -854,60 +1048,75 @@ pub async fn finish(State(st): State<AppState>, headers: HeaderMap) -> Response 
     resp
 }
 
-/// Everything in one transaction: either setup is complete or nothing changed.
-async fn save(st: &AppState, d: &Draft) -> anyhow::Result<()> {
-    let mut tx = st.db.begin().await?;
-    let b = |v: bool| if v { "1" } else { "0" };
-    let plain: Vec<(&str, String)> = vec![
-        (
-            s::ADMIN_PASSWORD_HASH,
-            d.admin_hash.clone().unwrap_or_default(),
+// ------------------------------------------------------------------ admin settings sections
+
+pub async fn admin_section(State(st): State<AppState>, Path(step): Path<u8>) -> Response {
+    if !(2..=LAST_STEP).contains(&step) {
+        return Redirect::to("/admin").into_response();
+    }
+    match Draft::load(&st).await {
+        Ok(d) => section_page(step, &d, String::new(), String::new()),
+        Err(e) => section_page(
+            step,
+            &Draft::default(),
+            format!("Cannot load settings: {e}"),
+            String::new(),
         ),
-        (
-            s::PLAYLIST_PASSWORD_HASH,
-            d.playlist_hash.clone().unwrap_or_default(),
+    }
+}
+
+pub async fn admin_section_save(
+    State(st): State<AppState>,
+    Path(step): Path<u8>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    if !(2..=LAST_STEP).contains(&step) {
+        return Redirect::to("/admin").into_response();
+    }
+    let mut d = match Draft::load(&st).await {
+        Ok(d) => d,
+        Err(e) => {
+            return section_page(
+                step,
+                &Draft::default(),
+                format!("Cannot load settings: {e}"),
+                String::new(),
+            );
+        }
+    };
+    if let Err(e) = apply_step(&st, step, &mut d, &form, true).await {
+        return section_page(step, &d, e, String::new());
+    }
+    let saved = async {
+        let mut tx = st.db.begin().await?;
+        save_draft(&mut tx, &st, &d, false).await?;
+        tx.commit().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    match saved {
+        Ok(()) => {
+            tracing::info!("settings saved: {}", step_info(step).title);
+            let result = match step {
+                2 => d.provider_result.clone(),
+                4 => d.jellyfin_result.clone(),
+                5 => d.tmdb_result.clone(),
+                _ => String::new(),
+            };
+            let msg = if result.is_empty() {
+                "Saved.".to_string()
+            } else {
+                format!("Saved. {result}")
+            };
+            section_page(step, &d, String::new(), msg)
+        }
+        Err(e) => section_page(
+            step,
+            &d,
+            format!("Saving failed, nothing was changed: {e}"),
+            String::new(),
         ),
-        (s::MOVIES_DIR, d.movies_dir.clone()),
-        (s::SERIES_DIR, d.series_dir.clone()),
-        (s::JELLYFIN_ENABLED, b(d.jellyfin_enabled).into()),
-        (s::JELLYFIN_URL, d.jellyfin_url.clone()),
-        (s::PLAYLIST_OUTPUT, d.playlist_output.clone()),
-        (s::PLAYLIST_REFRESH_HOURS, d.playlist_refresh_hours.clone()),
-        (s::CUSTOM_GROUP_TITLE, d.custom_group_title.clone()),
-        (s::VOD_SCHEDULER_ENABLED, b(d.vod_scheduler_enabled).into()),
-        (s::VOD_SCAN_HOURS, d.vod_scan_hours.clone()),
-        (s::OVERWRITE_MOVIES, b(d.overwrite_movies).into()),
-        (s::OVERWRITE_SERIES, b(d.overwrite_series).into()),
-        (s::MATCH_TYPE, d.match_type.clone()),
-        (s::TMDB_ENRICH_ENABLED, b(d.tmdb_enrich_enabled).into()),
-        (s::TMDB_ENRICH_TIME, d.tmdb_enrich_time.clone()),
-        (s::CAST_ENRICH_ENABLED, b(d.cast_enrich_enabled).into()),
-        (s::CAST_ENRICH_TIME, d.cast_enrich_time.clone()),
-    ];
-    anyhow::ensure!(
-        !plain[0].1.is_empty() && !plain[1].1.is_empty(),
-        "passwords missing"
-    );
-    for (name, value) in &plain {
-        s::set(&mut *tx, name, value).await?;
     }
-    s::set_secret(&mut *tx, &st.key, s::SECRET_PROVIDER_URL, &d.provider_url).await?;
-    if d.jellyfin_enabled {
-        s::set_secret(
-            &mut *tx,
-            &st.key,
-            s::SECRET_JELLYFIN_API_KEY,
-            &d.jellyfin_api_key,
-        )
-        .await?;
-    }
-    if !d.tmdb_api_key.is_empty() {
-        s::set_secret(&mut *tx, &st.key, s::SECRET_TMDB_API_KEY, &d.tmdb_api_key).await?;
-    }
-    s::set(&mut *tx, s::SESSION_GENERATION, "1").await?;
-    s::set(&mut *tx, s::SETUP_COMPLETED, "1").await?;
-    tx.commit().await?;
-    Ok(())
 }
 
 pub async fn hash_off_thread(pw: String) -> String {
@@ -927,10 +1136,28 @@ mod tests {
         d.playlist_output = "../etc/passwd".into();
         assert!(validate_schedules(&d).is_err());
         d = Draft::default();
+        d.playlist_output = ".m3u".into();
+        assert!(validate_schedules(&d).is_err());
+        d = Draft::default();
         d.vod_scan_hours = "0".into();
         assert!(validate_schedules(&d).is_err());
         d = Draft::default();
         d.cast_enrich_time = "24:00".into();
         assert!(validate_schedules(&d).is_err());
+    }
+
+    #[test]
+    fn finish_allowed_after_provider() {
+        let mut d = Draft {
+            done: 1,
+            ..Default::default()
+        };
+        assert!(may_open(&d, 2));
+        assert!(!may_open(&d, 4), "can't skip the provider step");
+        d.done = 2;
+        assert!(
+            may_open(&d, 6),
+            "after the provider, any optional step is reachable"
+        );
     }
 }

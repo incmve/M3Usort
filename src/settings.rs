@@ -117,6 +117,17 @@ where
     Ok(())
 }
 
+pub async fn delete_secret<'e, E>(ex: E, name: &str) -> anyhow::Result<()>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    sqlx::query("DELETE FROM secrets WHERE name = ?")
+        .bind(name)
+        .execute(ex)
+        .await?;
+    Ok(())
+}
+
 pub async fn get_secret(
     pool: &SqlitePool,
     key: &MasterKey,
