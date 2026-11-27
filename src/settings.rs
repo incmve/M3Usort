@@ -10,6 +10,7 @@ pub const ADMIN_PASSWORD_HASH: &str = "admin_password_hash";
 pub const PLAYLIST_PASSWORD_HASH: &str = "playlist_password_hash";
 /// Bumped on every admin password change/reset; invalidates all admin sessions.
 pub const SESSION_GENERATION: &str = "session_generation";
+pub const PROVIDER_SERVER: &str = "provider_server";
 pub const MOVIES_DIR: &str = "movies_dir";
 pub const SERIES_DIR: &str = "series_dir";
 pub const JELLYFIN_ENABLED: &str = "jellyfin_enabled";
@@ -28,11 +29,15 @@ pub const CAST_ENRICH_ENABLED: &str = "cast_enrich_enabled";
 pub const CAST_ENRICH_TIME: &str = "cast_enrich_time";
 
 // Secret names (encrypted, see crypto.rs).
-pub const SECRET_PROVIDER_URL: &str = "provider_url";
+pub const SECRET_PROVIDER_USERNAME: &str = "provider_username";
+pub const SECRET_PROVIDER_PASSWORD: &str = "provider_password";
+/// Old single playlist-URL secret (early test builds). Read once as a fallback, then removed.
+pub const LEGACY_SECRET_PROVIDER_URL: &str = "provider_url";
 pub const SECRET_JELLYFIN_API_KEY: &str = "jellyfin_api_key";
 pub const SECRET_TMDB_API_KEY: &str = "tmdb_api_key";
 pub const ALL_SECRETS: &[(&str, &str)] = &[
-    (SECRET_PROVIDER_URL, "Provider / proxy URL"),
+    (SECRET_PROVIDER_USERNAME, "Provider / proxy username"),
+    (SECRET_PROVIDER_PASSWORD, "Provider / proxy password"),
     (SECRET_JELLYFIN_API_KEY, "Jellyfin API key"),
     (SECRET_TMDB_API_KEY, "TMDB API key"),
 ];

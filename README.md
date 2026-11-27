@@ -20,7 +20,7 @@ Open `http://<host>:5051`. Step 1 shows a generated `M3USORT_KEY`:
 3. The setup wizard starts. It asks for the **setup code** printed in the container
    log (`Setup code: XXXXXXXX`), so nobody else on your network can claim the admin
    account first.
-4. Admin password → provider/proxy (login tested) → then **Skip to finish** or go
+4. Admin password → provider/proxy: server, username, password (Xtream API login tested) → then **Skip to finish** or go
    on with folders (write-tested), Jellyfin (tested), TMDB (tested), schedules.
    Only the admin password and the provider/proxy are required; the playlist
    password and everything after the provider can be set later under

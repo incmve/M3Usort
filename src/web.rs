@@ -359,10 +359,17 @@ async fn admin_render(
         (
             2,
             setup::step_info(2).title,
-            vec![(
-                "Provider URL".to_string(),
-                set_or_not(has_secret(s::SECRET_PROVIDER_URL).await),
-            )],
+            vec![
+                ("Server".to_string(), v(s::PROVIDER_SERVER)),
+                (
+                    "Username".into(),
+                    set_or_not(has_secret(s::SECRET_PROVIDER_USERNAME).await),
+                ),
+                (
+                    "Password".into(),
+                    set_or_not(has_secret(s::SECRET_PROVIDER_PASSWORD).await),
+                ),
+            ],
         ),
         (
             3,

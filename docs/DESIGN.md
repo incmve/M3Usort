@@ -39,6 +39,9 @@ is good enough.
    parts are set later under Admin → Settings, which reuses the wizard's forms and
    tests. Stored secrets are never put back into form HTML: an empty field keeps the
    stored value. Nothing is saved before Finish; one transaction.
+   The provider is entered as Xtream **server + username + password** (a pasted
+   playlist URL is split automatically). The server is a plain setting; username and
+   password are encrypted secrets. The live TV M3U URL is built from them.
    TMDB is tested with the same call the Python version uses
    (`/3/search/movie?api_key=…&query=…&language=en-US`).
    A one-time setup code from the container log is required, so nobody else on the

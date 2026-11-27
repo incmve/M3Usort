@@ -18,7 +18,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use sqlx::{Sqlite, Transaction};
 
 use crate::auth::{self, ADMIN_COOKIE, SESSION_TTL};
-use crate::integrations::{self, ProviderUrl};
+use crate::integrations::{self, Xtream};
 use crate::settings as s;
 use crate::web::{AppState, Page};
 
@@ -35,7 +35,9 @@ const SUGGEST_SERIES: &str = "/data/media/tv";
 pub struct Draft {
     admin_hash: Option<String>,
     playlist_hash: Option<String>,
-    provider_url: String,
+    provider_server: String,
+    provider_username: String,
+    provider_password: String,
     provider_result: String,
     movies_dir: String,
     series_dir: String,
@@ -66,7 +68,9 @@ impl Default for Draft {
         Self {
             admin_hash: None,
             playlist_hash: None,
-            provider_url: String::new(),
+            provider_server: String::new(),
+            provider_username: String::new(),
+            provider_password: String::new(),
             provider_result: String::new(),
             movies_dir: String::new(),
             series_dir: String::new(),
@@ -94,6 +98,14 @@ impl Default for Draft {
 }
 
 impl Draft {
+    fn xtream(&self) -> Xtream {
+        Xtream {
+            server: self.provider_server.clone(),
+            username: self.provider_username.clone(),
+            password: self.provider_password.clone(),
+        }
+    }
+
     /// Current saved configuration, for editing a section under Admin → Settings.
     pub async fn load(st: &AppState) -> anyhow::Result<Self> {
         let all: HashMap<String, String> = s::get_all(&st.db).await?.into_iter().collect();
@@ -107,13 +119,26 @@ impl Draft {
                 .unwrap_or_default()
         };
         let d = Draft::default();
+        // Early test builds stored one playlist URL; split it if that's all there is.
+        let legacy = Xtream::from_playlist_url(&secret(s::LEGACY_SECRET_PROVIDER_URL).await);
+        let user = secret(s::SECRET_PROVIDER_USERNAME).await;
+        let (server, user, pass) = match legacy {
+            Some(x) if user.is_empty() => (x.server, x.username, x.password),
+            _ => (
+                txt(s::PROVIDER_SERVER, ""),
+                user,
+                secret(s::SECRET_PROVIDER_PASSWORD).await,
+            ),
+        };
         Ok(Self {
             admin_hash: all.get(s::ADMIN_PASSWORD_HASH).cloned(),
             playlist_hash: all
                 .get(s::PLAYLIST_PASSWORD_HASH)
                 .cloned()
                 .filter(|h| !h.is_empty()),
-            provider_url: secret(s::SECRET_PROVIDER_URL).await,
+            provider_server: server,
+            provider_username: user,
+            provider_password: pass,
             provider_result: String::new(),
             movies_dir: txt(s::MOVIES_DIR, ""),
             series_dir: txt(s::SERIES_DIR, ""),
@@ -231,7 +256,7 @@ pub fn step_info(step: u8) -> StepInfo {
         },
         2 => StepInfo {
             title: "Provider / proxy",
-            intro: "The playlist URL of your iptv-proxy (or provider). Required. The login is tested before you can continue.",
+            intro: "The Xtream Codes login of your iptv-proxy (or provider). Required. The login is tested against the Xtream API before you can continue.",
         },
         3 => StepInfo {
             title: "Folders (optional)",
@@ -282,21 +307,26 @@ fn fields(step: u8, d: &Draft, in_wizard: bool) -> Vec<Field> {
             ),
             Field::password("playlist_password2", "Playlist password (again)", "", ""),
         ],
-        2 if !in_wizard && !d.provider_url.is_empty() => vec![Field::text(
-            "provider_url",
-            "Playlist URL",
-            &format!(
-                "Set: {}. Leave empty to keep it (it is tested again), or paste a new URL.",
-                ProviderUrl::masked(&d.provider_url)
+        2 => vec![
+            Field::text(
+                "provider_server",
+                "Server",
+                "Your iptv-proxy (or provider), e.g. http://iptvproxy.local:8080. \
+                 Pasting a full playlist URL (…/get.php?username=…&password=…) also works: it is split automatically.",
+                &d.provider_server,
             ),
-            "",
-        )],
-        2 => vec![Field::text(
-            "provider_url",
-            "Playlist URL",
-            "e.g. http://iptvproxy.local:8080/get.php?username=…&password=…&type=m3u_plus",
-            &d.provider_url,
-        )],
+            Field::text("provider_username", "Username", "", &d.provider_username),
+            if !in_wizard && !d.provider_password.is_empty() {
+                Field::password(
+                    "provider_password",
+                    "Password",
+                    "Set. Leave empty to keep it (it is tested again).",
+                    "",
+                )
+            } else {
+                Field::password("provider_password", "Password", "", &d.provider_password)
+            },
+        ],
         3 => {
             // Suggest the usual mounts on the first visit in the wizard only.
             let first = in_wizard && d.done < 3;
@@ -464,14 +494,26 @@ pub async fn apply_step(
     let on = |k: &str| form.contains_key(k);
     match step {
         2 => {
-            let new = f("provider_url");
-            if !(keep_secrets && new.is_empty()) {
-                d.provider_url = new;
+            let server_in = f("provider_server");
+            let user_in = f("provider_username");
+            // Password is used as typed (no trim): spaces can be part of it.
+            let pass_in = form.get("provider_password").cloned().unwrap_or_default();
+            // A pasted playlist URL fills in whatever was left empty.
+            let pasted = Xtream::from_playlist_url(&server_in);
+            d.provider_server = Xtream::normalize_server(&server_in)?;
+            d.provider_username = match (&pasted, user_in.is_empty()) {
+                (Some(x), true) => x.username.clone(),
+                _ => user_in,
+            };
+            if let (Some(x), true) = (&pasted, pass_in.is_empty()) {
+                d.provider_password = x.password.clone();
+            } else if !(keep_secrets && pass_in.is_empty()) {
+                d.provider_password = pass_in;
             }
-            if d.provider_url.is_empty() {
-                return Err("The provider/proxy URL is required.".into());
+            if d.provider_username.is_empty() || d.provider_password.is_empty() {
+                return Err("Server, username and password are all required.".into());
             }
-            d.provider_result = integrations::test_provider(&st.http, &d.provider_url).await?;
+            d.provider_result = integrations::test_provider(&st.http, &d.xtream()).await?;
             Ok(())
         }
         3 => {
@@ -629,8 +671,28 @@ pub async fn save_draft(
     for (name, value) in &plain {
         s::set(&mut **tx, name, value).await?;
     }
-    anyhow::ensure!(!d.provider_url.is_empty(), "provider URL missing");
-    s::set_secret(&mut **tx, &st.key, s::SECRET_PROVIDER_URL, &d.provider_url).await?;
+    anyhow::ensure!(
+        !d.provider_server.is_empty()
+            && !d.provider_username.is_empty()
+            && !d.provider_password.is_empty(),
+        "provider server, username or password missing"
+    );
+    s::set(&mut **tx, s::PROVIDER_SERVER, &d.provider_server).await?;
+    s::set_secret(
+        &mut **tx,
+        &st.key,
+        s::SECRET_PROVIDER_USERNAME,
+        &d.provider_username,
+    )
+    .await?;
+    s::set_secret(
+        &mut **tx,
+        &st.key,
+        s::SECRET_PROVIDER_PASSWORD,
+        &d.provider_password,
+    )
+    .await?;
+    s::delete_secret(&mut **tx, s::LEGACY_SECRET_PROVIDER_URL).await?;
     if d.jellyfin_enabled && !d.jellyfin_api_key.is_empty() {
         s::set_secret(
             &mut **tx,
@@ -929,7 +991,9 @@ fn summary_rows(d: &Draft) -> Vec<(String, String)> {
                 "Not set: playlist downloads are off".into()
             },
         ),
-        ("Provider URL".into(), ProviderUrl::masked(&d.provider_url)),
+        ("Provider server".into(), d.provider_server.clone()),
+        ("Provider username".into(), d.provider_username.clone()),
+        ("Provider password".into(), "Set (stored encrypted)".into()),
         ("Provider test".into(), d.provider_result.clone()),
         ("Movies folder".into(), or_later(&d.movies_dir)),
         ("Series folder".into(), or_later(&d.series_dir)),

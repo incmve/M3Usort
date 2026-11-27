@@ -23,81 +23,95 @@ pub fn provider_user_agent() -> String {
         .unwrap_or_else(|| DEFAULT_PROVIDER_UA.into())
 }
 
-/// Parsed provider/proxy playlist URL, e.g.
-/// `http://iptvproxy.local:8080/get.php?username=u&password=p&type=m3u_plus`.
-pub struct ProviderUrl {
-    pub base: String,
+/// Xtream Codes API login: server + username + password.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Xtream {
+    /// `http(s)://host[:port][/prefix]`, no trailing slash.
+    pub server: String,
     pub username: String,
     pub password: String,
 }
 
-impl ProviderUrl {
-    pub fn parse(raw: &str) -> Result<Self, String> {
-        let url = Url::parse(raw.trim()).map_err(|e| format!("Not a valid URL: {e}"))?;
-        if !matches!(url.scheme(), "http" | "https") {
-            return Err("URL must start with http:// or https://".into());
-        }
-        let host = url.host_str().ok_or("URL has no host")?;
-        let mut username = None;
-        let mut password = None;
-        for (k, v) in url.query_pairs() {
-            match k.as_ref() {
-                "username" => username = Some(v.into_owned()),
-                "password" => password = Some(v.into_owned()),
-                _ => {}
-            }
-        }
-        let base = match url.port() {
-            Some(p) => format!("{}://{host}:{p}", url.scheme()),
-            None => format!("{}://{host}", url.scheme()),
+impl Xtream {
+    /// Clean up a server address: scheme + host + optional port/prefix, with any
+    /// `/get.php` or `/player_api.php` and query string removed.
+    pub fn normalize_server(raw: &str) -> Result<String, String> {
+        let raw = raw.trim();
+        let with_scheme = if raw.contains("://") {
+            raw.to_string()
+        } else {
+            format!("http://{raw}")
         };
-        Ok(Self {
-            base,
-            username: username.ok_or("URL has no username=… parameter")?,
-            password: password.ok_or("URL has no password=… parameter")?,
+        let mut url =
+            Url::parse(&with_scheme).map_err(|e| format!("Not a valid server address: {e}"))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err("Server must start with http:// or https://".into());
+        }
+        if url.host_str().is_none_or(str::is_empty) {
+            return Err("Server address has no host".into());
+        }
+        url.set_query(None);
+        url.set_fragment(None);
+        let path = url.path().trim_end_matches('/').to_string();
+        let path = path
+            .strip_suffix("/get.php")
+            .or_else(|| path.strip_suffix("/player_api.php"))
+            .unwrap_or(&path)
+            .to_string();
+        url.set_path(&path);
+        Ok(url.as_str().trim_end_matches('/').to_string())
+    }
+
+    /// Split a pasted playlist URL (`…/get.php?username=u&password=p&…`) into its parts.
+    /// `None` if it doesn't carry both username and password.
+    pub fn from_playlist_url(raw: &str) -> Option<Self> {
+        let url = Url::parse(raw.trim()).ok()?;
+        let q: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
+        Some(Self {
+            server: Self::normalize_server(raw).ok()?,
+            username: q.get("username")?.clone(),
+            password: q.get("password")?.clone(),
         })
     }
 
-    /// The URL with the password replaced, for display.
-    pub fn masked(raw: &str) -> String {
-        match Url::parse(raw.trim()) {
-            Ok(mut u) => {
-                let pairs: Vec<(String, String)> = u
-                    .query_pairs()
-                    .map(|(k, v)| {
-                        let v = if k == "password" {
-                            "*****".to_string()
-                        } else {
-                            v.into_owned()
-                        };
-                        (k.into_owned(), v)
-                    })
-                    .collect();
-                u.query_pairs_mut().clear().extend_pairs(pairs);
-                u.to_string()
-            }
-            Err(_) => "(invalid URL)".into(),
-        }
+    fn with_login(&self, path: &str) -> Result<Url, String> {
+        let mut u = Url::parse(&format!("{}/{path}", self.server)).map_err(|e| e.to_string())?;
+        u.query_pairs_mut()
+            .append_pair("username", &self.username)
+            .append_pair("password", &self.password);
+        Ok(u)
+    }
+
+    /// `player_api.php?username=…&password=…&action=…`
+    pub fn api_url(&self, action: &str) -> Result<Url, String> {
+        let mut u = self.with_login("player_api.php")?;
+        u.query_pairs_mut().append_pair("action", action);
+        Ok(u)
+    }
+
+    /// Live TV playlist: `get.php?username=…&password=…&type=m3u_plus&output=ts`.
+    #[allow(dead_code)] // used by the playlist milestone
+    pub fn m3u_url(&self) -> Result<Url, String> {
+        let mut u = self.with_login("get.php")?;
+        u.query_pairs_mut()
+            .append_pair("type", "m3u_plus")
+            .append_pair("output", "ts");
+        Ok(u)
     }
 }
 
 /// Xtream `player_api.php` → `user_info.auth == 1`.
-pub async fn test_provider(client: &Client, raw_url: &str) -> Result<String, String> {
-    let p = ProviderUrl::parse(raw_url)?;
-    let mut api = Url::parse(&format!("{}/player_api.php", p.base)).map_err(|e| e.to_string())?;
-    api.query_pairs_mut()
-        .append_pair("username", &p.username)
-        .append_pair("password", &p.password)
-        .append_pair("action", "get_user_info");
+pub async fn test_provider(client: &Client, x: &Xtream) -> Result<String, String> {
+    let api = x.api_url("get_user_info")?;
     let resp = client
         .get(api)
         .header(reqwest::header::USER_AGENT, provider_user_agent())
         .send()
         .await
-        .map_err(|e| format!("Cannot reach {}: {}", p.base, root_cause(&e)))?;
+        .map_err(|e| format!("Cannot reach {}: {}", x.server, root_cause(&e)))?;
     let status = resp.status();
     if !status.is_success() {
-        return Err(format!("{} answered HTTP {status}", p.base));
+        return Err(format!("{} answered HTTP {status}", x.server));
     }
     let body: Value = resp
         .json()
@@ -268,23 +282,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_provider_url() {
-        let p = ProviderUrl::parse(
-            "http://iptvproxy.local:8080/get.php?username=u&password=p%26q&type=m3u_plus",
-        )
-        .unwrap();
-        assert_eq!(p.base, "http://iptvproxy.local:8080");
-        assert_eq!(p.username, "u");
-        assert_eq!(p.password, "p&q");
-        assert!(ProviderUrl::parse("http://x/get.php?username=u").is_err());
-        assert!(ProviderUrl::parse("ftp://x/?username=u&password=p").is_err());
+    fn server_normalization() {
+        let n = |s: &str| Xtream::normalize_server(s).unwrap();
+        assert_eq!(
+            n("http://iptvproxy.local:8080"),
+            "http://iptvproxy.local:8080"
+        );
+        assert_eq!(
+            n("http://iptvproxy.local:8080/"),
+            "http://iptvproxy.local:8080"
+        );
+        assert_eq!(n("iptvproxy.local:8080"), "http://iptvproxy.local:8080");
+        assert_eq!(
+            n("http://h:8080/get.php?username=u&password=p"),
+            "http://h:8080"
+        );
+        assert_eq!(n("https://h/xc/player_api.php"), "https://h/xc");
+        assert!(Xtream::normalize_server("ftp://h").is_err());
     }
 
     #[test]
-    fn masks_password() {
-        let m = ProviderUrl::masked("http://h:8080/get.php?username=u&password=secret&type=m3u");
-        assert!(!m.contains("secret"));
-        assert!(m.contains("username=u"));
+    fn splits_pasted_playlist_url() {
+        let x = Xtream::from_playlist_url(
+            "http://iptvproxy.local:8080/get.php?username=u&password=p%26q&type=m3u_plus",
+        )
+        .unwrap();
+        assert_eq!(x.server, "http://iptvproxy.local:8080");
+        assert_eq!((x.username.as_str(), x.password.as_str()), ("u", "p&q"));
+        assert!(Xtream::from_playlist_url("http://x/get.php?username=u").is_none());
+    }
+
+    #[test]
+    fn builds_urls_with_encoding() {
+        let x = Xtream {
+            server: "http://h:8080".into(),
+            username: "u".into(),
+            password: "a&b#c".into(),
+        };
+        let api = x.api_url("get_user_info").unwrap();
+        assert_eq!(
+            api.as_str(),
+            "http://h:8080/player_api.php?username=u&password=a%26b%23c&action=get_user_info"
+        );
+        assert!(
+            x.m3u_url()
+                .unwrap()
+                .as_str()
+                .ends_with("/get.php?username=u&password=a%26b%23c&type=m3u_plus&output=ts")
+        );
     }
 
     #[test]
@@ -364,15 +409,15 @@ mod tests {
     async fn provider_login() {
         let base = mock_server().await;
         let c = local_client();
-        let ok = test_provider(
-            &c,
-            &format!("{base}/get.php?username=u&password=p&type=m3u_plus"),
-        )
-        .await
-        .unwrap();
+        let x = |pw: &str| Xtream {
+            server: base.clone(),
+            username: "u".into(),
+            password: pw.into(),
+        };
+        let ok = test_provider(&c, &x("p")).await.unwrap();
         assert!(ok.contains("2050-01-04") && ok.contains("max connections: 2"));
         assert!(
-            test_provider(&c, &format!("{base}/get.php?username=u&password=x"))
+            test_provider(&c, &x("wrong"))
                 .await
                 .unwrap_err()
                 .contains("refused")
