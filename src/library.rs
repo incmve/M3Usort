@@ -602,6 +602,14 @@ async fn folder_content(dir: &Path) -> std::io::Result<Content> {
     })
 }
 
+/// True when a folder holds real video files (not only .strm).
+pub async fn has_video(dir: &Path) -> bool {
+    !matches!(
+        folder_content(dir).await,
+        Ok(Content::Empty) | Ok(Content::StrmOnly)
+    )
+}
+
 /// Refuse to write .strm files next to real video files (Jellyfin would show both).
 async fn ensure_no_video(dir: &Path) -> anyhow::Result<()> {
     if dir.is_dir()

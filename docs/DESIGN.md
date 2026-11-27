@@ -103,6 +103,16 @@ is good enough.
       40 requests/s app-wide (TMDB's CDN allows ~50/s, 20 connections).
       Mock test, 11,503 titles at 150 ms per request: 4 min 41 s.
       Tiles fall back to the TMDB poster when the provider's image is dead.
-- [ ] **6. Jellyfin:** library refresh, library view with watch status per user
+- [x] **6. Jellyfin:** library refresh, library view with watch status per user
+      Admin → Jellyfin. One snapshot (5 min cache, Refresh link) from a handful of
+      requests: /Users, /Items Movie+Series, /Items Episode, and per user
+      /Items?userId=…&IsPlayed=true (not the deprecated /Users/{id}/Items).
+      Source per item by extension (.strm = M3Usort, all/none/mixed episodes for series).
+      Series watch status per user at episode level ("naomi 3/24"). Seasons and
+      episodes (who watched each) from the same snapshot. Posters proxied, API key
+      stays server-side. Remove only for M3Usort items: refuses folders with real
+      video; Jellyfin DELETE /Items (which also deletes files), our .strm folder,
+      and the library_movies/library_series row (else the VOD run re-adds series).
+      If Jellyfin's delete fails, files are still removed and a library scan starts.
 - [ ] **7. Admin extras:** log viewer, file browser, backup/restore, SMB, Gluetun card
 - [ ] **8. Trusted networks**

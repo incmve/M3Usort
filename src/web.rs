@@ -42,6 +42,8 @@ pub struct AppState {
     pub playlist_running: Arc<AtomicBool>,
     pub enrich_provider_running: Arc<AtomicBool>,
     pub enrich_tmdb_running: Arc<AtomicBool>,
+    /// Cached Jellyfin library snapshot (5 minutes).
+    pub jellyfin: Arc<tokio::sync::Mutex<Option<Arc<crate::jellyfin::Snapshot>>>>,
     setup_done: Arc<AtomicBool>,
 }
 
@@ -67,6 +69,7 @@ impl AppState {
             playlist_running: Arc::new(AtomicBool::new(false)),
             enrich_provider_running: Arc::new(AtomicBool::new(false)),
             enrich_tmdb_running: Arc::new(AtomicBool::new(false)),
+            jellyfin: Arc::new(tokio::sync::Mutex::new(None)),
             setup_done: Arc::new(AtomicBool::new(setup_done)),
         })
     }
@@ -89,6 +92,7 @@ impl AppState {
 }
 
 /// Data every page's layout needs.
+#[derive(Clone)]
 pub struct Page {
     pub title: String,
     pub version: String,
@@ -145,6 +149,10 @@ pub fn app_router(state: AppState) -> Router {
         .route("/playlist/custom/add-group", post(custom_add_group))
         .route("/playlist/custom/add", post(custom_add_one))
         .route("/logout", post(logout))
+        .route("/jellyfin", get(jellyfin_page))
+        .route("/jellyfin/img/{id}", get(jellyfin_img))
+        .route("/jellyfin/seasons/{id}", get(jellyfin_seasons))
+        .route("/jellyfin/remove/{id}", post(jellyfin_remove))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
 
     Router::new()
@@ -1808,4 +1816,97 @@ h1{{color:#7cc4ff;font-size:1.4rem}} footer{{margin-top:3rem;color:#777;font-siz
 </style></head><body>{body}<footer>{}</footer></body></html>"#,
         version::version_line()
     )
+}
+
+// ------------------------------------------------------------------ Jellyfin (admin)
+
+#[derive(Template)]
+#[template(path = "jellyfin.html")]
+struct JellyfinTpl {
+    page: Page,
+    error: String,
+    users: Vec<String>,
+    items: Vec<crate::jellyfin::Item>,
+    movies: usize,
+    series: usize,
+    from_m3usort: usize,
+    by_all: usize,
+    fetched: String,
+}
+
+#[derive(Deserialize)]
+struct RefreshQuery {
+    refresh: Option<String>,
+}
+
+async fn jellyfin_page(State(st): State<AppState>, Query(q): Query<RefreshQuery>) -> Response {
+    let page = Page::nav("Jellyfin", true);
+    let empty = |error: String| JellyfinTpl {
+        page: page.clone(),
+        error,
+        users: Vec::new(),
+        items: Vec::new(),
+        movies: 0,
+        series: 0,
+        from_m3usort: 0,
+        by_all: 0,
+        fetched: String::new(),
+    };
+    match crate::jellyfin::snapshot(&st, q.refresh.is_some()).await {
+        Err(e) => render(empty(e)),
+        Ok(snap) => {
+            if q.refresh.is_some() {
+                return Redirect::to("/admin/jellyfin").into_response();
+            }
+            let items = snap.items.clone();
+            render(JellyfinTpl {
+                page,
+                error: String::new(),
+                users: snap.users.clone(),
+                movies: items.iter().filter(|i| i.is_movie).count(),
+                series: items.iter().filter(|i| !i.is_movie).count(),
+                from_m3usort: items
+                    .iter()
+                    .filter(|i| i.source == crate::jellyfin::Source::M3usort)
+                    .count(),
+                by_all: items.iter().filter(|i| i.by_all).count(),
+                fetched: catalog::ago(snap.fetched),
+                items,
+            })
+        }
+    }
+}
+
+async fn jellyfin_img(State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    if !crate::jellyfin::valid_id(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match crate::jellyfin::poster(&st, &id).await {
+        Some((ct, bytes)) => (
+            [
+                (header::CONTENT_TYPE, ct),
+                (header::CACHE_CONTROL, "private, max-age=86400".to_string()),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn jellyfin_seasons(State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    match crate::jellyfin::seasons(&st, &id).await {
+        Ok(seasons) => Json(serde_json::json!({"ok": true, "seasons": seasons})).into_response(),
+        Err(e) => Json(serde_json::json!({"ok": false, "message": e})).into_response(),
+    }
+}
+
+async fn jellyfin_remove(State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    if !crate::jellyfin::valid_id(&id) {
+        return Json(serde_json::json!({"ok": false, "message": "invalid id"})).into_response();
+    }
+    match crate::jellyfin::remove(&st, &id).await {
+        Ok(m) => Json(serde_json::json!({"ok": true, "message": m})).into_response(),
+        Err(e) => Json(serde_json::json!({"ok": false, "message": e})).into_response(),
+    }
 }

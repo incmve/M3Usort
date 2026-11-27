@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block mainclass %} class="wide"{% endblock %}
+{% block footclass %} class="wide"{% endblock %}
+{% block content %}
+<h1>Jellyfin library</h1>
+{% if !error.is_empty() %}<div class="msg err">{{ error }}</div>{% else %}
+<div class="stats">
+  <div class="stat s1"><div class="n">{{ movies }}</div><div class="l">Movies</div></div>
+  <div class="stat s2"><div class="n">{{ series }}</div><div class="l">Series</div></div>
+  <div class="stat s3"><div class="n">{{ from_m3usort }}</div><div class="l">From M3Usort (.strm)</div></div>
+  <div class="stat s4"><div class="n">{{ by_all }}</div><div class="l">Watched by everyone</div></div>
+</div>
+
+<div class="filters">
+  <input type="search" id="q" placeholder="Search {{ items.len() }} items…" style="flex:1 1 14rem;width:auto">
+  <select id="f-type"><option value="">Movies and series</option><option value="movie">Movies</option><option value="series">Series</option></select>
+  <select id="f-source"><option value="">All sources</option><option value="m3usort">M3Usort</option><option value="other">Other</option><option value="mixed">Mixed</option></select>
+  <select id="f-watch"><option value="">Any watch status</option><option value="all">Watched by everyone</option><option value="some">Partly watched</option><option value="none">Not watched</option></select>
+  <select id="f-sort"><option value="name">Name</option><option value="added">Newest in Jellyfin</option><option value="year">Year</option></select>
+</div>
+<p class="help">Users: {% for u in users %}{{ u }}{% if !loop.last %}, {% endif %}{% endfor %} · fetched {{ fetched }} · <a href="/admin/jellyfin?refresh=1">Refresh</a> · <span id="count"></span></p>
+
+<div id="jf-list">
+{% for i in items %}
+<div class="jf card" data-id="{{ i.id }}" data-name="{{ i.name.to_lowercase() }}" data-type="{% if i.is_movie %}movie{% else %}series{% endif %}" data-source="{{ i.source.as_str() }}" data-watch="{% if i.by_all %}all{% else if i.by_none %}none{% else %}some{% endif %}" data-added="{{ i.added_sort }}" data-year="{{ i.year.unwrap_or(0) }}">
+  <img loading="lazy" src="/admin/jellyfin/img/{{ i.id }}" alt="" onerror="this.style.visibility='hidden'">
+  <div class="jf-body">
+    <div class="jf-title">{{ i.name }}{% if let Some(y) = i.year %} <span class="help">({{ y }})</span>{% endif %}{% if let Some(r) = i.rating %} <span class="help">★ {{ "{:.1}"|format(r) }}</span>{% endif %}</div>
+    <div class="jf-meta">
+      <span class="badge src-{{ i.source.as_str() }}">{{ i.source.label() }}</span>
+      <span class="help">{% if i.is_movie %}Movie{% else %}Series · {{ i.episodes }} episodes{% endif %}{% if !i.added.is_empty() %} · added {{ i.added }}{% endif %}</span>
+    </div>
+    <div class="jf-watch">{% if i.watched.is_empty() %}<span class="help">Not watched</span>{% else %}{% for w in i.watched %}<span class="badge {% if w.full() %}on{% else %}part{% endif %}">{{ w.text() }}</span>{% endfor %}{% endif %}</div>
+    {% if !i.overview.is_empty() %}<div class="help jf-plot">{{ i.overview }}</div>{% endif %}
+    <div class="jf-seasons"></div>
+  </div>
+  <div class="jf-act">
+    {% if !i.is_movie %}<button class="btn secondary" data-seasons="{{ i.id }}">Seasons</button>{% endif %}
+    {% if i.source.as_str() == "m3usort" %}<button class="btn secondary danger" data-remove="{{ i.id }}" data-name="{{ i.name }}">Remove</button>{% endif %}
+  </div>
+</div>
+{% endfor %}
+</div>
+<p class="help">Remove is only offered for M3Usort items (.strm). It deletes the item in Jellyfin and its .strm folder, and takes it off M3Usort's library list so the next VOD run doesn't add it again. Real video files are never touched from here.</p>
+{% endif %}
+
+<style>
+.jf{display:flex;gap:1rem;padding:.8rem 1rem;align-items:flex-start}
+.jf img{width:4.2rem;aspect-ratio:2/3;object-fit:cover;border-radius:4px;background:#0f1115;flex:none}
+.jf-body{flex:1;min-width:0}
+.jf-title{font-weight:600}
+.jf-meta,.jf-watch{margin-top:.25rem}
+.jf-plot{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-top:.3rem}
+.jf-act{display:flex;flex-direction:column;gap:.4rem}
+.badge.part{background:#3a321f;color:#e8c987}
+.badge.src-m3usort{background:#1f2f3a;color:#7cc4ff}.badge.src-other{background:#2a2e38;color:#c8ccd4}.badge.src-mixed{background:#3a321f;color:#e8c987}
+.btn.danger{border-color:var(--err);color:#e0a0a0}
+.jf-seasons details{margin-top:.4rem}
+.jf-seasons summary{cursor:pointer}
+.jf-seasons ol{margin:.3rem 0 .3rem 1.2rem;padding:0}
+.jf-seasons li{font-size:.9rem}
+@media (max-width:600px){.jf{flex-wrap:wrap}.jf-act{flex-direction:row}}
+</style>
+<script>
+(function () {
+  const list = document.getElementById('jf-list'); if (!list) return;
+  const cards = [...list.querySelectorAll('.jf')];
+  const q = document.getElementById('q'), ft = document.getElementById('f-type'), fs = document.getElementById('f-source'),
+        fw = document.getElementById('f-watch'), so = document.getElementById('f-sort'), count = document.getElementById('count');
+  function apply() {
+    const s = q.value.toLowerCase();
+    let n = 0;
+    for (const c of cards) {
+      const d = c.dataset;
+      const show = (!s || d.name.includes(s)) && (!ft.value || d.type === ft.value)
+        && (!fs.value || d.source === fs.value) && (!fw.value || d.watch === fw.value);
+      c.style.display = show ? '' : 'none'; if (show) n++;
+    }
+    const key = so.value;
+    const sorted = [...cards].sort((a, b) => key === 'added' ? b.dataset.added.localeCompare(a.dataset.added)
+      : key === 'year' ? (b.dataset.year - a.dataset.year) || a.dataset.name.localeCompare(b.dataset.name)
+      : a.dataset.name.localeCompare(b.dataset.name));
+    for (const c of sorted) list.appendChild(c);
+    count.textContent = n + ' shown';
+  }
+  [q, ft, fs, fw, so].forEach(el => el.addEventListener('input', apply));
+  apply();
+
+  const esc = t => String(t).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+  list.addEventListener('click', async (ev) => {
+    const sb = ev.target.closest('button[data-seasons]');
+    if (sb) {
+      const box = sb.closest('.jf').querySelector('.jf-seasons');
+      if (box.innerHTML) { box.innerHTML = ''; sb.textContent = 'Seasons'; return; }
+      sb.disabled = true;
+      try {
+        const r = await fetch('/admin/jellyfin/seasons/' + sb.dataset.seasons);
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.message);
+        box.innerHTML = j.seasons.length ? j.seasons.map(s => {
+          const watched = s.episodes.filter(e => e.watched_by.length).length;
+          return '<details><summary>' + esc(s.name) + ' <span class="help">(' + s.episodes.length + ' episodes, ' + watched + ' watched by someone)</span></summary><ol>'
+            + s.episodes.map(e => '<li value="' + (e.index || '') + '">' + esc(e.name)
+              + (e.watched_by.length ? ' <span class="help">— ' + esc(e.watched_by.join(', ')) + '</span>' : '')
+              + (e.strm ? '' : ' <span class="badge src-other">file</span>') + '</li>').join('')
+            + '</ol></details>';
+        }).join('') : '<p class="help">No episodes in Jellyfin.</p>';
+        sb.textContent = 'Hide seasons';
+      } catch (e) { alert('Could not load seasons: ' + e.message); }
+      sb.disabled = false;
+      return;
+    }
+    const rb = ev.target.closest('button[data-remove]');
+    if (rb) {
+      if (!confirm('Remove "' + rb.dataset.name + '" from Jellyfin and delete its .strm folder?')) return;
+      rb.disabled = true; rb.textContent = 'Removing…';
+      try {
+        const r = await fetch('/admin/jellyfin/remove/' + rb.dataset.remove, {method: 'POST'});
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.message);
+        const card = rb.closest('.jf');
+        card.innerHTML = '<div class="msg ok" style="margin:0;flex:1">' + esc(j.message) + '</div>';
+        cards.splice(cards.indexOf(card), 1);
+      } catch (e) { rb.disabled = false; rb.textContent = 'Remove'; alert('Remove failed: ' + e.message); }
+    }
+  });
+})();
+</script>
+{% endblock %}

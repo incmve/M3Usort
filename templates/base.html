@@ -89,6 +89,7 @@ nav.tabs a{margin-right:1rem}
   <a href="/library">Library</a>
   <a href="/playlist">Live TV</a>
   {% if page.is_admin %}
+    <a href="/admin/jellyfin">Jellyfin</a>
     <a href="/admin">Admin</a>
     <form method="post" action="/admin/logout" style="margin:0"><button type="submit">Log out</button></form>
   {% else %}

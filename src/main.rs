@@ -5,6 +5,7 @@ mod crypto;
 mod db;
 mod enrich;
 mod integrations;
+mod jellyfin;
 mod library;
 mod localtime;
 mod playlist;
