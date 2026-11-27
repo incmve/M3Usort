@@ -1,0 +1,7 @@
+/target
+.env
+*.db
+*.db-shm
+*.db-wal
+m3usort.lock
+/dev-data

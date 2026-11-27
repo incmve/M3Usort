@@ -1,0 +1,13 @@
+services:
+  m3usort:
+    image: incmve/m3usort:rust
+    container_name: m3usort-rs
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    env_file: .env
+    volumes:
+      - /opt/stacks/m3usort-rs:/data
+      - /data/media/movies:/data/media/movies
+      - /data/media/tv:/data/media/tv
+    ports:
+      - 5051:5050   # 5051 on the host so it can run next to the Python version on 5050

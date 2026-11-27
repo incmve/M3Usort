@@ -1,0 +1,30 @@
+name: Docker Image CI (rust)
+on:
+  push:
+    branches: [ "rust" ]
+  pull_request:
+    branches: [ "rust" ]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+  build:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login to dockerhub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push to dockerhub
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: incmve/m3usort:rust
